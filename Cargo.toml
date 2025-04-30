@@ -1,0 +1,19 @@
+[package]
+authors = ["The wasm-bindgen Developers"]
+edition = "2024"
+name = "mpc-wallet"
+description = "A wallet for MPC"
+license = "Apache-2.0"
+readme = "README.md"
+publish = false
+version = "0.0.0"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wasm-bindgen = "*"
+k256 = "*"
+sha3 = "*"
+hex = "*"
+getrandom = { version = "0.2", features = ["js"] }

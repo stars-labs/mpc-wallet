@@ -42,9 +42,9 @@
               openssl
               rustfmt          
               wasm-pack      
-                wasm-bindgen-cli
-                clang
-                lld
+              wasm-bindgen-cli
+              clang
+              lld
             ];
           };
         };
