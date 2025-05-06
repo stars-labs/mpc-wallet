@@ -1,9 +1,15 @@
 import { defineConfig } from 'wxt';
+import tailwindcss from '@tailwindcss/vite';
 
 // See https://wxt.dev/api/config.html
 export default defineConfig({
   srcDir: 'src',
   modules: ['@wxt-dev/module-svelte'],
+  vite: () => ({
+    plugins: [
+      tailwindcss(),
+    ],
+  }),
   manifest: {
     name: 'Browser Wallet',
     description: 'A secure browser extension wallet for Ethereum',
@@ -16,6 +22,7 @@ export default defineConfig({
       "128": "assets/icon-128.png"
     },
     action: {
+      default_popup: "popup.html", // 指定 popup 页面
       default_icon: {
         "16": "assets/icon-16.png",
         "32": "assets/icon-32.png"

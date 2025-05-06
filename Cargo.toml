@@ -17,3 +17,6 @@ k256 = "*"
 sha3 = "*"
 hex = "*"
 getrandom = { version = "0.2", features = ["js"] }
+ed25519-dalek = "*"                                # Or "2"
+rand = "*"
+bs58 = "*"
