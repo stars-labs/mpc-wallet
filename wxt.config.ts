@@ -1,12 +1,15 @@
 import { defineConfig } from 'wxt';
 import tailwindcss from '@tailwindcss/vite';
+import wasm from 'vite-plugin-wasm';
+import topLevelAwait from 'vite-plugin-top-level-await';
 
-// See https://wxt.dev/api/config.html
 export default defineConfig({
   srcDir: 'src',
   modules: ['@wxt-dev/module-svelte'],
   vite: () => ({
     plugins: [
+      wasm(),
+      topLevelAwait(),
       tailwindcss(),
     ],
   }),
@@ -14,7 +17,7 @@ export default defineConfig({
     name: 'Browser Wallet',
     description: 'A secure browser extension wallet for Ethereum',
     version: '1.0.0',
-    permissions: ['storage', 'tabs', 'activeTab'],
+    permissions: ['storage', 'tabs', 'activeTab', 'offscreen'],
     icons: {
       "16": "assets/icon-16.png",
       "32": "assets/icon-32.png",
@@ -22,12 +25,16 @@ export default defineConfig({
       "128": "assets/icon-128.png"
     },
     action: {
-      default_popup: "popup.html", // 指定 popup 页面
+      default_popup: "popup.html",
       default_icon: {
         "16": "assets/icon-16.png",
         "32": "assets/icon-32.png"
       }
     },
+    // options_ui: {
+    //   page: "options.html",
+    //   open_in_tab: true
+    // },
     content_scripts: [
       {
         matches: ['<all_urls>'],
@@ -35,6 +42,10 @@ export default defineConfig({
         run_at: 'document_start'
       }
     ],
+    background: {
+      service_worker: "entrypoints/background/index.ts",
+      type: "module"
+    },
     content_security_policy: {
       "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';"
     },
@@ -44,6 +55,7 @@ export default defineConfig({
         matches: ['<all_urls>']
       }
     ],
+
     default_locale: 'en',
   }
 });
