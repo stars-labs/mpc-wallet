@@ -1,12 +1,15 @@
 import { defineConfig } from 'wxt';
 import tailwindcss from '@tailwindcss/vite';
+import wasm from 'vite-plugin-wasm';
+import topLevelAwait from 'vite-plugin-top-level-await';
 
-// See https://wxt.dev/api/config.html
 export default defineConfig({
   srcDir: 'src',
   modules: ['@wxt-dev/module-svelte'],
   vite: () => ({
     plugins: [
+      wasm(),
+      topLevelAwait(),
       tailwindcss(),
     ],
   }),
@@ -22,7 +25,7 @@ export default defineConfig({
       "128": "assets/icon-128.png"
     },
     action: {
-      default_popup: "popup.html", // 指定 popup 页面
+      default_popup: "popup.html",
       default_icon: {
         "16": "assets/icon-16.png",
         "32": "assets/icon-32.png"
@@ -35,6 +38,10 @@ export default defineConfig({
         run_at: 'document_start'
       }
     ],
+    background: {
+      service_worker: "entrypoints/background/index.ts",
+      type: "module"
+    },
     content_security_policy: {
       "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';"
     },
