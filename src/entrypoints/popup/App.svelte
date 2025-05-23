@@ -10,22 +10,13 @@
   import { onMount, onDestroy } from "svelte";
   import Settings from "@/components/Settings.svelte";
   import { storage } from "#imports";
-  import type {
-    ServerMsg,
-    WebRTCAppMessage,
-    MeshStatus,
-    SessionInfo,
-  } from "../background/types";
+  import type { MeshStatus, SessionInfo } from "../../types/appstate";
+  import type { ServerMsg } from "../../types/websocket";
   import {
     MeshStatusType,
     DkgState,
     // MeshStatus is a type, not a value export, so import as type only
-  } from "../background/types";
-
-  import {
-    logDiagnosticInfo,
-    resetSessionState,
-  } from "../../helpers/diagnostics";
+  } from "../../types/appstate";
 
   // Private key and wallet operations
   let private_key: string = "";
@@ -41,7 +32,7 @@
   let peersList: string[] = [];
   let wsConnected: boolean = false;
   let wsError: string = "";
-  let serverMessages: ServerMsg[] = [];
+  let serverMessages: any[] = []; // Change from ServerMsg[] to any[] to allow custom message types
 
   // Session and WebRTC state
   let sessionInfo: SessionInfo | null = null;
@@ -60,6 +51,16 @@
     peersList,
   );
 
+  // Svelte reactive statement for debugging connection status
+  $: console.log(
+    "UI: Connection status changed - wsConnected:",
+    wsConnected,
+    "currentPeerId:",
+    currentPeerId,
+    "peersList:",
+    peersList,
+  );
+
   // Common handler for messages from the background script (primarily via port)
   function handleBackgroundMessage(message: any) {
     console.log("UI: Message received from background (port):", message);
@@ -67,26 +68,48 @@
     switch (message.type) {
       case "initialState":
         console.log("UI: Processing 'initialState'", message);
-        currentPeerId = message.peerId;
+        currentPeerId = message.peerId || "";
         // Always update peersList, even if the value is the same, to trigger Svelte reactivity
         peersList = [...(message.connectedPeers || [])];
         console.log("UI: peersList updated from initialState:", peersList);
-        wsConnected = message.wsConnected;
+        wsConnected = message.wsConnected || false;
+        console.log("UI: wsConnected updated from initialState:", wsConnected);
         sessionInfo = message.sessionInfo || null;
         if (JSON.stringify(invites) !== JSON.stringify(message.invites || [])) {
           invites = message.invites ? [...message.invites] : [];
         }
         meshStatus = message.meshStatus || { type: MeshStatusType.Incomplete };
         dkgState = message.dkgState || DkgState.Idle;
+
+        // Force UI update
+        wsConnected = wsConnected; // Trigger reactivity
         break;
 
       case "wsStatus":
-        wsConnected = message.connected;
+        console.log("UI: Processing 'wsStatus'", message);
+        const newConnectedState = message.connected || false;
+        console.log(
+          "UI: wsConnected changing from",
+          wsConnected,
+          "to",
+          newConnectedState,
+        );
+        wsConnected = newConnectedState;
+
         if (!message.connected && message.reason) {
           wsError = `WebSocket disconnected: ${message.reason}`;
         } else if (message.connected) {
           wsError = "";
         }
+
+        // Add a visible message to server messages for debugging
+        serverMessages = [
+          ...serverMessages,
+          {
+            type: "info",
+            message: `WebSocket ${wsConnected ? "connected" : "disconnected"} at ${new Date().toLocaleTimeString()}`,
+          },
+        ];
         break;
 
       case "wsMessage":
@@ -269,6 +292,7 @@
   }
 
   onMount(async () => {
+    console.log("UI: Component mounting, setting up port connection");
     port = chrome.runtime.connect({ name: "popup" });
     console.log("UI: Port connected to background script.");
     port.onMessage.addListener(handleBackgroundMessage);
@@ -280,63 +304,72 @@
       // Consider implementing a reconnect mechanism for the port or notifying the user.
     });
 
-    // Initial request for full state via chrome.runtime.sendMessage
-    // This serves as a primary way to get the state when the popup opens.
-    // The background's onConnect will also send 'initialState' via port,
-    // so one of them should provide the initial data.
-    console.log(
-      "UI: Requesting initial state with chrome.runtime.sendMessage({ type: 'getState' })",
-    );
-    chrome.runtime.sendMessage({ type: "getState" }, (response) => {
-      if (chrome.runtime.lastError) {
-        console.error(
-          "UI: Error on initial getState:",
-          chrome.runtime.lastError.message,
-        );
-        return;
-      }
-      if (response) {
-        console.log("UI: Response from initial getState:", response);
-        currentPeerId = response.peerId;
-        // Prefer this over initialState if it arrives later and is more complete,
-        // or ensure data merging logic is robust.
-        if (
-          JSON.stringify(peersList) !==
-          JSON.stringify(response.connectedPeers || [])
-        ) {
-          peersList = [...(response.connectedPeers || [])];
+    // Wait a moment for port to establish, then request initial state
+    setTimeout(() => {
+      console.log(
+        "UI: Requesting initial state with chrome.runtime.sendMessage({ type: 'getState' })",
+      );
+      chrome.runtime.sendMessage({ type: "getState" }, (response) => {
+        if (chrome.runtime.lastError) {
+          console.error(
+            "UI: Error on initial getState:",
+            chrome.runtime.lastError.message,
+          );
+          return;
         }
-        wsConnected = response.wsConnected;
-        sessionInfo = response.sessionInfo || null;
-        if (
-          JSON.stringify(invites) !== JSON.stringify(response.invites || [])
-        ) {
-          invites = response.invites ? [...response.invites] : [];
+        if (response) {
+          console.log("UI: Response from initial getState:", response);
+          currentPeerId = response.peerId || "";
+          // Prefer this over initialState if it arrives later and is more complete,
+          // or ensure data merging logic is robust.
+          if (
+            JSON.stringify(peersList) !==
+            JSON.stringify(response.connectedPeers || [])
+          ) {
+            peersList = [...(response.connectedPeers || [])];
+          }
+          wsConnected = response.wsConnected || false;
+          console.log("UI: wsConnected from getState:", wsConnected);
+          sessionInfo = response.sessionInfo || null;
+          if (
+            JSON.stringify(invites) !== JSON.stringify(response.invites || [])
+          ) {
+            invites = response.invites ? [...response.invites] : [];
+          }
+          meshStatus = response.meshStatus || {
+            type: MeshStatusType.Incomplete,
+          };
+          dkgState = response.dkgState || DkgState.Idle;
+          if (
+            response.recentMessages &&
+            JSON.stringify(serverMessages) !==
+              JSON.stringify(response.recentMessages)
+          ) {
+            serverMessages = response.recentMessages
+              ? [...response.recentMessages]
+              : [];
+          }
+        } else {
+          console.warn(
+            "UI: No response for initial getState via chrome.runtime.sendMessage.",
+          );
         }
-        meshStatus = response.meshStatus || { type: MeshStatusType.Incomplete };
-        dkgState = response.dkgState || DkgState.Idle;
-        if (
-          response.recentMessages &&
-          JSON.stringify(serverMessages) !==
-            JSON.stringify(response.recentMessages)
-        ) {
-          serverMessages = response.recentMessages
-            ? [...response.recentMessages]
-            : [];
-        }
-      } else {
-        console.warn(
-          "UI: No response for initial getState via chrome.runtime.sendMessage.",
-        );
-      }
-    });
+      });
+    }, 100); // Small delay to ensure port is ready
 
     await ensurePrivateKey();
 
     // Ensure offscreen document (user gesture required, so call from UI or here if popup is opened by user)
     await ensureOffscreenDocument();
 
-    // Removing polling interval - not needed as state changes are pushed via port connection
+    // Add a debug message to show popup is ready
+    serverMessages = [
+      ...serverMessages,
+      {
+        type: "info",
+        message: `Popup initialized at ${new Date().toLocaleTimeString()}`,
+      },
+    ];
   });
 
   onDestroy(() => {
@@ -409,9 +442,38 @@
 
   // Communication with background script
   function requestPeerList() {
-    console.log("Requesting peer list from background");
-    chrome.runtime.sendMessage({ type: "listPeers" }); // This will trigger "peerList" message
+    console.log("UI: Requesting peer list from background");
+    console.log("UI: Current wsConnected state:", wsConnected);
+
+    chrome.runtime.sendMessage({ type: "listPeers" }, (response) => {
+      if (chrome.runtime.lastError) {
+        console.error(
+          "UI: Error requesting peer list:",
+          chrome.runtime.lastError.message,
+        );
+        return;
+      }
+      console.log("UI: listPeers response:", response);
+
+      // Add feedback message
+      serverMessages = [
+        ...serverMessages,
+        {
+          type: "info",
+          message: `Peer list request ${response?.success ? "sent" : "failed"}: ${response?.error || ""}`,
+        },
+      ];
+    });
+
+    // Also get full state to ensure consistency
     chrome.runtime.sendMessage({ type: "getState" }, (response) => {
+      if (chrome.runtime.lastError) {
+        console.error(
+          "UI: Error getting state:",
+          chrome.runtime.lastError.message,
+        );
+        return;
+      }
       // This will update general state
       if (response && response.connectedPeers) {
         console.log(
@@ -424,7 +486,42 @@
           peersList = [...response.connectedPeers]; // Reactive update
         }
       }
+      if (response) {
+        wsConnected = response.wsConnected || false;
+        console.log(
+          "UI: wsConnected from requestPeerList getState:",
+          wsConnected,
+        );
+      }
     });
+  }
+
+  async function logDiagnosticInfo(
+    sessionInfo: SessionInfo | null,
+    peersList: string[],
+    currentPeerId: string,
+  ) {
+    console.log("=== DIAGNOSTIC INFO ===");
+    console.log("Current Peer ID:", currentPeerId);
+    console.log("Peers List:", peersList);
+    console.log("Session Info:", sessionInfo);
+    console.log("WebSocket Connected:", wsConnected);
+    console.log("Mesh Status:", meshStatus);
+    console.log("DKG State:", dkgState);
+    console.log("Invites:", invites);
+    console.log("Recent Messages:", serverMessages.slice(-10)); // Last 10 messages
+    console.log("=== END DIAGNOSTIC INFO ===");
+  }
+
+  async function resetSessionState() {
+    // Reset local session state
+    sessionInfo = null;
+    invites = [];
+    meshStatus = { type: MeshStatusType.Incomplete };
+    dkgState = DkgState.Idle;
+
+    // Send reset message to background
+    chrome.runtime.sendMessage({ type: "resetSession" });
   }
 
   function proposeSession() {
@@ -443,9 +540,9 @@
       proposedSessionIdInput.trim() || `wallet_2of3_${Date.now()}`;
     chrome.runtime.sendMessage({
       type: "proposeSession",
-      sessionId, // Use the user-provided or generated ID
+      session_id: sessionId, // Match the expected field name
       total: 3,
-      threshold: 2, // Removed duplicate threshold
+      threshold: 2,
       participants: allParticipants,
     });
     // Add message to UI for feedback
@@ -454,14 +551,15 @@
       {
         type: "info",
         message: `Proposing session ${sessionId} with participants: ${allParticipants.join(", ")}`,
-      } as any,
+      },
     ];
   }
 
   function acceptInvite(sessionId: string) {
     chrome.runtime.sendMessage({
       type: "acceptSession",
-      sessionId,
+      session_id: sessionId, // Match the expected field name
+      accepted: true,
     });
     // Add message to UI for feedback
     serverMessages = [
@@ -469,7 +567,7 @@
       {
         type: "info",
         message: `Accepting session invite: ${sessionId}`,
-      } as any,
+      },
     ];
   }
 
@@ -501,28 +599,7 @@
       {
         type: "info",
         message: "Diagnostics logged to console. Check developer tools.",
-      } as any,
-    ];
-  }
-
-  // Helper function to force refresh state from background
-  function forceRefreshState() {
-    chrome.runtime.sendMessage({
-      type: "getState",
-      forceRefresh: true,
-    });
-    serverMessages = [
-      ...serverMessages,
-      { type: "info", message: "Forced state refresh from background" } as any,
-    ];
-  }
-
-  // Helper function to force refresh peers specifically
-  function forcePeerListRefresh() {
-    chrome.runtime.sendMessage({ type: "listPeers", forceRefresh: true });
-    serverMessages = [
-      ...serverMessages,
-      { type: "info", message: "Forced peer list refresh" } as any,
+      },
     ];
   }
 
@@ -535,12 +612,49 @@
     }
     serverMessages = [
       ...serverMessages,
-      { type: "info", message: "Resetting WebRTC connections..." } as any,
+      { type: "info", message: "Resetting WebRTC connections..." },
     ];
     // Wait a moment then refresh state
     setTimeout(() => {
       forceRefreshState();
     }, 1000);
+  }
+
+  // Force refresh state from background
+  function forceRefreshState() {
+    console.log("UI: Force refreshing state from background");
+    chrome.runtime.sendMessage({ type: "getState" }, (response) => {
+      if (chrome.runtime.lastError) {
+        console.error(
+          "UI: Error on force refresh:",
+          chrome.runtime.lastError.message,
+        );
+        return;
+      }
+      if (response) {
+        console.log("UI: Force refresh response:", response);
+        currentPeerId = response.peerId;
+        peersList = [...(response.connectedPeers || [])];
+        wsConnected = response.wsConnected;
+        sessionInfo = response.sessionInfo || null;
+        invites = response.invites ? [...response.invites] : [];
+        meshStatus = response.meshStatus || { type: MeshStatusType.Incomplete };
+        dkgState = response.dkgState || DkgState.Idle;
+        if (response.recentMessages) {
+          serverMessages = [...response.recentMessages];
+        }
+      }
+    });
+  }
+
+  // Force refresh peers list specifically
+  function forcePeerListRefresh() {
+    console.log("UI: Force refreshing peers list");
+    chrome.runtime.sendMessage({ type: "listPeers" });
+    // Also get full state to ensure consistency
+    setTimeout(() => {
+      forceRefreshState();
+    }, 500);
   }
 
   // Function to clear error messages
@@ -664,6 +778,11 @@
         {wsConnected ? "● Connected" : "● Disconnected"}
       </span>
     </p>
+
+    <!-- Enhanced debug information -->
+    <div class="text-xs text-gray-500 mt-1">
+      Debug: wsConnected={wsConnected}, peerId={currentPeerId}, peers={peersList.length}
+    </div>
 
     <!-- Debug information (can be removed later) -->
     <div class="text-xs text-gray-500 mt-1">
