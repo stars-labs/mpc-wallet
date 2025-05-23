@@ -9,14 +9,25 @@ publish = false
 version = "0.0.0"
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 wasm-bindgen = "*"
 k256 = "*"
 sha3 = "*"
-hex = "*"
+hex = { version = "0.4", features = ["serde"] }
 getrandom = { version = "0.2", features = ["js"] }
-ed25519-dalek = "*"                                # Or "2"
+ed25519-dalek = "*"
 rand = "*"
-bs58 = "*"
+bs58 = "0.5.0"
+wasm-bindgen-futures = "*"
+console_error_panic_hook = { version = "0.1", optional = true }
+bincode = { version = "2.0.1", features = ["serde"] }
+frost-ed25519 = "2.1.0"
+frost-secp256k1 = "2.1.0"
+frost-core = { version = "2.1.0", features = ["serde"] }
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+
+[features]
+default = ["console_error_panic_hook"]

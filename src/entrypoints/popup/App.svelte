@@ -8,24 +8,9 @@
     sol_sign,
   } from "../../../pkg/mpc_wallet.js";
   import { onMount, onDestroy } from "svelte";
-  import Settings from "@/components/Settings.svelte";
   import { storage } from "#imports";
-  import type {
-    ServerMsg,
-    WebRTCAppMessage,
-    MeshStatus,
-    SessionInfo,
-  } from "../background/types";
-  import {
-    MeshStatusType,
-    DkgState,
-    // MeshStatus is a type, not a value export, so import as type only
-  } from "../background/types";
-
-  import {
-    logDiagnosticInfo,
-    resetSessionState,
-  } from "../../helpers/diagnostics";
+  import type { MeshStatus, SessionInfo } from "../../types/appstate";
+  import { MeshStatusType, DkgState } from "../../types/appstate";
 
   // Private key and wallet operations
   let private_key: string = "";
@@ -33,7 +18,6 @@
   let message: string = "Hello from MPC Wallet!";
   let signature: string = "";
   let error: string = "";
-  let isSettings: boolean = false;
   let chain: "ethereum" | "solana" = "ethereum";
 
   // Connection state (synced from background)
@@ -41,47 +25,100 @@
   let peersList: string[] = [];
   let wsConnected: boolean = false;
   let wsError: string = "";
-  let serverMessages: ServerMsg[] = [];
 
   // Session and WebRTC state
   let sessionInfo: SessionInfo | null = null;
   let invites: SessionInfo[] = [];
   let meshStatus: MeshStatus = { type: MeshStatusType.Incomplete };
   let dkgState = DkgState.Idle;
-  let proposedSessionIdInput: string = ""; // For the session ID input field
+  let proposedSessionIdInput: string = "";
+
+  // Session configuration
+  let totalParticipants: number = 3;
+  let threshold: number = 2;
+
+  // Track WebRTC connections per peer
+  let peerConnections: Record<string, boolean> = {}; // peer_id -> connected status
+  let sessionAcceptanceStatus: Record<string, Record<string, boolean>> = {}; // session_id -> peer_id -> accepted
 
   // Keep connection to background script
   let port: chrome.runtime.Port;
-  // Removing updateInterval variable since we're removing polling
 
-  // Svelte reactive statement for debugging peersList changes
-  $: console.log(
-    "UI: peersList updated in Svelte context. Current value:",
+  // Debug logging to console
+  $: console.log("[UI Debug] State update:", {
+    wsConnected,
+    currentPeerId,
     peersList,
-  );
+    sessionInfo,
+    meshStatus,
+    dkgState,
+    peerConnections,
+    sessionAcceptanceStatus,
+  });
 
-  // Common handler for messages from the background script (primarily via port)
+  // Reactive computation for WebRTC connection status
+  $: webrtcConnected = sessionInfo && meshStatus?.type === MeshStatusType.Ready;
+  $: webrtcConnecting =
+    sessionInfo && meshStatus?.type === MeshStatusType.PartiallyReady;
+
+  // Add reactive statement to force UI updates when peerConnections change
+  $: {
+    // This reactive block will trigger whenever peerConnections changes
+    console.log("[UI] PeerConnections updated:", peerConnections);
+    // Force a re-render by updating a dummy variable or just logging
+    if (Object.keys(peerConnections).length > 0) {
+      console.log(
+        "[UI] Active WebRTC connections:",
+        Object.entries(peerConnections).filter(([_, connected]) => connected),
+      );
+    }
+  }
+
+  // Common handler for messages from the background script
   function handleBackgroundMessage(message: any) {
-    console.log("UI: Message received from background (port):", message);
+    console.log("[UI] Background message received:", message);
 
     switch (message.type) {
       case "initialState":
-        console.log("UI: Processing 'initialState'", message);
-        currentPeerId = message.peerId;
-        // Always update peersList, even if the value is the same, to trigger Svelte reactivity
+        console.log("[UI] Processing initialState");
+        currentPeerId = message.peerId || "";
         peersList = [...(message.connectedPeers || [])];
-        console.log("UI: peersList updated from initialState:", peersList);
-        wsConnected = message.wsConnected;
+        wsConnected = message.wsConnected || false;
         sessionInfo = message.sessionInfo || null;
         if (JSON.stringify(invites) !== JSON.stringify(message.invites || [])) {
           invites = message.invites ? [...message.invites] : [];
         }
         meshStatus = message.meshStatus || { type: MeshStatusType.Incomplete };
         dkgState = message.dkgState || DkgState.Idle;
+
+        // Initialize WebRTC connection state from background
+        if (message.webrtcConnections) {
+          console.log(
+            "[UI] Initializing WebRTC connections from background:",
+            message.webrtcConnections,
+          );
+          peerConnections = { ...message.webrtcConnections };
+        } else {
+          console.log("[UI] No WebRTC connections in initial state");
+          peerConnections = {};
+        }
+
+        // Initialize session acceptance status from background
+        if (message.sessionAcceptanceStatus) {
+          console.log(
+            "[UI] Initializing session acceptance status from background:",
+            message.sessionAcceptanceStatus,
+          );
+          sessionAcceptanceStatus = { ...message.sessionAcceptanceStatus };
+        } else {
+          console.log("[UI] No session acceptance status in initial state");
+          sessionAcceptanceStatus = {};
+        }
         break;
 
       case "wsStatus":
-        wsConnected = message.connected;
+        console.log("[UI] Processing wsStatus:", message);
+        wsConnected = message.connected || false;
         if (!message.connected && message.reason) {
           wsError = `WebSocket disconnected: ${message.reason}`;
         } else if (message.connected) {
@@ -90,63 +127,125 @@
         break;
 
       case "wsMessage":
+        console.log("[UI] Processing wsMessage:", message);
         if (message.message) {
-          serverMessages = [...serverMessages, message.message];
+          console.log("[UI] Server message:", message.message);
           if (message.message.type === "peers") {
-            console.log(
-              "UI: Direct peers update from server (wsMessage in wsMessage):",
-              message.message.peers,
-            );
             peersList = [...(message.message.peers || [])];
-            console.log("UI: peersList updated from wsMessage:", peersList);
-          } else if (message.message.type === "relay" && message.message.data) {
-            if (message.message.data.websocket_msg_type) {
-              serverMessages = [
-                ...serverMessages,
-                {
-                  type: "relay",
-                  relay: message.message,
-                } as any,
-              ];
-            }
           }
         }
         break;
 
       case "wsError":
+        console.log("[UI] Processing wsError:", message);
         wsError = message.error;
-        serverMessages = [
-          ...serverMessages,
-          { type: "error", error: message.error },
-        ];
+        console.error("[UI] WebSocket error:", message.error);
         break;
 
       case "peerList":
-        console.log("UI: Processing 'peerList'", message);
+        console.log("[UI] Processing peerList:", message);
         peersList = [...(message.peers || [])];
-        console.log("UI: peersList updated from peerList:", peersList);
         break;
 
-      // Add this case to handle session updates from background
       case "sessionUpdate":
-        // Update sessionInfo and invites from background
+        console.log("[UI] Processing sessionUpdate:", message);
         sessionInfo = message.sessionInfo || null;
         invites = message.invites ? [...message.invites] : [];
-        console.log(
-          "UI: sessionUpdate received. sessionInfo:",
-          sessionInfo,
-          "invites:",
-          invites,
-        );
+        console.log("[UI] Session update:", { sessionInfo, invites });
+
+        // Log accepted peers for debugging
+        if (sessionInfo && sessionInfo.accepted_peers) {
+          console.log(
+            "[UI] Session accepted peers:",
+            sessionInfo.accepted_peers,
+          );
+          // Filter out any null/undefined values that might have been added
+          sessionInfo.accepted_peers = sessionInfo.accepted_peers.filter(
+            (peer) => peer != null && peer !== undefined,
+          );
+        }
         break;
 
-      // ... other cases: sessionUpdate, meshStatusUpdate, dkgStateUpdate, webrtcMessage, webrtcConnectionUpdate
+      case "meshStatusUpdate":
+        console.log("[UI] Processing meshStatusUpdate:", message);
+        meshStatus = message.status || { type: MeshStatusType.Incomplete };
+        console.log("[UI] Mesh status update:", meshStatus);
+        break;
+
+      case "webrtcConnectionUpdate":
+        console.log("[UI] Processing webrtcConnectionUpdate:", message);
+
+        if (message.peerId && typeof message.connected === "boolean") {
+          console.log(
+            "[UI] Updating peer connection:",
+            message.peerId,
+            "->",
+            message.connected,
+          );
+
+          // Force reactivity by creating a new object
+          peerConnections = {
+            ...peerConnections,
+            [message.peerId]: message.connected,
+          };
+
+          console.log("[UI] Updated peerConnections:", peerConnections);
+
+          // Trigger a reactive update explicitly
+          peerConnections = peerConnections;
+        } else {
+          console.warn("[UI] Invalid webrtcConnectionUpdate message:", message);
+        }
+        break;
+
+      case "dkgStateUpdate":
+        console.log("[UI] Processing dkgStateUpdate:", message);
+        dkgState = message.state || DkgState.Idle;
+        console.log("[UI] DKG state update:", dkgState);
+        break;
+
+      case "fromOffscreen":
+        console.log("[UI] Processing fromOffscreen wrapper:", message);
+        // Handle wrapped messages from offscreen
+        if (message.payload) {
+          console.log(
+            "[UI] Unwrapping and processing payload:",
+            message.payload,
+          );
+          handleBackgroundMessage(message.payload);
+        }
+        break;
+
+      case "webrtcStatusUpdate":
+        console.log("[UI] Processing webrtcStatusUpdate:", message);
+        if (message.peerId && message.status) {
+          console.log(
+            `[UI] WebRTC status for ${message.peerId}: ${message.status}`,
+          );
+          // Update UI state based on WebRTC status if needed
+        }
+        break;
+
+      case "dataChannelStatusUpdate":
+        console.log("[UI] Processing dataChannelStatusUpdate:", message);
+        if (message.peerId && message.channelName && message.state) {
+          console.log(
+            `[UI] Data channel ${message.channelName} for ${message.peerId}: ${message.state}`,
+          );
+        }
+        break;
+
+      case "peerConnectionStatusUpdate":
+        console.log("[UI] Processing peerConnectionStatusUpdate:", message);
+        if (message.peerId && message.connectionState) {
+          console.log(
+            `[UI] Peer connection for ${message.peerId}: ${message.connectionState}`,
+          );
+        }
+        break;
+
       default:
-        console.log(
-          "UI: Received unhandled message type from background via port:",
-          message.type,
-          message,
-        );
+        console.log("[UI] Unhandled message type:", message.type, message);
     }
   }
 
@@ -167,188 +266,61 @@
 
   // Request offscreen document (must be triggered by user gesture)
   async function ensureOffscreenDocument() {
-    // Only the background/service worker context can use chrome.offscreen API in Manifest V3.
-    // The popup (UI) context does NOT have access to chrome.offscreen.
-    // Solution: Send a message to the background to create the offscreen document.
     try {
       chrome.runtime.sendMessage({ type: "createOffscreen" }, (response) => {
         if (chrome.runtime.lastError) {
-          serverMessages = [
-            ...serverMessages,
-            {
-              type: "error",
-              error:
-                "Background error requesting offscreen creation: " +
-                chrome.runtime.lastError.message,
-            },
-          ];
-        } else if (response && response.success) {
-          serverMessages = [
-            ...serverMessages,
-            { type: "info", message: response.message || "Offscreen created" },
-          ];
+          console.error(
+            "[UI] Offscreen creation error:",
+            chrome.runtime.lastError.message,
+          );
         } else {
-          serverMessages = [
-            ...serverMessages,
-            {
-              type: "error",
-              error: response?.error || "Unknown error creating offscreen",
-            },
-          ];
+          console.log("[UI] Offscreen response:", response);
         }
       });
     } catch (e: any) {
-      serverMessages = [
-        ...serverMessages,
-        {
-          type: "error",
-          error:
-            "Failed to request offscreen from background: " + (e?.message || e),
-        },
-      ];
+      console.error("[UI] Failed to request offscreen:", e);
     }
   }
 
-  // Add a debug helper to check offscreen document status
-  async function debugOffscreenStatus() {
-    // Popups cannot directly access chrome.offscreen. Must ask the background script.
-    chrome.runtime.sendMessage({ type: "getOffscreenStatus" }, (response) => {
-      if (chrome.runtime.lastError) {
-        const errorMessage =
-          chrome.runtime.lastError.message || "Unknown error";
-        if (
-          errorMessage.includes(
-            "message port closed before a response was received",
-          )
-        ) {
-          console.error(
-            "UI: debugOffscreenStatus - Specific error: Message port closed before a response was received. " +
-              "This usually means the background script's onMessage listener for 'getOffscreenStatus' " +
-              "did not 'return true;' for an asynchronous sendResponse.",
-            chrome.runtime.lastError,
-          );
-        }
-        alert(
-          "Error getting offscreen status from background: " + errorMessage,
-        );
-        serverMessages = [
-          ...serverMessages,
-          {
-            type: "error",
-            error:
-              "Error getting offscreen status from background: " + errorMessage,
-          },
-        ];
-        return;
-      }
-      if (response) {
-        alert(
-          "Offscreen document present (from background): " +
-            response.hasDocument,
-        );
-        serverMessages = [
-          ...serverMessages,
-          {
-            type: "info",
-            message:
-              "Offscreen status (from background): " +
-              (response.hasDocument ? "present" : "not present"),
-          },
-        ];
-      } else {
-        alert("No response from background for offscreen status check.");
-        serverMessages = [
-          ...serverMessages,
-          {
-            type: "error",
-            error: "No response from background for offscreen status check.",
-          },
-        ];
-      }
-    });
-  }
-
   onMount(async () => {
+    console.log("[UI] Component mounting");
     port = chrome.runtime.connect({ name: "popup" });
-    console.log("UI: Port connected to background script.");
     port.onMessage.addListener(handleBackgroundMessage);
     port.onDisconnect.addListener(() => {
-      console.error(
-        "UI: Port disconnected from background. UI state might be stale.",
-      );
-      wsConnected = false; // Example: reflect disconnection
-      // Consider implementing a reconnect mechanism for the port or notifying the user.
+      console.error("[UI] Port disconnected from background");
+      wsConnected = false;
     });
 
-    // Initial request for full state via chrome.runtime.sendMessage
-    // This serves as a primary way to get the state when the popup opens.
-    // The background's onConnect will also send 'initialState' via port,
-    // so one of them should provide the initial data.
-    console.log(
-      "UI: Requesting initial state with chrome.runtime.sendMessage({ type: 'getState' })",
-    );
+    // Request initial state - let handleBackgroundMessage process it
     chrome.runtime.sendMessage({ type: "getState" }, (response) => {
       if (chrome.runtime.lastError) {
         console.error(
-          "UI: Error on initial getState:",
+          "[UI] Error on initial getState:",
           chrome.runtime.lastError.message,
         );
         return;
       }
       if (response) {
-        console.log("UI: Response from initial getState:", response);
-        currentPeerId = response.peerId;
-        // Prefer this over initialState if it arrives later and is more complete,
-        // or ensure data merging logic is robust.
-        if (
-          JSON.stringify(peersList) !==
-          JSON.stringify(response.connectedPeers || [])
-        ) {
-          peersList = [...(response.connectedPeers || [])];
-        }
-        wsConnected = response.wsConnected;
-        sessionInfo = response.sessionInfo || null;
-        if (
-          JSON.stringify(invites) !== JSON.stringify(response.invites || [])
-        ) {
-          invites = response.invites ? [...response.invites] : [];
-        }
-        meshStatus = response.meshStatus || { type: MeshStatusType.Incomplete };
-        dkgState = response.dkgState || DkgState.Idle;
-        if (
-          response.recentMessages &&
-          JSON.stringify(serverMessages) !==
-            JSON.stringify(response.recentMessages)
-        ) {
-          serverMessages = response.recentMessages
-            ? [...response.recentMessages]
-            : [];
-        }
-      } else {
-        console.warn(
-          "UI: No response for initial getState via chrome.runtime.sendMessage.",
-        );
+        console.log("[UI] Initial state response:", response);
+        // Process through the centralized handler to ensure reactivity
+        handleBackgroundMessage({
+          type: "initialState",
+          ...response,
+        });
       }
     });
 
     await ensurePrivateKey();
-
-    // Ensure offscreen document (user gesture required, so call from UI or here if popup is opened by user)
     await ensureOffscreenDocument();
-
-    // Removing polling interval - not needed as state changes are pushed via port connection
   });
 
   onDestroy(() => {
     if (port) {
-      console.log("UI: Disconnecting port on component destroy.");
       port.disconnect();
     }
-    // Removing interval cleanup since we no longer have polling
   });
 
   $: if (chain) {
-    // When chain changes, reload key/address/signature
     ensurePrivateKey();
   }
 
@@ -391,7 +363,6 @@
     }
     try {
       if (chain === "ethereum") {
-        // Prefer eth_sign for Ethereum
         signature = eth_sign(private_key, message);
         if (!signature) {
           error = "Signing failed. Check private key and message.";
@@ -407,488 +378,478 @@
     }
   }
 
-  // Communication with background script
   function requestPeerList() {
-    console.log("Requesting peer list from background");
-    chrome.runtime.sendMessage({ type: "listPeers" }); // This will trigger "peerList" message
-    chrome.runtime.sendMessage({ type: "getState" }, (response) => {
-      // This will update general state
-      if (response && response.connectedPeers) {
-        console.log(
-          "Got peers from getState in requestPeerList:",
-          response.connectedPeers,
+    console.log("[UI] Requesting peer list");
+    chrome.runtime.sendMessage({ type: "listPeers" }, (response) => {
+      if (chrome.runtime.lastError) {
+        console.error(
+          "[UI] Error requesting peer list:",
+          chrome.runtime.lastError.message,
         );
-        if (
-          JSON.stringify(peersList) !== JSON.stringify(response.connectedPeers)
-        ) {
-          peersList = [...response.connectedPeers]; // Reactive update
-        }
+        return;
       }
+      console.log("[UI] listPeers response:", response);
     });
   }
 
   function proposeSession() {
-    const peersToInclude = peersList
-      .filter((p) => p !== currentPeerId)
-      .slice(0, 2);
-    const allParticipants = [currentPeerId, ...peersToInclude];
+    const availablePeers = peersList.filter((p) => p !== currentPeerId);
 
-    // Corrected conditional block
-    if (allParticipants.length < 3) {
-      error = "Need at least 3 participants for a session";
+    if (availablePeers.length < totalParticipants - 1) {
+      error = `Need at least ${totalParticipants - 1} other peers for a ${totalParticipants}-participant session`;
       return;
     }
 
+    if (threshold > totalParticipants) {
+      error = "Threshold cannot be greater than total participants";
+      return;
+    }
+
+    if (threshold < 1) {
+      error = "Threshold must be at least 1";
+      return;
+    }
+
+    const peersToInclude = availablePeers.slice(0, totalParticipants - 1);
+    const allParticipants = [currentPeerId, ...peersToInclude];
+
     const sessionId =
-      proposedSessionIdInput.trim() || `wallet_2of3_${Date.now()}`;
+      proposedSessionIdInput.trim() ||
+      `wallet_${threshold}of${totalParticipants}_${Date.now()}`;
+
     chrome.runtime.sendMessage({
       type: "proposeSession",
-      sessionId, // Use the user-provided or generated ID
-      total: 3,
-      threshold: 2, // Removed duplicate threshold
+      session_id: sessionId,
+      total: totalParticipants,
+      threshold: threshold,
       participants: allParticipants,
     });
-    // Add message to UI for feedback
-    serverMessages = [
-      ...serverMessages,
-      {
-        type: "info",
-        message: `Proposing session ${sessionId} with participants: ${allParticipants.join(", ")}`,
-      } as any,
-    ];
+    console.log(
+      "[UI] Proposing session:",
+      sessionId,
+      `(${threshold}-of-${totalParticipants})`,
+      "with participants:",
+      allParticipants,
+    );
   }
 
   function acceptInvite(sessionId: string) {
     chrome.runtime.sendMessage({
       type: "acceptSession",
-      sessionId,
+      session_id: sessionId,
+      accepted: true,
     });
-    // Add message to UI for feedback
-    serverMessages = [
-      ...serverMessages,
+    console.log("[UI] Accepting session invite:", sessionId);
+  }
+
+  // Add function to send direct message for testing
+  function sendDirectMessage(toPeerId: string) {
+    const testMessage = `Hello from ${currentPeerId} at ${new Date().toLocaleTimeString()}`;
+    chrome.runtime.sendMessage(
       {
-        type: "info",
-        message: `Accepting session invite: ${sessionId}`,
-      } as any,
-    ];
+        type: "sendDirectMessage",
+        toPeerId: toPeerId,
+        message: testMessage,
+      },
+      (response) => {
+        if (chrome.runtime.lastError) {
+          console.error(
+            "[UI] Error sending direct message:",
+            chrome.runtime.lastError.message,
+          );
+          error = `Failed to send message: ${chrome.runtime.lastError.message}`;
+        } else {
+          console.log("[UI] Direct message response:", response);
+          if (!response.success) {
+            error = `Failed to send message: ${response.error}`;
+          }
+        }
+      },
+    );
+    console.log(
+      "[UI] Sending direct message to:",
+      toPeerId,
+      "Message:",
+      testMessage,
+    );
   }
 
-  function relayTestData() {
-    if (peersList.length > 0) {
-      const recipient = peersList.find((p) => p !== currentPeerId);
-      if (recipient) {
-        chrome.runtime.sendMessage({
-          type: "relay",
-          to: recipient,
-          data: {
-            greeting: "Hello from " + currentPeerId,
-            timestamp: new Date().toISOString(),
-          },
-        });
-        serverMessages = [
-          ...serverMessages,
-          { type: "info", message: `Sent relay to ${recipient}` } as any,
-        ];
-      }
-    }
-  }
+  // Helper function to get WebRTC status for a peer
+  function getWebRTCStatus(
+    peerId: string,
+  ): "connected" | "connecting" | "disconnected" {
+    console.log(
+      "[UI] Getting WebRTC status for peer:",
+      peerId,
+      "from peerConnections:",
+      peerConnections,
+    );
 
-  // Helper function to run diagnostics
-  async function runDiagnostics() {
-    await logDiagnosticInfo(sessionInfo, peersList, currentPeerId);
-    serverMessages = [
-      ...serverMessages,
-      {
-        type: "info",
-        message: "Diagnostics logged to console. Check developer tools.",
-      } as any,
-    ];
-  }
-
-  // Helper function to force refresh state from background
-  function forceRefreshState() {
-    chrome.runtime.sendMessage({
-      type: "getState",
-      forceRefresh: true,
-    });
-    serverMessages = [
-      ...serverMessages,
-      { type: "info", message: "Forced state refresh from background" } as any,
-    ];
-  }
-
-  // Helper function to force refresh peers specifically
-  function forcePeerListRefresh() {
-    chrome.runtime.sendMessage({ type: "listPeers", forceRefresh: true });
-    serverMessages = [
-      ...serverMessages,
-      { type: "info", message: "Forced peer list refresh" } as any,
-    ];
-  }
-
-  // Helper to reset WebRTC connections if they get stuck
-  async function resetConnections() {
-    await resetSessionState();
-    // Clear local session info
-    if (sessionInfo && !confirm("Reset current session?")) {
-      return;
-    }
-    serverMessages = [
-      ...serverMessages,
-      { type: "info", message: "Resetting WebRTC connections..." } as any,
-    ];
-    // Wait a moment then refresh state
-    setTimeout(() => {
-      forceRefreshState();
-    }, 1000);
-  }
-
-  // Function to clear error messages
-  function clearErrors() {
-    error = "";
-    wsError = "";
-  }
-
-  // Add a warning for offscreen document errors
-  $: if (serverMessages.length > 0) {
-    const lastMsg = serverMessages[serverMessages.length - 1];
-    if (
-      lastMsg.type === "error" &&
-      typeof lastMsg.error === "string" &&
-      lastMsg.error.includes("offscreen")
+    // Check direct connection status first
+    if (peerConnections[peerId] === true) {
+      return "connected";
+    } else if (
+      sessionInfo &&
+      sessionInfo.participants.includes(peerId) &&
+      meshStatus?.type === MeshStatusType.PartiallyReady
     ) {
-      // Optionally, you could show a UI warning or notification here
-      console.warn(
-        "Offscreen document error detected. Some features may not work until the extension is reloaded or the offscreen document is created.",
-      );
+      return "connecting";
+    } else {
+      return "disconnected";
     }
+  }
+
+  // Helper function to get session acceptance status
+  function getSessionAcceptanceStatus(
+    sessionId: string,
+    peerId: string,
+  ): boolean | undefined {
+    if (!sessionAcceptanceStatus[sessionId]) {
+      return undefined;
+    }
+    return sessionAcceptanceStatus[sessionId][peerId];
   }
 </script>
 
-<main>
-  <div>
-    <a href="https://svelte.dev" target="_blank" rel="noreferrer">
-      <img src={svelteLogo} class="logo svelte" alt="Svelte Logo" />
-    </a>
-    <button
-      class="border-0 bg-transparent cursor-pointer"
-      on:click={() => (isSettings = !isSettings)}
-    >
-      settings
-    </button>
-    <button
-      class="border-0 bg-transparent cursor-pointer ml-2"
-      on:click={() => chrome.runtime.openOptionsPage()}
-      title="Open persistent WebRTC page"
-    >
-      Open WebRTC Console
-    </button>
-    <button
-      class="border-0 bg-transparent cursor-pointer ml-2"
-      on:click={async () => {
-        await ensureOffscreenDocument();
-      }}
-      title="Manually create offscreen document"
-    >
-      Create Offscreen Page
-    </button>
-    <button
-      class="border-0 bg-transparent cursor-pointer ml-2"
-      on:click={debugOffscreenStatus}
-      title="Check offscreen document status"
-    >
-      Check Offscreen Status
-    </button>
+<main class="p-4 max-w-2xl mx-auto">
+  <div class="text-center mb-6">
+    <img src={svelteLogo} class="logo svelte mx-auto mb-2" alt="Svelte Logo" />
+    <h1 class="text-3xl font-bold">MPC Wallet</h1>
   </div>
-  <h1 class="text-4xl font-bold underline">Starlab Crypto Wallet</h1>
 
-  <div class="mt-4">
-    <label for="chain-select" class="font-bold mr-2">Chain:</label>
-    <select id="chain-select" bind:value={chain} class="border p-2 rounded">
+  <!-- Chain Selection -->
+  <div class="mb-4 p-3 border rounded">
+    <label for="chain-select" class="block font-bold mb-2">Blockchain:</label>
+    <select
+      id="chain-select"
+      bind:value={chain}
+      class="w-full border p-2 rounded"
+    >
       <option value="ethereum">Ethereum (secp256k1)</option>
       <option value="solana">Solana (ed25519)</option>
     </select>
   </div>
 
-  <div class="mt-8">
+  <!-- Wallet Operations -->
+  <div class="mb-4 p-3 border rounded">
+    <h2 class="text-xl font-semibold mb-3">Wallet Operations</h2>
+
     <button
-      class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded"
+      class="w-full bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded mb-3"
       on:click={fetchAddress}
     >
-      Show Wallet Address
+      Generate Address
     </button>
+
     {#if address}
-      <div class="mt-2">
-        <strong>Address:</strong>
-        <code class="bg-gray-100 px-1">{address}</code>
+      <div class="mb-3">
+        <span class="block font-bold mb-1">Address:</span>
+        <code class="block bg-gray-100 p-2 rounded break-all">{address}</code>
       </div>
     {/if}
-  </div>
 
-  <div class="mt-4">
-    <input type="text" bind:value={message} class="border p-2 rounded w-3/4" />
+    <div class="mb-3">
+      <label for="message-input" class="block font-bold mb-1"
+        >Message to Sign:</label
+      >
+      <input
+        id="message-input"
+        type="text"
+        bind:value={message}
+        class="w-full border p-2 rounded"
+        placeholder="Enter message to sign"
+      />
+    </div>
+
     <button
-      class="bg-green-500 hover:bg-green-700 text-white font-bold py-2 px-4 rounded ml-2"
+      class="w-full bg-green-500 hover:bg-green-700 text-white font-bold py-2 px-4 rounded mb-3"
       on:click={signDemoMessage}
       disabled={!private_key}
     >
       Sign Message
     </button>
+
     {#if signature}
-      <div class="mt-2">
-        <strong>Signature:</strong>
-        <code class="bg-gray-100 p-2 block break-all">{signature}</code>
+      <div class="mb-3">
+        <span class="block font-bold mb-1">Signature:</span>
+        <code class="block bg-gray-100 p-2 rounded break-all text-sm">
+          {signature}
+        </code>
       </div>
     {/if}
   </div>
 
-  {#if error}
-    <div class="text-red-600 mt-2 flex justify-between items-center">
-      <span>{error}</span>
-      <button
-        class="text-sm bg-gray-200 px-2 py-1 rounded"
-        on:click={clearErrors}
-      >
-        Clear
-      </button>
-    </div>
-  {/if}
+  <!-- Network Status -->
+  <div class="mb-4 p-3 border rounded">
+    <h2 class="text-xl font-semibold mb-3">Network Status</h2>
 
-  <!-- WebSocket Section -->
-  <div class="mt-8 p-4 border rounded">
-    <h2 class="text-2xl font-semibold">WebSocket Signaling</h2>
-    <p>
-      <strong>My Peer ID:</strong>
-      <code class="bg-gray-100 px-1">{currentPeerId || "Not connected"}</code>
-      <span class="ml-2 {wsConnected ? 'text-green-500' : 'text-red-500'}">
-        {wsConnected ? "● Connected" : "● Disconnected"}
-      </span>
-    </p>
-
-    <!-- Debug information (can be removed later) -->
-    <div class="text-xs text-gray-500 mt-1">
-      Last peers data update timestamp: {new Date().toLocaleTimeString()}
-    </div>
-
-    {#if wsError}
-      <div class="text-red-600 mt-2 flex justify-between items-center">
-        <span>{wsError}</span>
-        <button
-          class="text-sm bg-gray-200 px-2 py-1 rounded"
-          on:click={clearErrors}
+    <div class="grid grid-cols-1 gap-3 mb-3">
+      <div>
+        <span class="block font-bold mb-1">Peer ID:</span>
+        <code class="block bg-gray-100 p-2 rounded text-sm">
+          {currentPeerId || "Not connected"}
+        </code>
+      </div>
+      <div>
+        <span class="block font-bold mb-1">WebSocket:</span>
+        <span
+          class="inline-block px-2 py-1 rounded text-sm {wsConnected
+            ? 'bg-green-100 text-green-800'
+            : 'bg-red-100 text-red-800'}"
         >
-          Clear
-        </button>
+          {wsConnected ? "Connected" : "Disconnected"}
+        </span>
       </div>
-    {/if}
-
-    <div class="mt-4">
-      <button
-        class="bg-purple-500 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded mr-2"
-        on:click={requestPeerList}
-        disabled={!wsConnected}
-      >
-        List Peers
-      </button>
-      <button
-        class="bg-indigo-500 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded mr-2"
-        on:click={relayTestData}
-        disabled={!wsConnected ||
-          peersList.filter((p) => p !== currentPeerId).length === 0}
-      >
-        Relay Test Data
-      </button>
-      <!-- Close the Relay Test Data button properly -->
-
-      <!-- Session ID input and Propose Session button should be siblings, not nested -->
-      <input
-        type="text"
-        bind:value={proposedSessionIdInput}
-        class="border p-2 rounded w-auto inline-block mr-2"
-        placeholder="Optional Session ID"
-      />
-      <button
-        class="bg-green-500 hover:bg-green-700 text-white font-bold py-2 px-4 rounded"
-        on:click={proposeSession}
-        disabled={!wsConnected ||
-          peersList.filter((p) => p !== currentPeerId).length < 2}
-      >
-        Propose Session
-      </button>
     </div>
+  </div>
 
-    <!-- Peers and Messages Display -->
-    <div class="mt-4 grid grid-cols-2 gap-4">
-      <div>
-        <div class="flex justify-between items-center mb-2">
-          <h3 class="font-semibold">Connected Peers:</h3>
-          <button
-            class="text-sm bg-blue-100 px-2 py-1 rounded"
-            on:click={forcePeerListRefresh}
-            title="Force refresh peers list"
-          >
-            Refresh Peers
-          </button>
-        </div>
-        {#if peersList && peersList.length > 0}
-          <ul class="list-disc list-inside bg-gray-50 p-2 rounded">
-            {#each peersList as peer}
-              <li class={peer === currentPeerId ? "font-bold" : ""}>
-                {peer}{peer === currentPeerId ? " (self)" : ""}
-              </li>
-            {/each}
-          </ul>
-          <p class="text-xs text-gray-500 mt-1">
-            Peers count: {peersList.length}
-          </p>
-        {:else}
-          <p class="text-gray-500">No peers connected yet.</p>
-          {#if wsConnected}
-            <button
-              class="mt-2 text-sm bg-blue-100 px-2 py-1 rounded"
-              on:click={forcePeerListRefresh}
-            >
-              Refresh peers list
-            </button>
-          {/if}
-        {/if}
-      </div>
+  <!-- Connected Peers with Individual WebRTC Status -->
+  <div class="mb-4 p-3 border rounded">
+    <h2 class="text-xl font-semibold mb-3">
+      Connected Peers ({peersList.length})
+    </h2>
 
-      <div>
-        <h3 class="font-semibold">Session State:</h3>
-        {#if sessionInfo}
-          <div class="bg-gray-50 p-2 rounded">
-            <p><strong>Session:</strong> {sessionInfo.session_id}</p>
-            <p><strong>Proposer:</strong> {sessionInfo.proposer_id}</p>
-            <p>
-              <strong>Threshold:</strong>
-              {sessionInfo.threshold} of {sessionInfo.total}
-            </p>
-            <p>
-              <strong>Participants:</strong>
-              {sessionInfo.participants.join(", ")}
-            </p>
-            <p>
-              <strong>Accepted:</strong>
-              {sessionInfo.accepted_peers?.join(", ") || "None"}
-            </p>
-            <p>
-              <strong>Mesh Status:</strong>
-              {MeshStatusType[meshStatus?.type] || "Unknown"}
-            </p>
-            <p><strong>DKG State:</strong> {DkgState[dkgState] || "Unknown"}</p>
-            {#if sessionInfo.participants && !sessionInfo.participants.includes(currentPeerId)}
-              <div class="text-red-600 mt-2">
-                Warning: You are not a participant in this session. WebRTC will
-                not establish.
+    {#if peersList && peersList.length > 0}
+      <ul class="space-y-2">
+        {#each peersList as peer}
+          <li class="flex items-center justify-between p-3 bg-gray-50 rounded">
+            <div class="flex items-center gap-3">
+              <code class="text-sm font-mono">{peer}</code>
+              {#if peer === currentPeerId}
+                <span
+                  class="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded"
+                  >You</span
+                >
+              {/if}
+            </div>
+
+            {#if peer !== currentPeerId}
+              <div class="flex items-center gap-2">
+                <span class="text-xs text-gray-500">WebRTC:</span>
+                {#if getWebRTCStatus(peer) === "connected"}
+                  <span
+                    class="text-xs bg-green-100 text-green-800 px-2 py-1 rounded"
+                    >Connected</span
+                  >
+                  {#if sessionInfo && meshStatus?.type === MeshStatusType.Ready}
+                    <button
+                      class="text-xs bg-blue-500 hover:bg-blue-700 text-white px-2 py-1 rounded"
+                      on:click={() => sendDirectMessage(peer)}
+                    >
+                      Test Message
+                    </button>
+                  {/if}
+                {:else if getWebRTCStatus(peer) === "connecting"}
+                  <span
+                    class="text-xs bg-yellow-100 text-yellow-800 px-2 py-1 rounded"
+                    >Connecting</span
+                  >
+                {:else}
+                  <span
+                    class="text-xs bg-red-100 text-red-800 px-2 py-1 rounded"
+                    >Disconnected</span
+                  >
+                {/if}
               </div>
             {/if}
-          </div>
-        {:else if invites && invites.length > 0}
-          <div>
-            <p><strong>Pending Invites:</strong></p>
-            {#each invites as invite}
-              <div class="bg-yellow-50 p-2 rounded mb-2">
-                <p><strong>Session:</strong> {invite.session_id}</p>
-                <p><strong>From:</strong> {invite.proposer_id}</p>
-                <p>
-                  <strong>Type:</strong>
-                  {invite.threshold} of {invite.total} threshold
-                </p>
-                <p>
-                  <strong>Participants:</strong>
-                  {invite.participants?.join(", ") || "Unknown"}
-                </p>
-                <button
-                  class="bg-green-500 hover:bg-green-700 text-white font-bold py-1 px-2 rounded text-sm mt-1"
-                  on:click={() => acceptInvite(invite.session_id)}
-                >
-                  Accept Invitation
-                </button>
-              </div>
-            {/each}
-          </div>
-        {:else}
-          <p class="text-gray-500">No active session or pending invites.</p>
-          {#if peersList && peersList.length >= 3}
-            <button
-              class="mt-2 text-sm bg-green-100 px-2 py-1 rounded"
-              on:click={proposeSession}
-            >
-              Create a new session
-            </button>
-          {/if}
-        {/if}
-      </div>
-    </div>
-
-    <!-- Server Messages -->
-    <div class="mt-4">
-      <div class="flex justify-between items-center">
-        <h3 class="font-semibold">Server Messages:</h3>
-        <div class="flex gap-2">
-          <button
-            class="text-sm bg-blue-200 px-2 py-1 rounded"
-            on:click={forceRefreshState}
-            title="Force refresh state from background"
-          >
-            Refresh
-          </button>
-          <button
-            class="text-sm bg-blue-200 px-2 py-1 rounded"
-            on:click={runDiagnostics}
-            title="Run connection diagnostics"
-          >
-            Diagnose
-          </button>
-          <button
-            class="text-sm bg-red-200 px-2 py-1 rounded"
-            on:click={resetConnections}
-            title="Reset WebRTC connections"
-          >
-            Reset
-          </button>
-          <button
-            class="text-sm bg-gray-200 px-2 py-1 rounded"
-            on:click={() => (serverMessages = [])}
-          >
-            Clear Log
-          </button>
-        </div>
-      </div>
-      {#if serverMessages && serverMessages.length > 0}
-        <div class="bg-gray-50 p-2 rounded max-h-60 overflow-y-auto">
-          {#each serverMessages as msg, i (i)}
-            <pre
-              class="text-xs whitespace-pre-wrap break-all mb-1 p-1 border-b {msg.type ===
-              'error'
-                ? 'text-red-600'
-                : ''}">{JSON.stringify(msg, null, 2)}</pre>
-          {/each}
-        </div>
-      {:else}
-        <p class="text-gray-500">No messages from server yet.</p>
-      {/if}
-    </div>
+          </li>
+        {/each}
+      </ul>
+    {:else}
+      <p class="text-gray-500 text-center py-4">No peers connected</p>
+    {/if}
   </div>
 
-  {#if isSettings}
-    <Settings
-      on:close={() => {
-        isSettings = false;
-      }}
-    />
+  <!-- MPC Session Management -->
+  <div class="mb-4 p-3 border rounded">
+    <h2 class="text-xl font-semibold mb-3">MPC Session</h2>
+
+    {#if sessionInfo}
+      <!-- Active Session -->
+      <div class="bg-green-50 border border-green-200 rounded p-3 mb-3">
+        <h3 class="font-bold text-green-800 mb-2">Active Session</h3>
+        <div class="grid grid-cols-2 gap-2 text-sm">
+          <div><strong>ID:</strong> {sessionInfo.session_id}</div>
+          <div><strong>Proposer:</strong> {sessionInfo.proposer_id}</div>
+          <div>
+            <strong>Threshold:</strong>
+            {sessionInfo.threshold} of
+            {sessionInfo.total}
+          </div>
+          <div>
+            <strong>Mesh:</strong>
+            {MeshStatusType[meshStatus?.type] || "Unknown"}
+          </div>
+          <div>
+            <strong>DKG:</strong>
+            {DkgState[dkgState] || "Unknown"}
+          </div>
+        </div>
+        <div class="mt-2">
+          <span class="font-bold">Participants:</span>
+          <div class="flex flex-wrap gap-1 mt-1">
+            {#each sessionInfo.participants as participant}
+              <span
+                class="text-xs bg-gray-100 px-2 py-1 rounded {participant ===
+                currentPeerId
+                  ? 'bg-blue-100'
+                  : ''}"
+              >
+                {participant}{participant === currentPeerId ? " (you)" : ""}
+              </span>
+            {/each}
+          </div>
+        </div>
+        <div class="mt-2">
+          <span class="font-bold">Accepted:</span>
+          <div class="flex flex-wrap gap-1 mt-1">
+            {#each sessionInfo.accepted_peers || [] as accepted}
+              <span
+                class="text-xs bg-green-100 text-green-800 px-2 py-1 rounded"
+              >
+                {accepted}
+              </span>
+            {/each}
+          </div>
+        </div>
+      </div>
+    {:else if invites && invites.length > 0}
+      <!-- Pending Invitations -->
+      <div class="space-y-3">
+        {#each invites as invite}
+          <div class="bg-yellow-50 border border-yellow-200 rounded p-3">
+            <h3 class="font-bold text-yellow-800 mb-2">Session Invitation</h3>
+            <div class="grid grid-cols-2 gap-2 text-sm mb-3">
+              <div><strong>ID:</strong> {invite.session_id}</div>
+              <div><strong>From:</strong> {invite.proposer_id}</div>
+              <div>
+                <strong>Type:</strong>
+                {invite.threshold} of {invite.total}
+              </div>
+              <div>
+                <strong>Participants:</strong>
+                {invite.participants?.length || 0}
+              </div>
+            </div>
+            <button
+              class="w-full bg-green-500 hover:bg-green-700 text-white font-bold py-2 px-4 rounded"
+              on:click={() => acceptInvite(invite.session_id)}
+            >
+              Accept Invitation
+            </button>
+          </div>
+        {/each}
+      </div>
+    {:else}
+      <!-- Create New Session -->
+      <div class="space-y-3">
+        <div>
+          <label for="session-id-input" class="block font-bold mb-1"
+            >Session ID (optional):</label
+          >
+          <input
+            id="session-id-input"
+            type="text"
+            bind:value={proposedSessionIdInput}
+            class="w-full border p-2 rounded"
+            placeholder="Auto-generated if empty"
+          />
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label for="total-participants" class="block font-bold mb-1"
+              >Total Participants:</label
+            >
+            <input
+              id="total-participants"
+              type="number"
+              bind:value={totalParticipants}
+              min="2"
+              max={peersList.length}
+              class="w-full border p-2 rounded"
+            />
+          </div>
+          <div>
+            <label for="threshold-input" class="block font-bold mb-1"
+              >Threshold:</label
+            >
+            <input
+              id="threshold-input"
+              type="number"
+              bind:value={threshold}
+              min="1"
+              max={totalParticipants}
+              class="w-full border p-2 rounded"
+            />
+          </div>
+        </div>
+
+        <button
+          class="w-full bg-indigo-500 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded"
+          on:click={proposeSession}
+          disabled={!wsConnected ||
+            peersList.filter((p) => p !== currentPeerId).length <
+              totalParticipants - 1 ||
+            threshold > totalParticipants ||
+            threshold < 1}
+        >
+          Propose New Session ({threshold}-of-{totalParticipants})
+        </button>
+
+        {#if peersList.filter((p) => p !== currentPeerId).length < totalParticipants - 1}
+          <p class="text-sm text-gray-500 text-center">
+            Need at least {totalParticipants - 1} other peers for a {totalParticipants}-participant
+            session
+          </p>
+        {:else if threshold > totalParticipants || threshold < 1}
+          <p class="text-sm text-red-500 text-center">
+            Invalid threshold: must be between 1 and {totalParticipants}
+          </p>
+        {/if}
+      </div>
+    {/if}
+  </div>
+
+  <!-- Error Display -->
+  {#if error}
+    <div class="mb-4 p-3 bg-red-50 border border-red-200 rounded">
+      <div class="flex justify-between items-center">
+        <span class="text-red-600">{error}</span>
+        <button
+          class="text-sm bg-red-100 hover:bg-red-200 px-2 py-1 rounded"
+          on:click={() => (error = "")}
+        >
+          ×
+        </button>
+      </div>
+    </div>
   {/if}
 
-  <p class="text-gray-500 mt-8">
-    Click on the WXT and Svelte logos to learn more
-  </p>
+  {#if wsError}
+    <div class="mb-4 p-3 bg-red-50 border border-red-200 rounded">
+      <div class="flex justify-between items-center">
+        <span class="text-red-600">{wsError}</span>
+        <button
+          class="text-sm bg-red-100 hover:bg-red-200 px-2 py-1 rounded"
+          on:click={() => (wsError = "")}
+        >
+          ×
+        </button>
+      </div>
+    </div>
+  {/if}
 </main>
 
 <style>
   :global(body) {
-    width: 800px;
+    width: 400px;
     height: 600px;
     overflow: auto;
+  }
+
+  .logo {
+    height: 40px;
+    width: 40px;
   }
 </style>

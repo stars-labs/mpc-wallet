@@ -18,6 +18,10 @@ export default defineConfig({
     description: 'A secure browser extension wallet for Ethereum',
     version: '1.0.0',
     permissions: ['storage', 'tabs', 'activeTab', 'offscreen'],
+    host_permissions: [
+      'https://*/*',
+      'wss://auto-life.tech/*'
+    ],
     icons: {
       "16": "assets/icon-16.png",
       "32": "assets/icon-32.png",
@@ -57,5 +61,18 @@ export default defineConfig({
     ],
 
     default_locale: 'en',
+  },
+  dev: {
+    server: {
+      port: 3000
+    }
+  },
+  runner: {
+    // Use a more stable runner configuration
+    chromiumArgs: [
+      '--disable-web-security',
+      '--disable-features=VizDisplayCompositor',
+      '--allow-running-insecure-content'
+    ]
   }
 });

@@ -6,11 +6,26 @@ import WalletClientService from '../../services/walletClient';
 import { toHex } from 'viem';
 import WalletController from "../../services/walletController";
 import { WebSocketClient } from "./websocket";
-import type {
-    ServerMsg, ClientMsg
-} from "./types";
-import { WebRTCManager } from "./webrtc";
-import { storage } from "#imports";
+import {
+    SessionProposal, SessionResponse, SessionInfo, AppState, MeshStatusType, DkgState
+} from "../../types/appstate";
+import {
+    type JsonRpcRequest,
+    type BackgroundMessage,
+    type OffscreenMessage,
+    type PopupMessage,
+    type BackgroundToOffscreenMessage,
+    type InitialStateMessage,
+    validateMessage,
+    validateSessionProposal,
+    validateSessionAcceptance,
+    isRpcMessage,
+    isAccountManagement,
+    isNetworkManagement,
+    isUIRequest,
+    MESSAGE_TYPES,
+} from "../../types/messages";
+import { ServerMsg, ClientMsg, WebSocketMessagePayload, WebRTCSignal } from '../../types/websocket';
 
 // Initialize services
 const accountService = AccountService.getInstance();
@@ -18,7 +33,7 @@ const networkService = NetworkService.getInstance();
 const walletClientService = WalletClientService.getInstance();
 
 // 处理 RPC 请求
-async function handleRpcRequest(request: any) {
+async function handleRpcRequest(request: JsonRpcRequest): Promise<unknown> {
     try {
         // 根据请求的方法执行相应的操作
         switch (request.method) {
@@ -58,7 +73,7 @@ async function handleRpcRequest(request: any) {
 }
 
 // 通用的 RPC 请求处理函数
-async function rpcRequest(request: any) {
+async function rpcRequest(request: JsonRpcRequest): Promise<unknown> {
     const { method, params } = request;
 
     // 检查是否是只读操作
@@ -78,14 +93,14 @@ async function rpcRequest(request: any) {
         if (isReadOnly) {
             // 使用 publicClient 处理只读操作
             return await walletClientService.getPublicClient().request({
-                method,
-                params
+                method: method as any, // viem might need specific method types, using any for broadness
+                params: params as any, // viem might need specific param types
             });
         } else {
             // 使用 walletClient 处理需要签名的操作
             return await walletClientService.getWalletClient().request({
-                method,
-                params
+                method: method as any,
+                params: params as any,
             });
         }
     } catch (error) {
@@ -94,71 +109,7 @@ async function rpcRequest(request: any) {
     }
 }
 
-// 处理账户管理请求
-async function handleAccountManagement(action: string, payload: any) {
-    try {
-        console.log(action, payload);
-        switch (action) {
-            case 'addAccount':
-                const newAccount = await accountService.addAccount(payload);
-                return { success: true, data: newAccount };
-            case 'removeAccount':
-                await accountService.removeAccount(payload.address);
-                return { success: true };
-            case 'updateAccount':
-                await accountService.updateAccount(payload);
-                return { success: true };
-            case 'getAccounts':
-                return { success: true, data: accountService.getAccounts() };
-            case 'getAccount':
-                const account = accountService.getAccount(payload.address);
-                return { success: true, data: account };
-            case 'getCurrentAccount':
-                const currentAccount = accountService.getCurrentAccount();
-                return { success: true, data: currentAccount };
-            default:
-                return { success: false, error: 'Unknown action' };
-        }
-    } catch (error) {
-        console.error('Account management error:', error);
-        return { success: false, error: (error as Error).message };
-    }
-}
-
-// 处理网络管理请求
-async function handleNetworkManagement(action: string, payload: any) {
-    try {
-        switch (action) {
-            case 'addNetwork':
-                await networkService.addNetwork(payload);
-                return { success: true };
-            case 'removeNetwork':
-                await networkService.removeNetwork(payload.chainId);
-                return { success: true };
-            case 'updateNetwork':
-                await networkService.updateNetwork(payload);
-                return { success: true };
-            case 'getNetworks':
-                return { success: true, data: networkService.getNetworks() };
-            case 'getNetwork':
-                const network = networkService.getNetwork(payload.chainId);
-                return { success: true, data: network };
-            case 'getCurrentNetwork':
-                const currentNetwork = networkService.getCurrentNetwork();
-                return { success: true, data: currentNetwork };
-            case 'setCurrentNetwork':
-                await networkService.setCurrentNetwork(payload.chainId);
-                return { success: true };
-            default:
-                return { success: false, error: 'Unknown action' };
-        }
-    } catch (error) {
-        console.error('Network management error:', error);
-        return { success: false, error: (error as Error).message };
-    }
-}
-
-async function handleUIRequest(request: { method: string; params: unknown[] }) {
+async function handleUIRequest(request: { method: string; params: unknown[] }): Promise<{ success: boolean; data?: unknown; error?: string }> {
     const { method, params } = request;
     const walletController = WalletController.getInstance();
 
@@ -175,6 +126,10 @@ async function handleUIRequest(request: { method: string; params: unknown[] }) {
 }
 
 let popupPorts = new Set<chrome.runtime.Port>();
+let offscreenDocumentReady = false;
+let pendingOffscreenInitData: { peerId: string; wsUrl: string } | null = null;
+let offscreenInitSent = false;
+let offscreenCreationInProgress = false;
 
 // Refined ensureOffscreenDocument function
 async function ensureOffscreenDocument(): Promise<{ success: boolean; created?: boolean; message?: string; error?: string }> {
@@ -183,569 +138,1098 @@ async function ensureOffscreenDocument(): Promise<{ success: boolean; created?: 
         return { success: false, error: "Offscreen API not available." };
     }
 
-    try {
-        if (await chrome.offscreen.hasDocument()) {
-            console.log("[Background] Offscreen document already exists.");
-            return { success: true, created: false, message: "Offscreen document already exists." };
-        }
-
-        console.log("[Background] Creating offscreen document as it does not exist.");
-        await chrome.offscreen.createDocument({
-            url: chrome.runtime.getURL('offscreen.html'),
-            reasons: [chrome.offscreen.Reason.DOM_SCRAPING], // Consider RTC_CONNECTIONS if more appropriate
-            justification: 'Manages WebRTC connections for MPC sessions.', // More specific justification
-        });
-        console.log("[Background] Offscreen document created successfully.");
-
-        try {
-            await new Promise(resolve => setTimeout(resolve, 200)); // Increased delay for offscreen to init
-            console.log("[Background] Attempting to send init message to new offscreen document.");
-            await chrome.runtime.sendMessage({
+    // First, check if the document already exists.
+    if (await chrome.offscreen.hasDocument()) {
+        console.log("[Background] Offscreen document already exists.");
+        if (!offscreenDocumentReady && pendingOffscreenInitData) {
+            console.log("[Background] Offscreen exists but not yet ready. Will send init data upon 'offscreenReady' signal.");
+        } else if (offscreenDocumentReady && pendingOffscreenInitData && !offscreenInitSent) {
+            console.log("[Background] Offscreen exists and is marked ready. Attempting to resend init data if not already sent.");
+            const initResult = await safelySendOffscreenMessage({
                 type: "fromBackground",
                 payload: {
                     type: "init",
-                    peerId,
-                    wsUrl: "wss://auto-life.tech"
+                    ...pendingOffscreenInitData
                 }
-            });
-            console.log("[Background] Sent init message to new offscreen document.");
-            return { success: true, created: true, message: "Offscreen document created and init message sent." };
-        } catch (initError: any) {
-            console.error("[Background] CRITICAL: Error sending init message to new offscreen document. This means it's not listening or crashed early.", initError.message);
-            return { success: true, created: true, message: "Offscreen document created, but failed to send init message.", error: `Init send failed: ${initError.message}` };
+            }, "init");
+            if (initResult.success) {
+                console.log("[Background] Successfully resent init data to existing (and ready) offscreen document.");
+                offscreenInitSent = true;
+            } else {
+                console.warn("[Background] Failed to resend init data to existing (and ready) offscreen document:", initResult.error);
+            }
         }
+        return { success: true, created: false, message: "Offscreen document already exists." };
+    }
+
+    // If document doesn't exist, check if creation is already in progress.
+    if (offscreenCreationInProgress) {
+        console.log("[Background] Offscreen document creation is already in progress. Awaiting completion.");
+        return { success: true, created: false, message: "Offscreen document creation already in progress." };
+    }
+
+    // If document doesn't exist and no creation is in progress, proceed to create.
+    console.log("[Background] Creating offscreen document as it does not exist.");
+    offscreenCreationInProgress = true; // Set flag before starting creation
+
+    try {
+        const reasons: chrome.offscreen.Reason[] = [chrome.offscreen.Reason.DOM_SCRAPING];
+
+        if (reasons.length === 0) {
+            console.error("[Background] No valid reasons found for creating offscreen document. Aborting creation.");
+            return { success: false, error: "No valid offscreen reasons available." };
+        }
+
+        await chrome.offscreen.createDocument({
+            url: chrome.runtime.getURL('offscreen.html'),
+            reasons: reasons,
+            justification: 'Manages WebRTC connections and signaling for MPC sessions using DOM capabilities.',
+        });
+        console.log("[Background] Offscreen document created successfully. Waiting for 'offscreenReady' signal to send init data.");
+        offscreenDocumentReady = false; // Explicitly set to false as we just created it
+        offscreenInitSent = false;    // Reset init sent status
+        return { success: true, created: true, message: "Offscreen document created. Awaiting ready signal." };
 
     } catch (e: any) {
         if (e.message && e.message.includes("Only a single offscreen document may be created")) {
-            console.warn("[Background] Attempted to create offscreen document, but it already exists (caught specific error):", e.message);
-            return { success: true, created: false, message: "Offscreen document already exists (creation conflict)." };
+            console.warn("[Background] Attempted to create offscreen document, but it already exists (caught specific error during creation attempt):", e.message);
+            return { success: true, created: false, message: "Offscreen document already exists (creation conflict resolved)." };
         }
         console.error("[Background] Error with offscreen document operation:", e);
         return { success: false, error: e.message || "Unknown error with offscreen document." };
+    } finally {
+        offscreenCreationInProgress = false; // Reset flag after creation attempt (success or failure)
     }
 }
 
-export default defineBackground({
-    main() {
-        // Start WebSocket and WebRTC initialization (SINGLE CALL HERE)
-        initializeConnection(); // This already calls ensureOffscreenDocument
+// New helper function to safely send messages to offscreen document with retries
+async function safelySendOffscreenMessage(message: BackgroundToOffscreenMessage, messageDescription: string = "message", maxRetries = 3, retryDelay = 500): Promise<{ success: boolean, error?: string }> {
+    // First check if offscreen document actually exists
+    if (!chrome.offscreen || !await chrome.offscreen.hasDocument()) {
+        console.warn(`[Background] Cannot send ${messageDescription}: offscreen document does not exist`);
+        return { success: false, error: "Offscreen document does not exist" };
+    }
 
-        // Listener for messages from popups (SINGLE CONSOLIDATED LISTENER)
-        chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-            console.log("[Background] Message received:", message, "from sender:", sender?.tab?.url || sender?.id);
+    let lastError = "";
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            console.log(`[Background] Sending ${messageDescription} to offscreen document (attempt ${attempt}/${maxRetries}):`, message);
+            await chrome.runtime.sendMessage(message);
+            console.log(`[Background] ${messageDescription} successfully sent to offscreen document on attempt ${attempt}`);
+            return { success: true };
+        } catch (error: any) {
+            lastError = error.message || "Unknown error";
+            console.warn(`[Background] Failed to send ${messageDescription} to offscreen document (attempt ${attempt}/${maxRetries}):`, lastError);
 
-            // Handle RPC Requests
-            if (
-                message &&
-                typeof message === 'object' &&
-                message.type === `${MESSAGE_PREFIX}${MessageType.REQUEST}`
-            ) {
-                const request = message.payload;
-                handleRpcRequest(request)
-                    .then(result => {
-                        sendResponse({
-                            id: request.id,
-                            jsonrpc: request.jsonrpc,
-                            result
-                        });
-                    })
-                    .catch(error => {
-                        sendResponse({
-                            id: request.id,
-                            jsonrpc: request.jsonrpc,
-                            error: {
-                                code: -32603,
-                                message: error.message || 'Internal error'
-                            }
-                        });
-                    });
-                return true; // Indicate async response
-            }
+            // If the error indicates the receiving end doesn't exist, try to recreate offscreen
+            if (lastError.includes("Receiving end does not exist") || lastError.includes("Could not establish connection")) {
+                console.log(`[Background] Attempting to recreate offscreen document due to connection error`);
+                offscreenDocumentReady = false;
+                offscreenInitSent = false;
 
-            // Handle Account Management
-            if (message.type === MessageType.ACCOUNT_MANAGEMENT) {
-                const { action, payload } = message;
-                handleAccountManagement(action, payload)
-                    .then(response => sendResponse(response));
-                return true; // Indicate async response
-            }
-
-            // Handle Network Management
-            if (message.type === MessageType.NETWORK_MANAGEMENT) {
-                const { action, payload } = message;
-                handleNetworkManagement(action, payload)
-                    .then(response => sendResponse(response));
-                return true; // Indicate async response
-            }
-
-            // Handle UI Requests
-            if (message.type === MessageType.UI_REQUEST) {
-                handleUIRequest(message.payload)
-                    .then(sendResponse)
-                    .catch(error => sendResponse({ success: false, error: error.message }));
-                return true; // Indicate async response
-            }
-
-            // Handle MPC-specific and Offscreen-related messages
-            switch (message.type) {
-                case "getState":
-                    const statePayload = {
-                        peerId,
-                        connectedPeers: [...connectedPeers],
-                        wsConnected: wsClient?.getReadyState() === WebSocket.OPEN,
-                        sessionInfo: webrtcManager?.sessionInfo || null,
-                        invites: webrtcManager?.invites || [],
-                        meshStatus: webrtcManager?.meshStatus || { type: 0 /* Incomplete */ },
-                        dkgState: webrtcManager?.dkgState || 0 /* Idle */
-                    };
-                    console.log("[Background] Handling getState. Sending payload:", statePayload);
-                    sendResponse(statePayload);
-                    // No return true needed if sendResponse is synchronous here.
-                    // However, if any part of creating statePayload was async, it would be.
-                    break; // Explicitly break
-
-                case "listPeers":
-                    wsClient?.listPeers();
-                    sendResponse({ success: true, message: "listPeers command sent" });
-                    break;
-
-                case "relay":
-                    // Assuming wsClient.relayMessage is synchronous or handles its own errors.
-                    // If it were async and we needed to wait, we'd return true.
-                    wsClient?.relayMessage(message.to, message.data);
-                    sendResponse({ success: true });
-                    break;
-
-                // Messages to be forwarded to the Offscreen Document
-                case "proposeSession":
-                case "acceptSession":
-                    // These messages are intended for the offscreen document.
-                    // We wrap them in a "fromBackground" message type for the offscreen document to process.
-                    chrome.runtime.sendMessage({
-                        type: "fromBackground",
-                        payload: {
-                            type: message.type, // Original type for offscreen's switch
-                            ...message // Spread the rest of the message properties (sessionId, etc.)
-                        }
-                    }).catch(err => console.error(`[Background] Error sending ${message.type} to offscreen:`, err));
-                    sendResponse({ success: true, message: `${message.type} forwarded to offscreen processing.` });
-                    // Return true if chrome.runtime.sendMessage to offscreen is treated as async for response channel
-                    return true;
-
-
-                // Offscreen document management
-                case "createOffscreen": // Message from popup to ensure offscreen exists
-                    ensureOffscreenDocument()
-                        .then(response => {
-                            sendResponse(response);
-                        })
-                        .catch(err => { // Should be caught by ensureOffscreenDocument itself
-                            console.error("[Background] Critical error from ensureOffscreenDocument:", err);
-                            sendResponse({ success: false, error: err.message || "Unknown critical error ensuring offscreen document." });
-                        });
-                    return true; // Crucial for async sendResponse
-
-                case "getOffscreenStatus": // Message from popup to check offscreen status
-                    if (chrome.offscreen && typeof chrome.offscreen.hasDocument === 'function') {
-                        chrome.offscreen.hasDocument()
-                            .then(hasDoc => {
-                                sendResponse({ hasDocument: hasDoc });
-                            })
-                            .catch(err => {
-                                console.error("[Background] Error checking offscreen document status:", err);
-                                sendResponse({ hasDocument: false, error: err.message });
-                            });
-                    } else {
-                        console.error("[Background] chrome.offscreen.hasDocument API not available for getOffscreenStatus.");
-                        sendResponse({ hasDocument: false, error: "Offscreen API not available." });
-                    }
-                    return true; // Crucial for asynchronous sendResponse
-
-                // Messages from the Offscreen Document to be relayed or processed
-                case "fromOffscreen":
-                    console.log("[Background] Message from Offscreen Document:", message.payload);
-                    // Example: Relay to popups or handle specific offscreen messages
-                    if (message.payload && message.payload.type === "log") {
-                        console.log("[Offscreen Log]", message.payload.message);
-                    } else {
-                        notifyPopups({ type: "fromOffscreen", payload: message.payload });
-                    }
-                    sendResponse({ success: true, message: "Received by background." }); // Acknowledge to offscreen
-                    return true; // If any async processing or if sendResponse matters for channel.
-
-                default:
-                    console.warn("[Background] Unhandled message type:", message.type, message);
-                    // sendResponse({ success: false, error: "Unknown message type." }); // Optional: respond for unhandled types
-                    // If not sending a response, don't return true.
-                    break;
-            }
-            // If a response hasn't been sent and it's not an async path, the channel will close.
-            // Only return true if sendResponse will be called asynchronously.
-        });
-
-        // Handle connections from popups
-        if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onConnect) {
-            chrome.runtime.onConnect.addListener(function (port) {
-                if (port.name === "popup") {
-                    popupPorts.add(port);
-                    console.log("[Background] Popup port connected:", port.name, "Total ports:", popupPorts.size);
-
-                    // Immediately send current state to the newly connected popup
-                    try {
-                        const currentState = {
-                            type: "initialState",
-                            peerId,
-                            connectedPeers: [...connectedPeers], // Send a copy of current connectedPeers
-                            wsConnected: wsClient?.getReadyState() === WebSocket.OPEN,
-                            sessionInfo: null, // No direct webrtcManager usage
-                            invites: [], // No direct webrtcManager usage
-                            meshStatus: { type: 0 },
-                            dkgState: 0,
-                        };
-                        console.log("[Background] Sending 'initialState' to new popup port. connectedPeers:", currentState.connectedPeers);
-                        port.postMessage(currentState);
-                    } catch (e) {
-                        console.error("[Background] Error sending initial state to popup port:", e);
-                    }
-
-                    port.onDisconnect.addListener(function () {
-                        popupPorts.delete(port);
-                        console.log("[Background] Popup port disconnected. Total ports:", popupPorts.size);
-                    });
-                } else {
-                    console.log("[Background] Port connected (not popup):", port.name);
-                    port.onDisconnect.addListener(function () {
-                        console.log("[Background] Port disconnected (not popup):", port.name);
-                    });
+                const recreateResult = await ensureOffscreenDocument();
+                if (!recreateResult.success) {
+                    console.error(`[Background] Failed to recreate offscreen document:`, recreateResult.error);
+                    return { success: false, error: `Failed to recreate offscreen: ${recreateResult.error}` };
                 }
+
+                // Wait a bit longer for the recreated document to be ready
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+
+            if (attempt < maxRetries) {
+                console.log(`[Background] Waiting ${retryDelay}ms before retry...`);
+                await new Promise(resolve => setTimeout(resolve, retryDelay));
+                // Increase delay for next retry to give more time
+                retryDelay = retryDelay * 1.5;
+            }
+        }
+    }
+
+    return { success: false, error: `Failed after ${maxRetries} attempts. Last error: ${lastError}` };
+}
+
+// WebSocket client setup
+let wsClient: WebSocketClient | null = null;
+let peers: string[] = [];
+let appState: AppState = {
+    peerId: "",
+    connectedPeers: [],
+    wsConnected: false,
+    sessionInfo: null,
+    invites: [],
+    meshStatus: { type: MeshStatusType.Incomplete },
+    dkgState: DkgState.Idle,
+    webrtcConnections: {}
+};
+
+// Broadcast state to all connected popup ports
+function broadcastToPopupPorts(message: PopupMessage) {
+    console.log("[Background] Broadcasting to", popupPorts.size, "popup ports:", message);
+    popupPorts.forEach(port => {
+        try {
+            port.postMessage(message);
+            console.log("[Background] Successfully sent message to popup port");
+        } catch (error) {
+            console.error("[Background] Error sending message to popup port:", error);
+            popupPorts.delete(port);
+        }
+    });
+}
+
+export default defineBackground(() => {
+    // Initialize WebSocket when background starts
+    console.log("[Background] Background script starting...");
+
+    // Set up popup port connections
+    chrome.runtime.onConnect.addListener((port) => {
+        if (port.name === "popup") {
+            console.log("[Background] Popup connected");
+            popupPorts.add(port);
+
+            // Send current state to newly connected popup
+            const initialStateMessage: InitialStateMessage = {
+                type: "initialState",
+                ...appState
+            };
+            console.log("[Background] Sending initial state to popup:", initialStateMessage);
+            port.postMessage(initialStateMessage);
+
+            port.onDisconnect.addListener(() => {
+                console.log("[Background] Popup disconnected");
+                popupPorts.delete(port);
             });
         }
-    },
-    persistent: true,
-});
+    });
 
-// Initialize websocket and webrtc state
-let wsClient: WebSocketClient | null = null;
-let webrtcManager: WebRTCManager | null = null; // Add this declaration
-let peerId: string = "";
-let connectedPeers: string[] = [];
+    // Initialize offscreen document on startup
+    ensureOffscreenDocument().then(result => {
+        console.log("[Background] Initial offscreen document setup:", result);
+    });
 
-// Add this at the global scope to keep track of active session proposals
-let sessionProposals: {
-    [sessionId: string]: {
-        proposer: string;
-        data: any;
-    }
-} = {};
+    // Simplified message handling with runtime validation
+    chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) => {
+        console.log("[Background] Received message:", message, "from sender:", sender);
 
-// Notify all open popups of state changes
-function notifyPopups(message: any) {
-    if (popupPorts.size > 0) {
-        console.log(`[Background] Notifying ${popupPorts.size} popup ports with message:`, message);
-        popupPorts.forEach(port => {
+        // Validate basic message structure
+        if (!validateMessage(message)) {
+            console.warn("[Background] Invalid message structure:", message);
+            sendResponse({ success: false, error: "Invalid message structure" });
+            return true;
+        }
+
+        // Handle async operations
+        (async () => {
             try {
-                port.postMessage(message);
-            } catch (e) {
-                console.error("[Background] Error posting message to a popup port (port might be closed or invalid):", e);
-                // It's generally better to let the onDisconnect handler remove the port
-            }
-        });
-    } else {
-        // This log indicates that no popup is currently connected via a port to receive this specific push.
-        // The popup will rely on its polling (`getState`) or the `initialState` message upon its next connection.
-        console.warn("[Background] notifyPopups: No active popup ports. Message not pushed via port:", message);
-    }
-}
+                // Simple switch on message type with runtime validation
+                switch (message.type) {
+                    case MESSAGE_TYPES.GET_STATE:
+                        // If WebSocket is connected but we have no peers, request peer list first
+                        if (wsClient?.getReadyState() === WebSocket.OPEN && appState.connectedPeers.length === 0) {
+                            console.log("[Background] getState called with empty peer list but WebSocket connected - requesting fresh peer list");
+                            try {
+                                wsClient.listPeers();
+                                console.log("[Background] Fresh peer list request sent");
+                            } catch (error) {
+                                console.error("[Background] Error requesting fresh peer list:", error);
+                            }
+                        }
+                        sendResponse(appState);
+                        break;
 
-// Initialize the WebSocket connection and WebRTC manager
-async function initializeConnection() {
-    try {
-        const WEBSOCKET_URL = "wss://auto-life.tech";
-        let storedPeerId = await storage.getItem<string>("local:peer_id");
-        // Ensure peerId is in the desired format or generate a new one
-        if (!storedPeerId || !storedPeerId.startsWith("mpc-")) {
-            storedPeerId = `mpc-${Math.random().toString(36).substring(2, 7)}`;
-            await storage.setItem("local:peer_id", storedPeerId);
-            console.log("[Background] Generated new Peer ID:", storedPeerId);
-        }
-        peerId = storedPeerId;
-        console.log("[Background] Using Peer ID:", peerId);
+                    case MESSAGE_TYPES.GET_WEBRTC_STATE:
+                        console.log("[Background] GET_WEBRTC_STATE request, returning:", appState.webrtcConnections);
+                        sendResponse({ webrtcConnections: appState.webrtcConnections });
+                        break;
 
-        const offscreenResult = await ensureOffscreenDocument();
-        console.log("[Background] Initial ensureOffscreenDocument result:", offscreenResult);
-        if (!offscreenResult.success || (offscreenResult.created && offscreenResult.error && offscreenResult.error.includes("Init send failed"))) {
-            console.error("[Background] Offscreen document setup might have issues. WebRTC features may be impaired if init message failed.");
-        }
+                    case MESSAGE_TYPES.LIST_PEERS:
+                        console.log("[Background] LIST_PEERS request received. WebSocket state:", wsClient?.getReadyState());
+                        if (wsClient?.getReadyState() === WebSocket.OPEN) {
+                            try {
+                                console.log("[Background] Sending peer list request to server");
+                                wsClient.listPeers();
+                                console.log("[Background] Peer list request sent successfully");
+                                sendResponse({ success: true });
+                            } catch (error) {
+                                console.error("[Background] Error requesting peer list:", error);
+                                sendResponse({ success: false, error: (error as Error).message });
+                            }
+                        } else {
+                            console.warn("[Background] WebSocket not connected, cannot list peers. Ready state:", wsClient?.getReadyState());
+                            sendResponse({ success: false, error: "WebSocket not connected" });
+                        }
+                        break;
 
-        wsClient = new WebSocketClient(WEBSOCKET_URL);
+                    case MESSAGE_TYPES.RELAY:
+                        if ('to' in message && 'data' in message && wsClient?.getReadyState() === WebSocket.OPEN) {
+                            try {
+                                await wsClient.relayMessage(message.to as string, message.data);
+                                sendResponse({ success: true });
+                            } catch (error) {
+                                console.error("[Background] Error relaying message:", error);
+                                sendResponse({ success: false, error: (error as Error).message });
+                            }
+                        } else {
+                            sendResponse({ success: false, error: "Invalid relay message or WebSocket not connected" });
+                        }
+                        break;
 
-        wsClient.onOpen(() => {
-            console.log("[Background] WebSocket connected. Registering peer:", peerId);
-            wsClient?.register(peerId);
-            notifyPopups({ type: "wsStatus", connected: true });
-        });
+                    case MESSAGE_TYPES.CREATE_OFFSCREEN:
+                        const createResult = await ensureOffscreenDocument();
+                        sendResponse(createResult);
+                        break;
 
-        wsClient.onMessage((message: ServerMsg) => {
-            console.log("[Background] Message from server:", message);
+                    case MESSAGE_TYPES.GET_OFFSCREEN_STATUS:
+                        const hasDocument = chrome.offscreen ? await chrome.offscreen.hasDocument() : false;
+                        sendResponse({
+                            hasDocument,
+                            ready: offscreenDocumentReady,
+                            initSent: offscreenInitSent
+                        });
+                        break;
 
-            // General notification for all server messages (e.g., for logging in popup)
-            notifyPopups({ type: "wsMessage", message });
+                    case MESSAGE_TYPES.FROM_OFFSCREEN:
+                        if ('payload' in message) {
+                            await handleOffscreenMessage(message.payload as OffscreenMessage);
+                            sendResponse({ success: true });
+                        } else {
+                            sendResponse({ success: false, error: "FromOffscreen message missing payload" });
+                        }
+                        break;
 
-            if (message.type === "peers") {
-                const newPeers = message.peers || [];
-                // Update global connectedPeers only if it has changed
-                if (JSON.stringify(connectedPeers) !== JSON.stringify(newPeers)) {
-                    console.log("[Background] Peers list changed. Old:", connectedPeers, "New:", newPeers);
-                    connectedPeers = [...newPeers]; // Update the global list reactively
+                    case MESSAGE_TYPES.OFFSCREEN_READY:
+                        console.log("[Background] Received offscreenReady signal");
+                        offscreenDocumentReady = true;
+
+                        if (pendingOffscreenInitData && !offscreenInitSent) {
+                            console.log("[Background] Sending pending init data to newly ready offscreen document");
+                            const initResult = await safelySendOffscreenMessage({
+                                type: "fromBackground",
+                                payload: {
+                                    type: "init",
+                                    ...pendingOffscreenInitData
+                                }
+                            }, "init");
+
+                            if (initResult.success) {
+                                console.log("[Background] Successfully sent init data to offscreen document");
+                                offscreenInitSent = true;
+                                pendingOffscreenInitData = null;
+                            } else {
+                                console.warn("[Background] Failed to send init data to offscreen document:", initResult.error);
+                            }
+                        } else {
+                            console.log("[Background] Offscreen ready but no pending init data or already sent. PendingData:", !!pendingOffscreenInitData, "InitSent:", offscreenInitSent);
+                        }
+                        sendResponse({ success: true });
+                        break;
+
+                    case "requestInit":
+                        console.log("[Background] Received requestInit from offscreen");
+                        if (pendingOffscreenInitData || appState.peerId) {
+                            const initData = pendingOffscreenInitData || {
+                                peerId: appState.peerId,
+                                wsUrl: "wss://auto-life.tech"
+                            };
+
+                            console.log("[Background] Sending init data in response to request:", initData);
+                            const initResult = await safelySendOffscreenMessage({
+                                type: "fromBackground",
+                                payload: {
+                                    type: "init",
+                                    ...initData
+                                }
+                            }, "requestedInit");
+
+                            if (initResult.success) {
+                                console.log("[Background] Successfully sent requested init data");
+                                offscreenInitSent = true;
+                                pendingOffscreenInitData = null;
+                                sendResponse({ success: true, message: "Init data sent" });
+                            } else {
+                                console.warn("[Background] Failed to send requested init data:", initResult.error);
+                                sendResponse({ success: false, error: initResult.error });
+                            }
+                        } else {
+                            console.warn("[Background] No init data available to send");
+                            sendResponse({ success: false, error: "No init data available" });
+                        }
+                        break;
+
+                    case MESSAGE_TYPES.PROPOSE_SESSION:
+                        if (validateSessionProposal(message)) {
+                            console.log("[Background] Received session proposal request:", message);
+
+                            // Create session proposal data
+                            const proposalData = {
+                                websocket_msg_type: "SessionProposal",
+                                session_id: message.session_id,
+                                total: message.total,
+                                threshold: message.threshold,
+                                participants: message.participants
+                            };
+
+                            // Send proposal to all participants via WebSocket
+                            if (wsClient?.getReadyState() === WebSocket.OPEN) {
+                                const participantsToNotify = message.participants.filter(p => p !== appState.peerId);
+
+                                console.log("[Background] Sending session proposal to participants:", participantsToNotify);
+
+                                Promise.all(participantsToNotify.map(async (peerId) => {
+                                    try {
+                                        await wsClient!.relayMessage(peerId, proposalData);
+                                        console.log(`[Background] Session proposal sent to ${peerId}`);
+                                    } catch (error) {
+                                        console.error(`[Background] Failed to send proposal to ${peerId}:`, error);
+                                    }
+                                })).then(() => {
+                                    console.log("[Background] All session proposals sent");
+                                    sendResponse({ success: true });
+                                }).catch((error) => {
+                                    console.error("[Background] Error sending session proposals:", error);
+                                    sendResponse({ success: false, error: error.message });
+                                });
+                            } else {
+                                sendResponse({ success: false, error: "WebSocket not connected" });
+                            }
+                        } else {
+                            sendResponse({ success: false, error: "Invalid session proposal" });
+                        }
+                        break;
+
+                    case MESSAGE_TYPES.ACCEPT_SESSION:
+                        if (validateSessionAcceptance(message)) {
+                            console.log("[Background] Received session acceptance:", message);
+
+                            // Find the session in invites
+                            const sessionIndex = appState.invites.findIndex(invite => invite.session_id === message.session_id);
+
+                            if (sessionIndex >= 0) {
+                                const session = appState.invites[sessionIndex];
+
+                                if (message.accepted) {
+                                    console.log("[Background] Accepting session:", session.session_id);
+
+                                    // Move from invites to current session
+                                    appState.sessionInfo = { ...session, status: "accepted" };
+                                    appState.invites.splice(sessionIndex, 1);
+
+                                    // Ensure this peer is in the accepted peers list
+                                    if (!appState.sessionInfo.accepted_peers.includes(appState.peerId)) {
+                                        appState.sessionInfo.accepted_peers.push(appState.peerId);
+                                    }
+
+                                    console.log("[Background] Updated accepted peers:", appState.sessionInfo.accepted_peers);
+
+                                    // Send acceptance message to other participants
+                                    const acceptanceData = {
+                                        websocket_msg_type: "SessionResponse",
+                                        session_id: message.session_id,
+                                        accepted: true,
+                                        peer_id: appState.peerId
+                                    };
+
+                                    if (wsClient?.getReadyState() === WebSocket.OPEN) {
+                                        // Send to all other participants
+                                        const otherParticipants = session.participants.filter(p => p !== appState.peerId);
+
+                                        Promise.all(otherParticipants.map(async (peerId) => {
+                                            try {
+                                                await wsClient!.relayMessage(peerId, acceptanceData);
+                                                console.log(`[Background] Session acceptance sent to ${peerId}`);
+                                            } catch (error) {
+                                                console.error(`[Background] Failed to send acceptance to ${peerId}:`, error);
+                                            }
+                                        })).then(() => {
+                                            console.log("[Background] All session acceptances sent");
+
+                                            // Broadcast session update to popup
+                                            broadcastToPopupPorts({
+                                                type: "sessionUpdate",
+                                                sessionInfo: appState.sessionInfo,
+                                                invites: appState.invites
+                                            } as any);
+
+                                            // Forward session info to offscreen for WebRTC setup
+                                            console.log("[Background] Forwarding session info to offscreen for WebRTC setup");
+
+                                            if (appState.sessionInfo) {
+                                                safelySendOffscreenMessage({
+                                                    type: "fromBackground",
+                                                    payload: {
+                                                        type: "sessionAccepted",
+                                                        sessionInfo: appState.sessionInfo,
+                                                        currentPeerId: appState.peerId
+                                                    }
+                                                }, "sessionAccepted");
+                                            } else {
+                                                console.error("[Background] Cannot forward session info: sessionInfo is null");
+                                            }
+
+                                            sendResponse({ success: true });
+                                        });
+                                    } else {
+                                        sendResponse({ success: false, error: "WebSocket not connected" });
+                                    }
+                                } else {
+                                    console.log("[Background] Declining session:", session.session_id);
+
+                                    // Remove from invites
+                                    appState.invites.splice(sessionIndex, 1);
+
+                                    // Send decline message
+                                    const declineData = {
+                                        websocket_msg_type: "SessionResponse",
+                                        session_id: message.session_id,
+                                        accepted: false,
+                                        peer_id: appState.peerId
+                                    };
+
+                                    if (wsClient?.getReadyState() === WebSocket.OPEN) {
+                                        const otherParticipants = session.participants.filter(p => p !== appState.peerId);
+
+                                        Promise.all(otherParticipants.map(async (peerId) => {
+                                            try {
+                                                await wsClient!.relayMessage(peerId, declineData);
+                                                console.log(`[Background] Session decline sent to ${peerId}`);
+                                            } catch (error) {
+                                                console.error(`[Background] Failed to send decline to ${peerId}:`, error);
+                                            }
+                                        }));
+                                    }
+
+                                    // Broadcast session update to popup
+                                    broadcastToPopupPorts({
+                                        type: "sessionUpdate",
+                                        sessionInfo: appState.sessionInfo,
+                                        invites: appState.invites
+                                    } as any);
+
+                                    sendResponse({ success: true });
+                                }
+                            } else {
+                                sendResponse({ success: false, error: "Session not found in invites" });
+                            }
+                        } else {
+                            sendResponse({ success: false, error: "Invalid session acceptance" });
+                        }
+                        break;
+
+                    case MESSAGE_TYPES.SEND_DIRECT_MESSAGE:
+                        console.log("[Background] Received sendDirectMessage request:", message);
+                        if ('toPeerId' in message && 'message' in message &&
+                            typeof message.toPeerId === 'string' && typeof message.message === 'string') {
+                            // Forward to offscreen document
+                            const result = await safelySendOffscreenMessage({
+                                type: "fromBackground",
+                                payload: {
+                                    type: "sendDirectMessage",
+                                    toPeerId: message.toPeerId,
+                                    message: message.message
+                                }
+                            }, "sendDirectMessage");
+
+                            if (result.success) {
+                                sendResponse({ success: true, message: "Direct message sent to offscreen" });
+                            } else {
+                                sendResponse({ success: false, error: `Failed to send to offscreen: ${result.error}` });
+                            }
+                        } else {
+                            sendResponse({ success: false, error: "Missing or invalid toPeerId or message" });
+                        }
+                        break;
+
+                    case MESSAGE_TYPES.GET_WEBRTC_STATUS:
+                        console.log("[Background] Received getWebRTCStatus request");
+                        // Forward to offscreen document
+                        const webrtcResult = await safelySendOffscreenMessage({
+                            type: "fromBackground",
+                            payload: {
+                                type: "getWebRTCStatus"
+                            }
+                        }, "getWebRTCStatus");
+
+                        if (webrtcResult.success) {
+                            sendResponse({ success: true, message: "WebRTC status request sent to offscreen" });
+                        } else {
+                            sendResponse({ success: false, error: `Failed to get WebRTC status: ${webrtcResult.error}` });
+                        }
+                        break;
+
+                    default:
+                        if (isRpcMessage(message)) {
+                            const result = await handleRpcRequest(message.payload);
+                            sendResponse({ success: true, result });
+                        } else if (isAccountManagement(message)) {
+                            sendResponse({ success: false, error: "Account management not implemented" });
+                        } else if (isNetworkManagement(message)) {
+                            sendResponse({ success: false, error: "Network management not implemented" });
+                        } else if (isUIRequest(message)) {
+                            const result = await handleUIRequest(message.payload);
+                            sendResponse(result);
+                        } else {
+                            console.warn("[Background] Unknown message type:", message.type);
+                            sendResponse({ success: false, error: `Unknown message type: ${message.type}` });
+                        }
+                        break;
                 }
-                // Always send peerList update to ensure popups get the latest, even if it's the same.
-                // Or, only send if changed, but initialState on connect should cover late popups.
-                notifyPopups({ type: "peerList", peers: [...connectedPeers] });
+            } catch (error) {
+                console.error("[Background] Error handling message:", error);
+                sendResponse({ success: false, error: (error as Error).message });
+            }
+        })();
 
-            } else if (message.type === "relay") {
-                if (message.from) {
-                    handleRelayMessage(message.from, message.data);
+        return true;
+    });
+
+    // Simplified offscreen message handling
+    async function handleOffscreenMessage(payload: OffscreenMessage) {
+        console.log("[Background] Handling offscreen message:", payload);
+
+        switch (payload.type) {
+            case "webrtcStatusUpdate":
+                // Handle WebRTC status updates from offscreen
+                if ('peerId' in payload && 'status' in payload) {
+                    console.log(`[Background] WebRTC status update for ${payload.peerId}: ${payload.status}`);
+                    // Forward to popup if needed
+                    broadcastToPopupPorts({
+                        type: "webrtcStatusUpdate",
+                        peerId: payload.peerId,
+                        status: payload.status
+                    } as any);
                 } else {
-                    console.error("[Background] Relay message received without 'from' field:", message);
-                }
-            }
-        });
-
-        wsClient.onError((event: Event) => {
-            console.error("[Background] WebSocket error:", event);
-            notifyPopups({ type: "wsError", error: "Connection error" });
-        });
-
-        wsClient.onClose((event: CloseEvent) => {
-            console.log("[Background] WebSocket disconnected:", event.reason);
-            notifyPopups({ type: "wsStatus", connected: false, reason: event.reason });
-
-            // Try to reconnect after a delay
-            setTimeout(() => {
-                console.log("[Background] Attempting to reconnect...");
-                wsClient?.connect();
-            }, 5000); // Add timeout value - 5000ms
-        }); // <-- Fixed: Properly close the onClose handler
-
-        // Initialize WebRTC Manager - moved outside the onClose handler
-        webrtcManager = new WebRTCManager(wsClient, peerId);
-
-        // Set up WebRTC event handlers
-        webrtcManager.onLog = (message) => {
-            console.log(`[WebRTC] ${message}`);
-        };
-
-        webrtcManager.onSessionUpdate = (sessionInfo, invites) => {
-            notifyPopups({ type: "sessionUpdate", sessionInfo, invites });
-        };
-
-        webrtcManager.onMeshStatusUpdate = (status) => {
-            notifyPopups({ type: "meshStatusUpdate", status });
-        };
-
-        webrtcManager.onWebRTCAppMessage = (fromPeerId, message) => {
-            console.log(`[WebRTC] App message from ${fromPeerId}:`, message);
-            notifyPopups({ type: "webrtcMessage", fromPeerId, message });
-        };
-
-        webrtcManager.onDkgStateUpdate = (state) => {
-            notifyPopups({ type: "dkgStateUpdate", state });
-        };
-
-        wsClient.connect();
-
-    } catch (error) {
-        console.error("[Background] Initialization error:", error);
-    }
-}
-
-// Handle relay messages - this is key for processing session proposals
-async function handleRelayMessage(fromPeerId: string, data: any) {
-    try {
-        console.log(`[Background] Received relay message from ${fromPeerId}:`, JSON.stringify(data));
-
-        let offscreenExists = false;
-        if (chrome.offscreen && typeof chrome.offscreen.hasDocument === 'function') {
-            offscreenExists = await chrome.offscreen.hasDocument();
-        }
-
-        if (offscreenExists) {
-            console.log("[Background] Offscreen document confirmed to exist. Attempting to forward relay message.");
-            try {
-                await chrome.runtime.sendMessage({
-                    type: "fromBackground",
-                    payload: {
-                        type: "relayMessage",
-                        fromPeerId,
-                        data
-                    }
-                });
-                console.log("[Background] Successfully forwarded relay message to offscreen document.");
-            } catch (err: any) {
-                console.error("[Background] Error forwarding relay to offscreen (even after confirming existence):", err.message);
-                console.warn("[Background] Falling back to local processing for relay message due to offscreen forward error.");
-                processRelayMessageLocally(fromPeerId, data);
-            }
-        } else {
-            console.warn("[Background] Offscreen document does not exist at time of relay. Falling back to local processing.");
-            processRelayMessageLocally(fromPeerId, data);
-        }
-    } catch (error: any) {
-        console.error(`[Background] Broader error in handleRelayMessage (e.g., from hasDocument) for message from ${fromPeerId}:`, error.message);
-        console.warn("[Background] Falling back to local processing due to broader error in handleRelayMessage.");
-        processRelayMessageLocally(fromPeerId, data);
-    }
-}
-
-// Fallback processing for relay messages if offscreen document isn't available
-async function processRelayMessageLocally(fromPeerId: string, data: any) {
-    // Check for websocket_msg_type which is present in both formats
-    if (data && data.websocket_msg_type) {
-        console.log(`[Background] Fallback processing ${data.websocket_msg_type} from ${fromPeerId}`);
-
-        // Handle different message formats:
-        // Format 1: { websocket_msg_type: "X", data: { ... } }
-        // Format 2: { websocket_msg_type: "X", session_id: "...", ... } (direct properties)
-
-        switch (data.websocket_msg_type) {
-            case "SessionProposal":
-                if (webrtcManager) {
-                    let proposalData: any;
-
-                    // Handle Format 1: Nested in data property
-                    if (data.data && data.data.session_id) {
-                        proposalData = {
-                            session_id: data.data.session_id,
-                            total: data.data.total,
-                            threshold: data.data.threshold,
-                            participants: data.data.participants
-                        };
-                    }
-                    // Handle Format 2: Direct properties
-                    else if (data.session_id) {
-                        proposalData = {
-                            session_id: data.session_id,
-                            total: data.total,
-                            threshold: data.threshold,
-                            participants: data.participants
-                        };
-                    }
-
-                    console.log("[Background] Parsed session proposal:", proposalData);
-
-                    if (proposalData && proposalData.session_id && Array.isArray(proposalData.participants)) {
-                        // Log session details for debugging
-                        console.log(`[Background] Session "${proposalData.session_id}" proposed with ${proposalData.total} participants, threshold ${proposalData.threshold}`);
-                        console.log(`[Background] Participants: ${JSON.stringify(proposalData.participants)}`);
-
-                        // Check if current peer is in participants list
-                        const isParticipant = proposalData.participants.includes(peerId);
-                        console.log(`[Background] Is local peer (${peerId}) a participant? ${isParticipant}`);
-
-                        webrtcManager.handleSessionProposal(fromPeerId, proposalData);
-
-                        // Store session proposal in case WebRTC signals arrive before session is fully established
-                        sessionProposals[proposalData.session_id] = {
-                            proposer: fromPeerId,
-                            data: proposalData
-                        };
-
-                    } else {
-                        console.error("[Background] Invalid SessionProposal content:", data);
-                    }
+                    console.warn("[Background] Invalid WebRTC status update payload:", payload);
                 }
                 break;
-
-            case "SessionResponse":
-                if (webrtcManager) {
-                    // ...existing code...
+            case "peerConnectionStatusUpdate":
+                // Handle peer connection status updates
+                if ('peerId' in payload && 'connectionState' in payload) {
+                    console.log(`[Background] Peer connection status update for ${payload.peerId}: ${payload.connectionState}`);
+                } else {
+                    console.warn("[Background] Invalid peer connection status update payload:", payload);
                 }
                 break;
-
-            case "WebRTCSignal":
-                if (webrtcManager) {
-                    console.log("[Background] Processing WebRTC signal:", data);
-                    let signalDataForManager: any = null;
-                    let sessionId = null;
-
-                    // Try to identify the session ID from the signal if possible
-                    if (data.session_id) {
-                        sessionId = data.session_id;
-                    } else if (data.data && data.data.session_id) {
-                        sessionId = data.data.session_id;
-                    }
-
-                    if (sessionId) {
-                        console.log(`[Background] WebRTC signal for session: ${sessionId}`);
-                    }
-
-                    // Get WebRTC signal content
-                    // Handle Format 1: Nested in data property
-                    if (data.data) {
-                        const signalContent = data.data;
-                        if (signalContent.Offer) {
-                            signalDataForManager = { type: 'Offer', data: signalContent.Offer };
-                        } else if (signalContent.Answer) {
-                            signalDataForManager = { type: 'Answer', data: signalContent.Answer };
-                        } else if (signalContent.Candidate) {
-                            signalDataForManager = { type: 'Candidate', data: signalContent.Candidate };
-                        }
-                    }
-                    // Handle Format 2: Direct properties
-                    else if (data.Offer) {
-                        signalDataForManager = { type: 'Offer', data: data.Offer };
-                    } else if (data.Answer) {
-                        signalDataForManager = { type: 'Answer', data: data.Answer };
-                    } else if (data.Candidate) {
-                        signalDataForManager = { type: 'Candidate', data: data.Candidate };
-                    }
-
-                    if (signalDataForManager) {
-                        console.log("[Background] Formatted WebRTC signal for manager:", signalDataForManager);
-
-                        // Log the current WebRTC state
-                        const activeSession = webrtcManager.sessionInfo ?
-                            webrtcManager.sessionInfo.session_id : "none";
-                        console.log(`[Background] Current active session: ${activeSession}`);
-
-                        // Attempt to process the WebRTC signal
-                        try {
-                            await webrtcManager.handleWebRTCSignal(fromPeerId, signalDataForManager);
-                        } catch (error) {
-                            console.warn(`[Background] WebRTCManager error during handleWebRTCSignal:`, error);
-                        }
-                    } else {
-                        console.error("[Background] Unrecognized WebRTC signal content:", data);
-                    }
+            case "dataChannelStatusUpdate":
+                // Handle data channel status updates
+                if ('peerId' in payload && 'channelName' in payload && 'state' in payload) {
+                    console.log(`[Background] Data channel ${payload.channelName} for ${payload.peerId}: ${payload.state}`);
+                } else {
+                    console.warn("[Background] Invalid data channel status update payload:", payload);
                 }
+                break;
+            case "relayViaWs":
+                if ('to' in payload && 'data' in payload && wsClient?.getReadyState() === WebSocket.OPEN) {
+                    try {
+                        await wsClient.relayMessage(payload.to as string, payload.data);
+                    } catch (error) {
+                        console.error("[Background] Error relaying via WebSocket:", error);
+                    }
+                } else {
+                    console.warn("[Background] Cannot relay message, WebSocket not connected or invalid payload");
+                }
+                break;
+            case "webrtcConnectionUpdate":
+                // Handle WebRTC connection updates
+
+                if ('peerId' in payload && 'connected' in payload) {
+                    console.log("[Background] Received WebRTC connection update:", {
+                        peerId: payload.peerId,
+                        connected: payload.connected
+                    });
+
+                    // Update appState with WebRTC connection info
+                    appState.webrtcConnections[payload.peerId] = payload.connected;
+                    console.log("[Background] Updated appState.webrtcConnections:", appState.webrtcConnections);
+
+                    console.log("[Background] Current popup ports count:", popupPorts.size);
+
+                    // Send WebRTC connection update directly to popup (not wrapped in fromOffscreen)
+                    const webrtcMessage = {
+                        type: "webrtcConnectionUpdate",
+                        peerId: payload.peerId,
+                        connected: payload.connected
+                    };
+
+                    console.log("[Background] Sending WebRTC connection update to popup:", webrtcMessage);
+                    broadcastToPopupPorts(webrtcMessage as any);
+
+                    console.log("[Background] WebRTC connection update sent to popup");
+                } else {
+                    console.warn("[Background] Invalid WebRTC connection update payload:", payload);
+                }
+                break;
+            case "meshStatusUpdate":
+                // Handle mesh status updates from offscreen
+                console.log("[Background] Received mesh status update from offscreen:", payload);
+
+                // Update local app state
+                appState.meshStatus = payload.status || { type: MeshStatusType.Incomplete };
+
+                // Broadcast mesh status update directly to popup
+                broadcastToPopupPorts({
+                    type: "meshStatusUpdate",
+                    status: appState.meshStatus
+                } as any);
+                break;
+            case "dkgStateUpdate":
+                // Handle DKG state updates from offscreen
+                console.log("[Background] Received DKG state update from offscreen:", payload);
+
+                // Update local app state
+                appState.dkgState = payload.state || DkgState.Idle;
+
+                // Broadcast DKG state update directly to popup
+                broadcastToPopupPorts({
+                    type: "dkgStateUpdate",
+                    state: appState.dkgState
+                } as any);
                 break;
             default:
-                console.log(`[Background] Unknown websocket_msg_type: ${data.websocket_msg_type}`);
+                // Forward other messages to popup wrapped in fromOffscreen
+                console.log("[Background] Forwarding unknown message to popup:", payload);
+                broadcastToPopupPorts({
+                    type: "fromOffscreen",
+                    payload
+                });
                 break;
         }
-    } else {
-        console.log(`[Background] Unknown or malformed relay message format from ${fromPeerId}:`, data);
     }
-}
 
-// Utility to ensure offscreen document exists (call only in background)
-// async function ensureOffscreenDocument() { ... } // This function is now defined above defineBackground
+    // Initialize WebSocket connection
+    const initializeWebSocket = async () => {
+        try {
+            const WEBSOCKET_URL = "wss://auto-life.tech";
+            wsClient = new WebSocketClient(WEBSOCKET_URL);
 
-// Listen for popup requests to create offscreen document
-// REMOVED: This is now handled in the consolidated listener
-// chrome.runtime.onMessage.addListener((message, sender, sendResponse) => { ... });
+            // Generate peer ID
+            appState.peerId = "mpc-2";
+            console.log("[Background] Generated peer ID:", appState.peerId);
 
-// Forward messages between popup/background and offscreen document
-// REMOVED: This is now handled in the consolidated listener
-// chrome.runtime.onMessage.addListener((message, sender, sendResponse) => { ... });
+            // Set up event handlers BEFORE connecting
+            console.log("[Background] Setting up WebSocket event handlers");
 
-// Listen for messages from offscreen and forward to popup(s)
-// REMOVED: This is now handled in the consolidated listener
-// chrome.runtime.onMessage.addListener((message, sender, sendResponse) => { ... });
+            // Set up event handlers using the WebSocketClient's callback system
+            wsClient.onOpen(() => {
+                console.log("[Background] WebSocket onOpen event triggered - connection established");
+                appState.wsConnected = true;
 
-chrome.runtime.onInstalled.addListener(async (details) => {
-    console.log("[Background] onInstalled event:", details.reason);
-    const offscreenResult = await ensureOffscreenDocument();
-    console.log("[Background] onInstalled ensureOffscreenDocument result:", offscreenResult);
-    // Other onInstalled tasks...
+                // Broadcast connection status immediately to any connected popups
+                console.log("[Background] Broadcasting wsConnected=true to popups. Current popup ports:", popupPorts.size);
+                broadcastToPopupPorts({ type: "wsStatus", connected: true });
+
+                // Also broadcast updated full state
+                const stateUpdate: InitialStateMessage = {
+                    type: "initialState",
+                    ...appState
+                };
+                console.log("[Background] Broadcasting full state update:", stateUpdate);
+                broadcastToPopupPorts(stateUpdate as PopupMessage);
+
+                // Register with server
+                console.log("[Background] Registering with server as peer:", appState.peerId);
+                try {
+                    wsClient!.register(appState.peerId);
+                    console.log("[Background] Registration sent to server");
+                } catch (regError) {
+                    console.error("[Background] Error during registration:", regError);
+                }
+
+                // Request initial peer list with delay to ensure registration is processed
+                setTimeout(() => {
+                    console.log("[Background] Requesting initial peer list from server");
+                    if (wsClient && wsClient.getReadyState() === WebSocket.OPEN) {
+                        wsClient.listPeers();
+                        console.log("[Background] Initial peer list request sent successfully");
+                    } else {
+                        console.warn("[Background] WebSocket not ready for peer list request");
+                    }
+                }, 1000); // 1 second delay
+
+                // Store init data for offscreen
+                pendingOffscreenInitData = {
+                    peerId: appState.peerId,
+                    wsUrl: WEBSOCKET_URL
+                };
+
+                console.log("[Background] Stored pending init data:", pendingOffscreenInitData);
+
+                // Send to offscreen if ready
+                if (offscreenDocumentReady && !offscreenInitSent) {
+                    console.log("[Background] Offscreen is ready, sending init data immediately");
+                    safelySendOffscreenMessage({
+                        type: "fromBackground",
+                        payload: {
+                            type: "init",
+                            ...pendingOffscreenInitData
+                        }
+                    }, "init").then(result => {
+                        if (result.success) {
+                            console.log("[Background] Successfully sent init data immediately");
+                            offscreenInitSent = true;
+                            pendingOffscreenInitData = null;
+                        } else {
+                            console.warn("[Background] Failed to send init data immediately:", result.error);
+                        }
+                    });
+                } else {
+                    console.log("[Background] Offscreen not ready yet, init data will be sent when ready. Ready:", offscreenDocumentReady, "InitSent:", offscreenInitSent);
+
+                    // If offscreen is ready but we haven't sent init yet, try again with the new pending data
+                    if (offscreenDocumentReady && !offscreenInitSent) {
+                        console.log("[Background] Offscreen was ready, retrying init data send");
+                        setTimeout(() => {
+                            if (pendingOffscreenInitData && !offscreenInitSent) {
+                                safelySendOffscreenMessage({
+                                    type: "fromBackground",
+                                    payload: {
+                                        type: "init",
+                                        ...pendingOffscreenInitData
+                                    }
+                                }, "init").then(result => {
+                                    if (result.success) {
+                                        console.log("[Background] Successfully sent init data on retry");
+                                        offscreenInitSent = true;
+                                        pendingOffscreenInitData = null;
+                                    } else {
+                                        console.warn("[Background] Failed to send init data on retry:", result.error);
+                                    }
+                                });
+                            }
+                        }, 100); // Small delay to ensure state is consistent
+                    }
+                }
+            });
+
+            wsClient.onClose((event) => {
+                console.log("[Background] WebSocket onClose event triggered, event:", event);
+                appState.wsConnected = false;
+
+                // Broadcast disconnection status
+                console.log("[Background] Broadcasting wsConnected=false to popups");
+                broadcastToPopupPorts({ type: "wsStatus", connected: false });
+
+                // Also broadcast updated state
+                const disconnectedState: InitialStateMessage = {
+                    type: "initialState",
+                    ...appState
+                };
+                broadcastToPopupPorts(disconnectedState as PopupMessage);
+            });
+
+            wsClient.onError((error) => {
+                console.error("[Background] WebSocket onError event triggered, error:", error);
+                appState.wsConnected = false;
+
+                // Broadcast error and disconnection status
+                broadcastToPopupPorts({
+                    type: "wsError",
+                    error: error.toString()
+                });
+                broadcastToPopupPorts({ type: "wsStatus", connected: false });
+
+                // Also broadcast updated state
+                const errorState: InitialStateMessage = {
+                    type: "initialState",
+                    ...appState
+                };
+                broadcastToPopupPorts(errorState as PopupMessage);
+            });
+
+            // Set up the message handler
+            wsClient.onMessage((message: any) => {
+                console.log("[Background] WebSocket message received:", message);
+
+                // Cast to ServerMsg after receiving
+                const serverMessage = message as ServerMsg;
+                broadcastToPopupPorts({ type: "wsMessage", message: serverMessage });
+
+                // Helper function to handle relay messages
+                const handleRelayMessage = (msg: ServerMsg & { type: "relay" }, messageType: string) => {
+                    console.log(`[Background] Received ${messageType} message from server:`, msg);
+                    const data = msg.data as WebSocketMessagePayload;
+
+                    switch (data.websocket_msg_type) {
+                        case "WebRTCSignal":
+                            console.log("[Background] WebRTC signal received:", data);
+                            // Forward WebRTC signal to offscreen
+                            const relayViaWs: OffscreenMessage = {
+                                type: "relayViaWs",
+                                to: msg.from,
+                                data: data
+                            };
+
+                            safelySendOffscreenMessage({
+                                type: "fromBackground",
+                                payload: relayViaWs
+                            }, "webrtc signal").then(result => {
+                                if (!result.success) {
+                                    console.warn("[Background] Failed to relay WebRTC signal to offscreen:", result.error);
+                                }
+                            });
+                            break;
+
+                        case "SessionProposal":
+                            console.log("[Background] Session proposal received:", data);
+                            // Handle session proposal
+                            handleSessionProposal(msg.from, data);
+                            break;
+
+                        case "SessionResponse":
+                            console.log("[Background] Session response received:", data);
+                            handleSessionResponse(msg.from, data);
+                            break;
+
+                        default:
+                            console.warn("[Background] Unknown relay message type:", (data as any).websocket_msg_type);
+                            break;
+                    }
+                };
+
+                // Helper function to handle peer list messages
+                const handlePeerListMessage = (msg: ServerMsg & { type: "peers" }, messageType: string) => {
+                    const peerList = msg.peers || [];
+                    peers = peerList;
+                    // Exclude current peer from connected peers list
+                    appState.connectedPeers = peerList.filter((peerId: string) => peerId !== appState.peerId);
+                    console.log(`[Background] Updated peer list from server (${messageType}):`, peerList);
+                    console.log(`[Background] Connected peers (excluding self):`, appState.connectedPeers);
+
+                    // Broadcast peer list update (excluding self)
+                    broadcastToPopupPorts({ type: "peerList", peers: appState.connectedPeers });
+
+                    // Also broadcast updated state
+                    const peerListState: InitialStateMessage = {
+                        type: "initialState",
+                        ...appState
+                    };
+                    broadcastToPopupPorts(peerListState as PopupMessage);
+                };
+
+                // Handle specific message types with proper null checks
+                switch (serverMessage.type) {
+                    case "peers": // Handle lowercase "peers" messages from server
+                        handlePeerListMessage(serverMessage as ServerMsg & { type: "peers" }, serverMessage.type);
+                        break;
+
+                    case "relay": // Handle lowercase "relay" messages from server
+                        handleRelayMessage(serverMessage as ServerMsg & { type: "relay" }, serverMessage.type);
+                        break;
+
+                    case "error":
+                        handleErrorMessage(serverMessage as ServerMsg & { type: "error" });
+                        break;
+
+                    default:
+                        console.log("[Background] Unhandled WebSocket message type:", (serverMessage as any).type);
+                        break;
+                }
+            });
+
+            // Now connect after event handlers are set up
+            console.log("[Background] Event handlers configured, attempting to connect to WebSocket:", WEBSOCKET_URL);
+            wsClient.connect();
+            console.log("[Background] WebSocket connect() method completed");
+
+        } catch (error) {
+            console.error("[Background] Failed to initialize WebSocket:", error);
+            appState.wsConnected = false;
+
+            broadcastToPopupPorts({
+                type: "wsError",
+                error: error instanceof Error ? error.message : "Unknown error"
+            });
+            broadcastToPopupPorts({ type: "wsStatus", connected: false });
+
+            // Also broadcast updated state
+            const initErrorState: InitialStateMessage = {
+                type: "initialState",
+                ...appState
+            };
+            broadcastToPopupPorts(initErrorState as PopupMessage);
+        }
+    };
+
+    // Start WebSocket connection
+    initializeWebSocket();
+
+    console.log("[Background] Background script initialized");
+
+    // Add session response handling function
+    function handleSessionResponse(fromPeerId: string, responseData: any) {
+        console.log("[Background] Handling session response from:", fromPeerId, "data:", responseData);
+
+        const { session_id, accepted } = responseData;
+        const peer_id = fromPeerId;
+
+        // Validate peer_id
+        if (!peer_id || typeof peer_id !== 'string') {
+            console.warn("[Background] Invalid peer_id in session response:", peer_id);
+            return;
+        }
+
+        // Find the target session
+        let targetSession = appState.sessionInfo;
+        if (!targetSession || targetSession.session_id !== session_id) {
+            const inviteIndex = appState.invites.findIndex(invite => invite.session_id === session_id);
+            if (inviteIndex >= 0) {
+                targetSession = appState.invites[inviteIndex];
+            }
+        }
+
+        if (targetSession && targetSession.session_id === session_id) {
+            console.log("[Background] Session response for known session:", session_id);
+
+            if (accepted) {
+                // Add peer to accepted peers list if not already there
+                if (peer_id && !targetSession.accepted_peers.includes(peer_id)) {
+                    targetSession.accepted_peers.push(peer_id);
+                    console.log("[Background] Added peer to accepted list:", peer_id);
+                    console.log("[Background] Current accepted peers:", targetSession.accepted_peers);
+                }
+            } else {
+                // Remove declining peer from accepted peers and participants
+                targetSession.accepted_peers = targetSession.accepted_peers.filter(p => p !== peer_id);
+                targetSession.participants = targetSession.participants.filter(p => p !== peer_id);
+                console.log("[Background] Removed declining peer:", peer_id);
+                console.log("[Background] Updated accepted peers:", targetSession.accepted_peers);
+                console.log("[Background] Updated participants:", targetSession.participants);
+            }
+
+            // Update current session if this is it
+            if (appState.sessionInfo && appState.sessionInfo.session_id === session_id) {
+                appState.sessionInfo = { ...targetSession };
+
+                // Check if all participants have now accepted
+                const allAccepted = appState.sessionInfo.participants.every(participantId =>
+                    appState.sessionInfo!.accepted_peers.includes(participantId)
+                );
+
+                console.log(`[Background] Session acceptance check - Participants: [${appState.sessionInfo.participants.join(', ')}], Accepted: [${appState.sessionInfo.accepted_peers.join(', ')}], All accepted: ${allAccepted}`);
+
+                if (allAccepted) {
+                    console.log("[Background] All participants have accepted the session! Notifying offscreen for mesh readiness.");
+
+                    // Send updated session info to offscreen to trigger mesh readiness check
+                    const sessionAllAcceptedMessage: OffscreenMessage = {
+                        type: "sessionAllAccepted",
+                        sessionInfo: appState.sessionInfo,
+                        currentPeerId: appState.peerId
+                    };
+
+                    safelySendOffscreenMessage({
+                        type: "fromBackground",
+                        payload: sessionAllAcceptedMessage
+                    }, "sessionAllAccepted");
+                } else {
+                    console.log(`[Background] Not all participants accepted yet.`);
+
+                    // Still send update to offscreen for tracking
+                    const sessionResponseUpdateMessage: OffscreenMessage = {
+                        type: "sessionResponseUpdate",
+                        sessionInfo: appState.sessionInfo,
+                        currentPeerId: appState.peerId
+                    };
+
+                    safelySendOffscreenMessage({
+                        type: "fromBackground",
+                        payload: sessionResponseUpdateMessage
+                    }, "sessionResponseUpdate");
+                }
+            }
+
+            // Broadcast session update to popup
+            broadcastToPopupPorts({
+                type: "sessionUpdate",
+                sessionInfo: appState.sessionInfo,
+                invites: appState.invites
+            } as any);
+
+            // Broadcast complete state update
+            const completeState: InitialStateMessage = {
+                type: "initialState",
+                ...appState
+            };
+            broadcastToPopupPorts(completeState as PopupMessage);
+
+            console.log("[Background] Session response processed and broadcasted");
+        } else {
+            console.warn("[Background] Received session response for unknown session:", session_id);
+        }
+    }
+
+    // Add session proposal handling function
+    function handleSessionProposal(fromPeerId: string, proposalData: any) {
+        console.log("[Background] Handling session proposal from:", fromPeerId, "data:", proposalData);
+
+        const sessionInfo: SessionInfo = {
+            session_id: proposalData.session_id,
+            total: proposalData.total,
+            threshold: proposalData.threshold,
+            participants: proposalData.participants || [],
+            proposer_id: fromPeerId,
+            accepted_peers: [fromPeerId], // Mark proposer as already accepted
+            status: "proposed"
+        };
+
+        // Check if this peer is included in the participants
+        const isParticipant = sessionInfo.participants.includes(appState.peerId);
+
+        if (isParticipant) {
+            console.log("[Background] This peer is included in session proposal, adding to invites");
+
+            // Check if we already have this session in our invites
+            const existingInviteIndex = appState.invites.findIndex(invite => invite.session_id === sessionInfo.session_id);
+
+            if (existingInviteIndex >= 0) {
+                console.log("[Background] Updating existing session invite");
+                appState.invites[existingInviteIndex] = sessionInfo;
+            } else {
+                console.log("[Background] Adding new session invite");
+                appState.invites.push(sessionInfo);
+            }
+
+            // If this peer is the proposer, automatically accept and set up WebRTC
+            if (fromPeerId === appState.peerId) {
+                console.log("[Background] This peer is the proposer, auto-accepting and setting up WebRTC");
+
+                appState.sessionInfo = { ...sessionInfo, status: "accepted" };
+                appState.invites = appState.invites.filter(inv => inv.session_id !== sessionInfo.session_id);
+
+                // Forward to offscreen for WebRTC setup
+                safelySendOffscreenMessage({
+                    type: "fromBackground",
+                    payload: {
+                        type: "sessionAccepted",
+                        sessionInfo: appState.sessionInfo,
+                        currentPeerId: appState.peerId
+                    }
+                }, "proposerWebRTCSetup");
+            }
+
+            // Broadcast session update to popup
+            broadcastToPopupPorts({
+                type: "sessionUpdate",
+                sessionInfo: appState.sessionInfo,
+                invites: appState.invites
+            } as any);
+
+            // Broadcast complete state
+            const proposalState: InitialStateMessage = {
+                type: "initialState",
+                ...appState
+            };
+            broadcastToPopupPorts(proposalState as PopupMessage);
+
+            console.log("[Background] Session proposal processed and broadcasted to popup");
+        } else {
+            console.log("[Background] This peer is not included in session proposal, ignoring");
+        }
+    }
+
+    // Add error message handler
+    function handleErrorMessage(msg: ServerMsg & { type: "error" }) {
+        console.error("[Background] Received error from server:", msg.error);
+    }
+
+    // ...existing code...
 });

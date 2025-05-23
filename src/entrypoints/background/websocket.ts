@@ -1,7 +1,11 @@
 // Based on /home/freeman.xiong/Documents/github/hecoinfo/crypto-rust-tools/webrtc-signal-server/src/lib.rs
-import type { ClientMsg, ServerMsg } from "./types";
+import type {
+    WebSocketClientMsg,
+    WebSocketServerMsg,
+    OffscreenToBackgroundMsg
+} from "../../types/messages";
 
-type MessageCallback = (message: ServerMsg) => void;
+type MessageCallback = (message: WebSocketServerMsg) => void;
 type ErrorCallback = (error: Event) => void;
 type CloseCallback = (event: CloseEvent) => void;
 type OpenCallback = (event: Event) => void;
@@ -11,7 +15,7 @@ export class WebSocketClient {
     private ws: WebSocket | null = null;
     private url: string;
     private onOpenCallbacks: Array<() => void> = [];
-    private onMessageCallbacks: Array<(message: ServerMsg) => void> = [];
+    private onMessageCallbacks: Array<(message: WebSocketServerMsg) => void> = [];
     private onErrorCallbacks: Array<(event: Event) => void> = [];
     private onCloseCallbacks: Array<(event: CloseEvent) => void> = [];
 
@@ -23,7 +27,7 @@ export class WebSocketClient {
         this.onOpenCallbacks.push(callback);
     }
 
-    public onMessage(callback: (message: ServerMsg) => void): void {
+    public onMessage(callback: (message: WebSocketServerMsg) => void): void {
         this.onMessageCallbacks.push(callback);
     }
 
@@ -45,10 +49,7 @@ export class WebSocketClient {
             };
 
             this.ws.onmessage = (event) => {
-                const message: ServerMsg = JSON.parse(event.data);
-                console.log("Received from server:", message);
-                console.log("Received from server:", message);
-                console.log("Received from server:", message);
+                const message: WebSocketServerMsg = JSON.parse(event.data);
                 console.log("Received from server:", message);
                 this.onMessageCallbacks.forEach(callback => callback(message));
             };
@@ -90,7 +91,7 @@ export class WebSocketClient {
         });
     }
 
-    private sendMessage(message: ClientMsg): void {
+    private sendMessage(message: WebSocketClientMsg): void {
         if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
             console.error("WebSocket is not connected. Cannot send message:", message);
             return;
@@ -106,6 +107,10 @@ export class WebSocketClient {
 
     public getReadyState(): number {
         return this.ws?.readyState ?? WebSocket.CLOSED;
+    }
+
+    public getWebSocket(): WebSocket | null {
+        return this.ws;
     }
 
     public disconnect(): void {
