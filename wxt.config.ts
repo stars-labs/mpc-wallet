@@ -62,17 +62,4 @@ export default defineConfig({
 
     default_locale: 'en',
   },
-  dev: {
-    server: {
-      port: 3000
-    }
-  },
-  runner: {
-    // Use a more stable runner configuration
-    chromiumArgs: [
-      '--disable-web-security',
-      '--disable-features=VizDisplayCompositor',
-      '--allow-running-insecure-content'
-    ]
-  }
 });

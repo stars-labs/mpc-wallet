@@ -69,8 +69,8 @@ export class ContentProvider {
 
     private sendToPage(message: ContentToInjectedMsg) {
         window.postMessage({
-            type: `${MESSAGE_PREFIX}${MessageType.RESPONSE}`,
-            ...message
+            ...message,
+            type: `${MESSAGE_PREFIX}${MessageType.RESPONSE}`
         }, '*');
     }
 

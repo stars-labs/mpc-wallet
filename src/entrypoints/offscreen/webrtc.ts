@@ -1,6 +1,8 @@
 import { SessionInfo, DkgState, MeshStatus, WebRTCAppMessage, MeshStatusType } from "../../types/appstate";
 import { WebSocketMessagePayload, WebRTCSignal } from '../../types/websocket';
 
+export { DkgState, MeshStatusType }; // Export DkgState and MeshStatusType
+
 // --- WebRTCManager Class ---
 const ICE_SERVERS = [{ urls: 'stun:stun.l.google.com:19302' }]; // Example STUN server
 
@@ -15,11 +17,16 @@ export class WebRTCManager {
   public meshStatus: MeshStatus = { type: MeshStatusType.Incomplete };
   private pendingIceCandidates: Map<string, RTCIceCandidateInit[]> = new Map();
 
+  // Mesh ready tracking to prevent duplicate signals
+  private ownMeshReadySent: boolean = false;
+
   // FROST DKG integration
   private frostDkg: any | null = null;
   private participantIndex: number | null = null;
   private receivedRound1Packages: Set<string> = new Set();
   private receivedRound2Packages: Set<string> = new Set();
+  private groupPublicKey: string | null = null;
+  private solanaAddress: string | null = null;
 
   // Callbacks
   public onLog: (message: string) => void = console.log;
@@ -277,6 +284,10 @@ export class WebRTCManager {
     this._updateMeshStatus({ type: MeshStatusType.Incomplete });
     this._updateDkgState(DkgState.Idle);
 
+    // Reset mesh ready flag to allow mesh_ready signals for new sessions
+    this.ownMeshReadySent = false;
+    this._log("Reset ownMeshReadySent flag for session reset");
+
     // Reset FROST DKG state
     this._resetDkgState();
   }
@@ -295,6 +306,10 @@ export class WebRTCManager {
   public async startSession(sessionInfo: SessionInfo): Promise<void> {
     this._log(`Starting session: ${sessionInfo.session_id} with participants: ${sessionInfo.participants.join(', ')}`);
 
+    // Reset mesh ready flag for new session
+    this.ownMeshReadySent = false;
+    this._log("Reset ownMeshReadySent flag for new session (startSession)");
+
     // Ensure the proposer is marked as accepted
     if (!sessionInfo.accepted_peers.includes(this.localPeerId)) {
       sessionInfo.accepted_peers.push(this.localPeerId);
@@ -306,6 +321,10 @@ export class WebRTCManager {
 
   public async acceptSession(sessionInfo: SessionInfo): Promise<void> {
     this._log(`Accepting session: ${sessionInfo.session_id}`);
+
+    // Reset mesh ready flag for new session
+    this.ownMeshReadySent = false;
+    this._log("Reset ownMeshReadySent flag for new session (acceptSession)");
 
     // Remove from invites
     this.invites = this.invites.filter(invite => invite.session_id !== sessionInfo.session_id);
@@ -361,9 +380,13 @@ export class WebRTCManager {
 
     if (hasAllRequiredConnections && allParticipantsAccepted) {
       // All conditions met for mesh readiness
-      if (this.meshStatus.type === MeshStatusType.Incomplete) {
+      if (this.meshStatus.type === MeshStatusType.Incomplete && !this.ownMeshReadySent) {
         this._log("All conditions met for mesh readiness. Sending MeshReady signal to all peers.");
         this._sendMeshReadyToAllPeers();
+
+        // Set the flag to prevent duplicate signals
+        this.ownMeshReadySent = true;
+        this._log("Set ownMeshReadySent flag to prevent duplicate mesh_ready signals");
 
         // Mark ourselves as ready
         const readyPeersSet = new Set<string>([this.localPeerId]);
@@ -425,12 +448,6 @@ export class WebRTCManager {
     }
 
     try {
-      // Skip WASM DKG initialization in test environment
-      if (typeof process !== 'undefined' && process.env.NODE_ENV === 'test') {
-        this._log('Skipping FROST DKG initialization in test environment');
-        return;
-      }
-
       // Calculate participant index (1-based)
       this.participantIndex = this.sessionInfo.participants.indexOf(this.localPeerId) + 1;
 
@@ -439,6 +456,23 @@ export class WebRTCManager {
       }
 
       this._log(`Initializing DKG with participant index: ${this.participantIndex}, total: ${this.sessionInfo.total}, threshold: ${this.sessionInfo.threshold}`);
+
+      // Initialize FROST DKG instance if not already done
+      if (!this.frostDkg) {
+        // In test environment, use the WASM module passed from test setup
+        if (typeof process !== 'undefined' && process.env.NODE_ENV === 'test') {
+          // The test should have set this.frostDkg already with a real WASM instance
+          if (!this.frostDkg) {
+            throw new Error("Test environment requires frostDkg to be initialized before calling _initializeDkg");
+          }
+        } else {
+          // In browser environment, dynamically import and initialize WASM
+          const wasmModule = await import('../../../pkg/mpc_wallet.js');
+          await wasmModule.default(); // Initialize WASM
+          this.frostDkg = new wasmModule.FrostDkg();
+          this._log('FROST DKG WASM module initialized successfully');
+        }
+      }
 
       // Initialize the DKG with our parameters
       this.frostDkg.init_dkg(
@@ -584,6 +618,13 @@ export class WebRTCManager {
 
     } catch (error) {
       this._log(`Error generating Round 2 packages: ${error}`);
+      this._log(`Error type: ${typeof error}`);
+      if (error && typeof error === 'object') {
+        this._log(`Error properties: ${Object.getOwnPropertyNames(error).join(', ')}`);
+        if ('message' in error) {
+          this._log(`WASM error message: ${(error as any).message}`);
+        }
+      }
       this._updateDkgState(DkgState.Failed);
     }
   }
@@ -614,7 +655,7 @@ export class WebRTCManager {
       this._checkRound2Completion();
 
     } catch (error) {
-      this._log(`Error processing Round 2 package from ${fromPeerId}: ${error}`);
+      this._log(`Error processing Round 2 package from ${fromPeerId}: ${(error as Error).message}`);
       this._updateDkgState(DkgState.Failed);
     }
   }
@@ -644,21 +685,45 @@ export class WebRTCManager {
       return;
     }
 
+    // Prevent multiple finalization attempts, but allow retry if previous attempt failed
+    if (this.dkgState === DkgState.Complete) {
+      this._log("DKG already completed, skipping finalization");
+      return;
+    }
+
+    if (this.dkgState === DkgState.Finalizing) {
+      this._log("DKG finalization already in progress");
+      // Don't return here - allow it to proceed and potentially fail
+    }
+
     try {
       this._updateDkgState(DkgState.Finalizing);
+      this._log("Starting DKG finalization...");
 
       // Finalize the DKG protocol
       const groupPublicKey = this.frostDkg.finalize_dkg();
       this._log(`DKG finalized successfully! Group public key: ${groupPublicKey}`);
 
-      // Get the derived address
-      const solAddress = this.frostDkg.get_sol_address();
-      this._log(`Generated Solana address: ${solAddress}`);
+      // Store the group public key as a property
+      this.groupPublicKey = groupPublicKey;
 
+      // Update state to complete first
       this._updateDkgState(DkgState.Complete);
 
+      // Now try to get the derived address
+      try {
+        const solAddress = this.frostDkg.get_sol_address();
+        this._log(`Generated Solana address: ${solAddress}`);
+        // Store the Solana address as a property
+        this.solanaAddress = solAddress;
+      } catch (addressError) {
+        this._log(`Warning: DKG completed but failed to generate Solana address: ${(addressError as any).message || addressError}`);
+        // Don't fail the entire DKG for address generation issues
+      }
+
     } catch (error) {
-      this._log(`Error finalizing DKG: ${error}`);
+      this._log(`Error finalizing DKG: ${(error as any).message || error}`);
+      this._log(`Error details: ${JSON.stringify(error)}`);
       this._updateDkgState(DkgState.Failed);
     }
   }
@@ -674,6 +739,8 @@ export class WebRTCManager {
     this.participantIndex = null;
     this.receivedRound1Packages.clear();
     this.receivedRound2Packages.clear();
+    this.groupPublicKey = null;
+    this.solanaAddress = null;
   }
 
   // --- Status and Information Methods ---
@@ -1142,12 +1209,23 @@ export class WebRTCManager {
   }
 
   public getGroupPublicKey(): string | null {
+    // If we have a stored group public key, return it
+    if (this.groupPublicKey) {
+      return this.groupPublicKey;
+    }
+
+    // Otherwise, try to get it from the WASM instance
     if (!this.frostDkg || this.dkgState !== DkgState.Complete) {
       return null;
     }
 
     try {
-      return this.frostDkg.get_group_public_key();
+      const gpk = this.frostDkg.get_group_public_key();
+      // Store it for future use
+      if (gpk) {
+        this.groupPublicKey = gpk;
+      }
+      return gpk;
     } catch (error) {
       this._log(`Error getting group public key: ${error}`);
       return null;
@@ -1155,14 +1233,28 @@ export class WebRTCManager {
   }
 
   public getSolanaAddress(): string | null {
-    if (!this.frostDkg || this.dkgState !== DkgState.Complete) {
+    if (!this.frostDkg) {
+      this._log(`Cannot get Solana address: FROST DKG not initialized`);
+      return null;
+    }
+
+    if (this.dkgState !== DkgState.Complete) {
+      this._log(`Cannot get Solana address: DKG not complete (current state: ${DkgState[this.dkgState]})`);
       return null;
     }
 
     try {
-      return this.frostDkg.get_sol_address();
+      this._log(`Getting Solana address from completed DKG...`);
+      const address = this.frostDkg.get_sol_address();
+      this._log(`Successfully generated Solana address: ${address}`);
+      return address;
     } catch (error) {
-      this._log(`Error getting Solana address: ${error}`);
+      this._log(`Error getting Solana address from FROST DKG: ${error}`);
+      // Check if the error is related to DKG not being properly completed
+      if (error instanceof Error && error.toString().includes('DKG not completed yet')) {
+        this._log(`DKG completion status inconsistent - forcing state check`);
+        this._updateDkgState(DkgState.Failed);
+      }
       return null;
     }
   }

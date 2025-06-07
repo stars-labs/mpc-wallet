@@ -5,23 +5,26 @@ use wasm_bindgen::prelude::*;
 
 // Add new imports for Ed25519 and Solana address generation
 use ed25519_dalek::{SECRET_KEY_LENGTH, SigningKey};
-use rand::rngs::OsRng;
-use rand::RngCore;
 use frost_ed25519::{
     Identifier as Ed25519Identifier,
-    keys::{PublicKeyPackage as Ed25519PublicKeyPackage, KeyPackage as Ed25519KeyPackage, dkg as ed25519_dkg},
+    keys::{
+        KeyPackage as Ed25519KeyPackage, PublicKeyPackage as Ed25519PublicKeyPackage,
+        dkg as ed25519_dkg,
+    },
 };
+use rand::RngCore;
+use rand::rngs::OsRng;
 
 use frost_secp256k1::{
     Identifier as Secp256k1Identifier,
-    keys::{PublicKeyPackage as Secp256k1PublicKeyPackage, KeyPackage as Secp256k1KeyPackage, dkg as secp256k1_dkg},
+    keys::{
+        KeyPackage as Secp256k1KeyPackage, PublicKeyPackage as Secp256k1PublicKeyPackage,
+        dkg as secp256k1_dkg,
+    },
 };
 
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use serde::{Serialize, Deserialize};
-
-// #[cfg(feature = "console_error_panic_hook")]
-// pub use console_error_panic_hook::set_once as set_panic_hook;
 
 #[wasm_bindgen]
 extern "C" {
@@ -42,6 +45,13 @@ pub struct WasmError {
 
 #[wasm_bindgen]
 impl WasmError {
+    #[wasm_bindgen(constructor)]
+    pub fn new(message: &str) -> Self {
+        WasmError {
+            message: message.to_string(),
+        }
+    }
+
     #[wasm_bindgen(getter)]
     pub fn message(&self) -> String {
         self.message.clone()
@@ -49,15 +59,15 @@ impl WasmError {
 }
 
 impl From<String> for WasmError {
-    fn from(msg: String) -> Self {
-        WasmError { message: msg }
+    fn from(message: String) -> Self {
+        WasmError { message }
     }
 }
 
 impl From<&str> for WasmError {
-    fn from(msg: &str) -> Self {
+    fn from(message: &str) -> Self {
         WasmError {
-            message: msg.to_string(),
+            message: message.to_string(),
         }
     }
 }
@@ -83,7 +93,13 @@ trait FrostCurve {
     fn dkg_part2(
         round1_secret: Self::Round1SecretPackage,
         round1_packages: &BTreeMap<Self::Identifier, Self::Round1Package>,
-    ) -> Result<(Self::Round2SecretPackage, BTreeMap<Self::Identifier, Self::Round2Package>), String>;
+    ) -> Result<
+        (
+            Self::Round2SecretPackage,
+            BTreeMap<Self::Identifier, Self::Round2Package>,
+        ),
+        String,
+    >;
     fn dkg_part3(
         round2_secret: &Self::Round2SecretPackage,
         round1_packages: &BTreeMap<Self::Identifier, Self::Round1Package>,
@@ -123,7 +139,13 @@ impl FrostCurve for Ed25519Curve {
     fn dkg_part2(
         round1_secret: Self::Round1SecretPackage,
         round1_packages: &BTreeMap<Self::Identifier, Self::Round1Package>,
-    ) -> Result<(Self::Round2SecretPackage, BTreeMap<Self::Identifier, Self::Round2Package>), String> {
+    ) -> Result<
+        (
+            Self::Round2SecretPackage,
+            BTreeMap<Self::Identifier, Self::Round2Package>,
+        ),
+        String,
+    > {
         ed25519_dkg::part2(round1_secret, round1_packages).map_err(|e| e.to_string())
     }
 
@@ -132,7 +154,8 @@ impl FrostCurve for Ed25519Curve {
         round1_packages: &BTreeMap<Self::Identifier, Self::Round1Package>,
         round2_packages: &BTreeMap<Self::Identifier, Self::Round2Package>,
     ) -> Result<(Self::KeyPackage, Self::PublicKeyPackage), String> {
-        ed25519_dkg::part3(round2_secret, round1_packages, round2_packages).map_err(|e| e.to_string())
+        ed25519_dkg::part3(round2_secret, round1_packages, round2_packages)
+            .map_err(|e| e.to_string())
     }
 
     fn verifying_key(public_key_package: &Self::PublicKeyPackage) -> Self::VerifyingKey {
@@ -178,7 +201,13 @@ impl FrostCurve for Secp256k1Curve {
     fn dkg_part2(
         round1_secret: Self::Round1SecretPackage,
         round1_packages: &BTreeMap<Self::Identifier, Self::Round1Package>,
-    ) -> Result<(Self::Round2SecretPackage, BTreeMap<Self::Identifier, Self::Round2Package>), String> {
+    ) -> Result<
+        (
+            Self::Round2SecretPackage,
+            BTreeMap<Self::Identifier, Self::Round2Package>,
+        ),
+        String,
+    > {
         secp256k1_dkg::part2(round1_secret, round1_packages).map_err(|e| e.to_string())
     }
 
@@ -187,7 +216,8 @@ impl FrostCurve for Secp256k1Curve {
         round1_packages: &BTreeMap<Self::Identifier, Self::Round1Package>,
         round2_packages: &BTreeMap<Self::Identifier, Self::Round2Package>,
     ) -> Result<(Self::KeyPackage, Self::PublicKeyPackage), String> {
-        secp256k1_dkg::part3(round2_secret, round1_packages, round2_packages).map_err(|e| e.to_string())
+        secp256k1_dkg::part3(round2_secret, round1_packages, round2_packages)
+            .map_err(|e| e.to_string())
     }
 
     fn verifying_key(public_key_package: &Self::PublicKeyPackage) -> Self::VerifyingKey {
@@ -200,7 +230,7 @@ impl FrostCurve for Secp256k1Curve {
 
     fn get_address(key: &Self::VerifyingKey) -> String {
         let pubkey_bytes = key.serialize().unwrap_or_default();
-        
+
         // Convert from compressed to uncompressed format for Ethereum address computation
         if let Ok(k256_key) = k256::ecdsa::VerifyingKey::from_sec1_bytes(&pubkey_bytes) {
             let pubkey_point = k256_key.to_encoded_point(false);
@@ -243,7 +273,12 @@ impl<C: FrostCurve> FrostDkgGeneric<C> {
         }
     }
 
-    fn init_dkg(&mut self, participant_index: u16, total: u16, threshold: u16) -> Result<(), WasmError> {
+    fn init_dkg(
+        &mut self,
+        participant_index: u16,
+        total: u16,
+        threshold: u16,
+    ) -> Result<(), WasmError> {
         if threshold > total {
             return Err("Threshold cannot be greater than total participants".into());
         }
@@ -259,14 +294,18 @@ impl<C: FrostCurve> FrostDkgGeneric<C> {
 
     fn generate_round1(&mut self) -> Result<String, WasmError> {
         let identifier = self.identifier.ok_or("DKG not initialized")?;
-        let total = self.total_participants.ok_or("Total participants not set")?;
+        let total = self
+            .total_participants
+            .ok_or("Total participants not set")?;
         let threshold = self.threshold.ok_or("Threshold not set")?;
 
         let mut rng = OsRng;
-        let (round1_secret_package, round1_package) = C::dkg_part1(identifier, total, threshold, &mut rng)?;
+        let (round1_secret_package, round1_package) =
+            C::dkg_part1(identifier, total, threshold, &mut rng)?;
 
         self.round1_secret_package = Some(round1_secret_package);
-        self.round1_packages.insert(identifier, round1_package.clone());
+        self.round1_packages
+            .insert(identifier, round1_package.clone());
 
         let serialized = serde_json::to_string(&round1_package)
             .map_err(|e| format!("Serialization failed: {}", e))?;
@@ -274,9 +313,15 @@ impl<C: FrostCurve> FrostDkgGeneric<C> {
         Ok(hex::encode(serialized.as_bytes()))
     }
 
-    fn add_round1_package(&mut self, participant_index: u16, package_hex: &str) -> Result<(), WasmError> {
-        let package_bytes = hex::decode(package_hex).map_err(|e| format!("Failed to decode hex: {}", e))?;
-        let package_str = String::from_utf8(package_bytes).map_err(|e| format!("Failed to convert bytes to string: {}", e))?;
+    fn add_round1_package(
+        &mut self,
+        participant_index: u16,
+        package_hex: &str,
+    ) -> Result<(), WasmError> {
+        let package_bytes =
+            hex::decode(package_hex).map_err(|e| format!("Failed to decode hex: {}", e))?;
+        let package_str = String::from_utf8(package_bytes)
+            .map_err(|e| format!("Failed to convert bytes to string: {}", e))?;
         let round1_package: C::Round1Package = serde_json::from_str(&package_str)
             .map_err(|e| format!("Failed to deserialize round1 package: {}", e))?;
 
@@ -300,28 +345,67 @@ impl<C: FrostCurve> FrostDkgGeneric<C> {
             .as_ref()
             .ok_or("Round 1 secret package not found")?;
 
+        // Filter round1 packages to exclude self (dkg_part2 expects packages from other participants only)
+        let self_identifier = self.identifier.ok_or("Self identifier not set")?;
+        let round1_packages_from_others: std::collections::BTreeMap<_, _> = self
+            .round1_packages
+            .iter()
+            .filter(|(id, _)| **id != self_identifier)
+            .map(|(id, pkg)| (*id, pkg.clone()))
+            .collect();
+
+        console_log!(
+            "Generating round 2: {} total packages, {} from others (excluding self)",
+            self.round1_packages.len(),
+            round1_packages_from_others.len()
+        );
+
         // Generate round2 packages
-        let (round2_secret_package, round2_packages) = C::dkg_part2(round1_secret_package.clone(), &self.round1_packages)?;
+        let (round2_secret_package, round2_packages) =
+            C::dkg_part2(round1_secret_package.clone(), &round1_packages_from_others)?;
 
         self.round2_secret_package = Some(round2_secret_package);
 
-        // Return all round2 packages as a serialized map
+        // All packages in round2_packages are created by us FOR other participants
+        // We should send all of them to their respective recipients
         let serialized = serde_json::to_string(&round2_packages)
             .map_err(|e| format!("Serialization failed: {}", e))?;
 
-        console_log!("Generated round 2 packages");
+        console_log!(
+            "Generated round 2 packages for {} participants",
+            round2_packages.len()
+        );
         Ok(hex::encode(serialized.as_bytes()))
     }
 
-    fn add_round2_package(&mut self, sender_index: u16, package_hex: &str) -> Result<(), WasmError> {
-        let package_bytes = hex::decode(package_hex).map_err(|e| format!("Failed to decode hex: {}", e))?;
-        let package_str = String::from_utf8(package_bytes).map_err(|e| format!("Failed to convert bytes to string: {}", e))?;
+    fn add_round2_package(
+        &mut self,
+        sender_index: u16,
+        package_hex: &str,
+    ) -> Result<(), WasmError> {
+        let package_bytes =
+            hex::decode(package_hex).map_err(|e| format!("Failed to decode hex: {}", e))?;
+        let package_str = String::from_utf8(package_bytes)
+            .map_err(|e| format!("Failed to convert bytes to string: {}", e))?;
+
+        // Try to deserialize directly first, then try as double-encoded JSON string
         let round2_package: C::Round2Package = serde_json::from_str(&package_str)
+            .or_else(|_| {
+                // If direct deserialization fails, try parsing as string first (double-encoded)
+                let inner_str: String = serde_json::from_str(&package_str)
+                    .map_err(|e| format!("Failed to parse as string: {}", e))?;
+                serde_json::from_str(&inner_str)
+                    .map_err(|e| format!("Failed to deserialize inner round2 package: {}", e))
+            })
             .map_err(|e| format!("Failed to deserialize round2 package: {}", e))?;
 
-        let identifier = C::identifier_from_u16(sender_index)?;
-        self.round2_packages.insert(identifier, round2_package);
+        let sender_identifier = C::identifier_from_u16(sender_index)?;
+
+        // Store the package from this sender
+        self.round2_packages
+            .insert(sender_identifier, round2_package);
         console_log!("Added round 2 package from participant {}", sender_index);
+
         Ok(())
     }
 
@@ -341,10 +425,28 @@ impl<C: FrostCurve> FrostDkgGeneric<C> {
             .as_ref()
             .ok_or("Round 2 secret package not found")?;
 
+        // Get self identifier to filter out our own packages
+        let self_identifier = self.identifier.ok_or("DKG not initialized")?;
+
+        // For part3, we need round1 packages from OTHER participants (excluding ourselves)
+        let round1_packages_from_others: BTreeMap<C::Identifier, C::Round1Package> = self
+            .round1_packages
+            .iter()
+            .filter(|(id, _)| **id != self_identifier)
+            .map(|(id, pkg)| (*id, pkg.clone()))
+            .collect();
+
+        console_log!(
+            "Finalizing DKG with {} round1 packages from others and {} round2 packages received",
+            round1_packages_from_others.len(),
+            self.round2_packages.len()
+        );
+
         // Complete the DKG protocol
+        // part3 expects: round1 packages from others, round2 packages received from others
         let (key_package, public_key_package) = C::dkg_part3(
             round2_secret_package,
-            &self.round1_packages,
+            &round1_packages_from_others,
             &self.round2_packages,
         )?;
 
@@ -397,7 +499,12 @@ impl FrostDkgEd25519 {
     }
 
     #[wasm_bindgen]
-    pub fn init_dkg(&mut self, participant_index: u16, total: u16, threshold: u16) -> Result<(), WasmError> {
+    pub fn init_dkg(
+        &mut self,
+        participant_index: u16,
+        total: u16,
+        threshold: u16,
+    ) -> Result<(), WasmError> {
         self.inner.init_dkg(participant_index, total, threshold)
     }
 
@@ -407,8 +514,13 @@ impl FrostDkgEd25519 {
     }
 
     #[wasm_bindgen]
-    pub fn add_round1_package(&mut self, participant_index: u16, package_hex: &str) -> Result<(), WasmError> {
-        self.inner.add_round1_package(participant_index, package_hex)
+    pub fn add_round1_package(
+        &mut self,
+        participant_index: u16,
+        package_hex: &str,
+    ) -> Result<(), WasmError> {
+        self.inner
+            .add_round1_package(participant_index, package_hex)
     }
 
     #[wasm_bindgen]
@@ -422,7 +534,11 @@ impl FrostDkgEd25519 {
     }
 
     #[wasm_bindgen]
-    pub fn add_round2_package(&mut self, sender_index: u16, package_hex: &str) -> Result<(), WasmError> {
+    pub fn add_round2_package(
+        &mut self,
+        sender_index: u16,
+        package_hex: &str,
+    ) -> Result<(), WasmError> {
         self.inner.add_round2_package(sender_index, package_hex)
     }
 
@@ -442,7 +558,7 @@ impl FrostDkgEd25519 {
     }
 
     #[wasm_bindgen]
-    pub fn get_sol_address(&self) -> Result<String, WasmError> {
+    pub fn get_address(&self) -> Result<String, WasmError> {
         self.inner.get_address()
     }
 }
@@ -463,7 +579,12 @@ impl FrostDkgSecp256k1 {
     }
 
     #[wasm_bindgen]
-    pub fn init_dkg(&mut self, participant_index: u16, total: u16, threshold: u16) -> Result<(), WasmError> {
+    pub fn init_dkg(
+        &mut self,
+        participant_index: u16,
+        total: u16,
+        threshold: u16,
+    ) -> Result<(), WasmError> {
         self.inner.init_dkg(participant_index, total, threshold)
     }
 
@@ -473,8 +594,13 @@ impl FrostDkgSecp256k1 {
     }
 
     #[wasm_bindgen]
-    pub fn add_round1_package(&mut self, participant_index: u16, package_hex: &str) -> Result<(), WasmError> {
-        self.inner.add_round1_package(participant_index, package_hex)
+    pub fn add_round1_package(
+        &mut self,
+        participant_index: u16,
+        package_hex: &str,
+    ) -> Result<(), WasmError> {
+        self.inner
+            .add_round1_package(participant_index, package_hex)
     }
 
     #[wasm_bindgen]
@@ -488,7 +614,11 @@ impl FrostDkgSecp256k1 {
     }
 
     #[wasm_bindgen]
-    pub fn add_round2_package(&mut self, sender_index: u16, package_hex: &str) -> Result<(), WasmError> {
+    pub fn add_round2_package(
+        &mut self,
+        sender_index: u16,
+        package_hex: &str,
+    ) -> Result<(), WasmError> {
         self.inner.add_round2_package(sender_index, package_hex)
     }
 
@@ -508,7 +638,13 @@ impl FrostDkgSecp256k1 {
     }
 
     #[wasm_bindgen]
+    pub fn get_address(&self) -> Result<String, WasmError> {
+        self.inner.get_address()
+    }
+
+    #[wasm_bindgen]
     pub fn get_eth_address(&self) -> Result<String, WasmError> {
+        // For Secp256k1, get_address returns the Ethereum address
         self.inner.get_address()
     }
 }
@@ -529,7 +665,12 @@ impl FrostDkg {
     }
 
     #[wasm_bindgen]
-    pub fn init_dkg(&mut self, participant_index: u16, total: u16, threshold: u16) -> Result<(), WasmError> {
+    pub fn init_dkg(
+        &mut self,
+        participant_index: u16,
+        total: u16,
+        threshold: u16,
+    ) -> Result<(), WasmError> {
         self.inner.init_dkg(participant_index, total, threshold)
     }
 
@@ -539,8 +680,13 @@ impl FrostDkg {
     }
 
     #[wasm_bindgen]
-    pub fn add_round1_package(&mut self, participant_index: u16, package_hex: &str) -> Result<(), WasmError> {
-        self.inner.add_round1_package(participant_index, package_hex)
+    pub fn add_round1_package(
+        &mut self,
+        participant_index: u16,
+        package_hex: &str,
+    ) -> Result<(), WasmError> {
+        self.inner
+            .add_round1_package(participant_index, package_hex)
     }
 
     #[wasm_bindgen]
@@ -554,7 +700,11 @@ impl FrostDkg {
     }
 
     #[wasm_bindgen]
-    pub fn add_round2_package(&mut self, sender_index: u16, package_hex: &str) -> Result<(), WasmError> {
+    pub fn add_round2_package(
+        &mut self,
+        sender_index: u16,
+        package_hex: &str,
+    ) -> Result<(), WasmError> {
         self.inner.add_round2_package(sender_index, package_hex)
     }
 
@@ -575,7 +725,7 @@ impl FrostDkg {
 
     #[wasm_bindgen]
     pub fn get_sol_address(&self) -> Result<String, WasmError> {
-        self.inner.get_sol_address()
+        self.inner.get_address()
     }
 }
 
