@@ -1,6 +1,10 @@
 {
   "extends": "./.wxt/tsconfig.json",
   "compilerOptions": {
-    "useDefineForClassFields": true
+    "useDefineForClassFields": true,
+    "lib": [
+      "es2015",
+      "dom"
+    ]
   }
 }
