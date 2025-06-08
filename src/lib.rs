@@ -307,6 +307,11 @@ impl<C: FrostCurve> FrostDkgGeneric<C> {
         self.round1_packages
             .insert(identifier, round1_package.clone());
 
+        console_log!(
+            "🔍 WASM generate_round1: stored self package, total packages now: {}",
+            self.round1_packages.len()
+        );
+
         let serialized = serde_json::to_string(&round1_package)
             .map_err(|e| format!("Serialization failed: {}", e))?;
 
@@ -327,12 +332,29 @@ impl<C: FrostCurve> FrostDkgGeneric<C> {
 
         let identifier = C::identifier_from_u16(participant_index)?;
         self.round1_packages.insert(identifier, round1_package);
+
+        console_log!(
+            "🔍 WASM add_round1_package: added package from participant {}, total packages now: {}",
+            participant_index,
+            self.round1_packages.len()
+        );
+
         Ok(())
     }
 
     fn can_start_round2(&self) -> bool {
         let total = self.total_participants.unwrap_or(0);
-        self.round1_packages.len() == total as usize
+        let packages_count = self.round1_packages.len();
+        let can_start = packages_count == total as usize;
+
+        console_log!(
+            "🔍 WASM can_start_round2: packages_count={}, total={}, can_start={}",
+            packages_count,
+            total,
+            can_start
+        );
+
+        can_start
     }
 
     fn generate_round2(&mut self) -> Result<String, WasmError> {

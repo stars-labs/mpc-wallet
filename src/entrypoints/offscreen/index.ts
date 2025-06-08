@@ -253,14 +253,16 @@ chrome.runtime.onMessage.addListener((message: { type?: string; payload?: any },
             break;
 
         case "sessionAllAccepted":
-            console.log("Offscreen: Received 'sessionAllAccepted' command - all participants have accepted!", payload);
+            console.log("🎉 Offscreen: Received 'sessionAllAccepted' command - all participants have accepted!", payload);
             if (webRTCManager && payload.sessionInfo) {
+                console.log(`📋 Session info: participants=[${payload.sessionInfo.participants.join(', ')}], accepted=[${payload.sessionInfo.accepted_peers.join(', ')}]`);
+
                 // Update session info and trigger mesh readiness check
                 webRTCManager.updateSessionInfo(payload.sessionInfo);
-                console.log("Offscreen: Updated session info and triggered mesh readiness check");
+                console.log("✅ Offscreen: Updated session info and triggered mesh readiness check");
                 sendResponse({ success: true, message: "Session all accepted processed - mesh readiness triggered." });
             } else {
-                console.warn("Offscreen: Cannot handle sessionAllAccepted - WebRTCManager not ready or missing sessionInfo");
+                console.warn("❌ Offscreen: Cannot handle sessionAllAccepted - WebRTCManager not ready or missing sessionInfo");
                 sendResponse({ success: false, error: "WebRTCManager not ready or missing sessionInfo" });
             }
             break;

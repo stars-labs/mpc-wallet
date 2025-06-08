@@ -343,23 +343,41 @@ export class WebRTCManager {
 
   // Add method to handle session updates from background
   public updateSessionInfo(updatedSessionInfo: SessionInfo): void {
-    this._log(`Updating session info for: ${updatedSessionInfo.session_id}`);
+    console.log("📢 updateSessionInfo CALLED with session:", updatedSessionInfo.session_id);
+    console.log("📢 Accepted peers:", updatedSessionInfo.accepted_peers);
+
+    this._log(`📢 Updating session info for: ${updatedSessionInfo.session_id}`);
     this._log(`Accepted peers updated: [${updatedSessionInfo.accepted_peers.join(', ')}]`);
 
     this.sessionInfo = updatedSessionInfo;
 
-    // Check if mesh conditions are now met
+    console.log("📢 About to call _checkMeshStatus immediately");
+    // Check if mesh conditions are now met immediately
     this._checkMeshStatus();
+
+    console.log("📢 Scheduling delayed mesh check in 500ms");
+    // Also schedule a delayed check in case data channels are still opening
+    // This handles the race condition where sessionAllAccepted arrives before data channels are ready
+    setTimeout(() => {
+      console.log("⏰ DELAYED MESH CHECK - Checking mesh status after 500ms delay");
+      this._log(`⏰ Delayed mesh status check after session update (handling potential race condition)`);
+      this._checkMeshStatus();
+    }, 500); // 500ms delay to allow data channels to open
   }
 
   // --- Mesh Management ---
   private _checkMeshStatus(): void {
+    console.log("🔍 _checkMeshStatus CALLED - Starting mesh status check");
+
     if (!this.sessionInfo) {
+      console.log("❌ _checkMeshStatus: No session info, resetting to Incomplete");
       if (this.meshStatus.type !== MeshStatusType.Incomplete) {
         this._updateMeshStatus({ type: MeshStatusType.Incomplete });
       }
       return;
     }
+
+    console.log("✅ _checkMeshStatus: Session info available, proceeding with check");
 
     const expectedPeers = this.sessionInfo.participants.filter(p => p !== this.localPeerId);
     const openDataChannelsToPeers = expectedPeers.filter(p => {
@@ -375,39 +393,90 @@ export class WebRTCManager {
     // Check if we have all required connections for the session
     const hasAllRequiredConnections = openDataChannelsToPeers.length === expectedPeers.length;
 
-    this._log(`Mesh status check - Data channels: ${openDataChannelsToPeers.length}/${expectedPeers.length}, All accepted: ${allParticipantsAccepted}`);
-    this._log(`Accepted peers: [${this.sessionInfo.accepted_peers.join(', ')}], All participants: [${this.sessionInfo.participants.join(', ')}]`);
+    // Enhanced logging for debugging
+    this._log(`=== MESH STATUS CHECK ===`);
+    this._log(`Session ID: ${this.sessionInfo.session_id}`);
+    this._log(`Local Peer ID: ${this.localPeerId}`);
+    this._log(`Expected peers: [${expectedPeers.join(', ')}]`);
+    this._log(`Open data channels to: [${openDataChannelsToPeers.join(', ')}]`);
+    this._log(`Data channels status: ${openDataChannelsToPeers.length}/${expectedPeers.length}`);
+    this._log(`All participants accepted: ${allParticipantsAccepted}`);
+    this._log(`Accepted peers: [${this.sessionInfo.accepted_peers.join(', ')}]`);
+    this._log(`All participants: [${this.sessionInfo.participants.join(', ')}]`);
+    this._log(`Has all required connections: ${hasAllRequiredConnections}`);
+    this._log(`Own mesh ready sent: ${this.ownMeshReadySent}`);
+    this._log(`Current mesh status: ${this.meshStatus.type}`);
+
+    // Detailed data channel status logging
+    expectedPeers.forEach(peerId => {
+      const dc = this.dataChannels.get(peerId);
+      if (dc) {
+        this._log(`Data channel to ${peerId}: readyState=${dc.readyState}, label=${dc.label}`);
+      } else {
+        this._log(`Data channel to ${peerId}: NOT FOUND`);
+      }
+    });
 
     if (hasAllRequiredConnections && allParticipantsAccepted) {
+      console.log("🚀 MESH CONDITIONS MET! Both data channels and session acceptance complete");
       // All conditions met for mesh readiness
-      if (this.meshStatus.type === MeshStatusType.Incomplete && !this.ownMeshReadySent) {
-        this._log("All conditions met for mesh readiness. Sending MeshReady signal to all peers.");
+      if (!this.ownMeshReadySent) {
+        console.log("🚀 SENDING MESH_READY NOW! All conditions met and mesh_ready not sent yet");
+        this._log("🚀 ALL CONDITIONS MET FOR MESH READINESS! Sending MeshReady signal to all peers.");
         this._sendMeshReadyToAllPeers();
 
         // Set the flag to prevent duplicate signals
         this.ownMeshReadySent = true;
-        this._log("Set ownMeshReadySent flag to prevent duplicate mesh_ready signals");
+        this._log("✅ Set ownMeshReadySent flag to prevent duplicate mesh_ready signals");
 
-        // Mark ourselves as ready
-        const readyPeersSet = new Set<string>([this.localPeerId]);
-        this._updateMeshStatus({
-          type: MeshStatusType.PartiallyReady,
-          ready_peers: readyPeersSet,
-          total_peers: this.sessionInfo.participants.length
-        });
+        // Only update mesh status to PartiallyReady if we're still in Incomplete state
+        // If we're already in a higher state due to receiving other peers' mesh_ready, don't downgrade
+        if (this.meshStatus.type === MeshStatusType.Incomplete) {
+          const readyPeersSet = new Set<string>([this.localPeerId]);
+          this._updateMeshStatus({
+            type: MeshStatusType.PartiallyReady,
+            ready_peers: readyPeersSet,
+            total_peers: this.sessionInfo.participants.length
+          });
+        }
+      } else {
+        console.log("⚠️ Mesh conditions met but mesh_ready already sent");
+        this._log("⚠️ Mesh ready conditions met but mesh_ready already sent - no action needed");
       }
     } else {
+      console.log("❌ MESH CONDITIONS NOT MET");
+      console.log(`   Data channels ready: ${hasAllRequiredConnections} (${openDataChannelsToPeers.length}/${expectedPeers.length})`);
+      console.log(`   Session accepted: ${allParticipantsAccepted}`);
       // Conditions not met
+      this._log("❌ Mesh readiness conditions NOT MET");
+      if (!hasAllRequiredConnections) {
+        this._log(`   Missing data channels: ${expectedPeers.length - openDataChannelsToPeers.length} of ${expectedPeers.length}`);
+      }
+      if (!allParticipantsAccepted) {
+        this._log(`   Missing session acceptances: ${this.sessionInfo.participants.length - this.sessionInfo.accepted_peers.length} of ${this.sessionInfo.participants.length}`);
+      }
+
       if (this.meshStatus.type !== MeshStatusType.Incomplete) {
-        this._log("Mesh readiness conditions not met. Resetting to Incomplete.");
-        this._log(`Missing: ${!hasAllRequiredConnections ? 'data channels' : ''} ${!allParticipantsAccepted ? 'session acceptances' : ''}`);
+        this._log("Resetting mesh status to Incomplete.");
         this._updateMeshStatus({ type: MeshStatusType.Incomplete });
       }
     }
+    this._log(`=== END MESH STATUS CHECK ===`);
   }
 
   private _sendMeshReadyToAllPeers(): void {
-    if (!this.sessionInfo) return;
+    console.log("📡 _sendMeshReadyToAllPeers CALLED - Starting to send mesh ready signals");
+
+    if (!this.sessionInfo) {
+      console.log("❌ Cannot send MeshReady: no session info");
+      this._log("❌ Cannot send MeshReady: no session info");
+      return;
+    }
+
+    this._log(`📡 SENDING MESH_READY SIGNALS to all peers`);
+    this._log(`Session ID: ${this.sessionInfo.session_id}`);
+    this._log(`Local Peer ID: ${this.localPeerId}`);
+    this._log(`Target peers: [${this.sessionInfo.participants.filter(p => p !== this.localPeerId).join(', ')}]`);
 
     const meshReadyMsg: WebRTCAppMessage = {
       webrtc_msg_type: 'MeshReady',
@@ -415,12 +484,17 @@ export class WebRTCManager {
       peer_id: this.localPeerId
     };
 
+    let sentCount = 0;
     this.sessionInfo.participants.forEach(peerId => {
       if (peerId !== this.localPeerId) {
         this.sendWebRTCAppMessage(peerId, meshReadyMsg);
-        this._log(`Sent MeshReady signal to ${peerId}`);
+        sentCount++;
+        this._log(`✅ Sent MeshReady signal to ${peerId}`);
       }
     });
+
+    this._log(`📡 MESH_READY SIGNALS SENT: ${sentCount} signals sent to peers`);
+    this._log(`Message content: ${JSON.stringify(meshReadyMsg)}`);
   }
 
   // --- DKG Implementation ---
@@ -455,6 +529,8 @@ export class WebRTCManager {
         throw new Error("Local peer not found in participants list");
       }
 
+      this._log(`🔧 DEBUG: Local peer: ${this.localPeerId}, participants: [${this.sessionInfo.participants.join(', ')}]`);
+      this._log(`🔧 DEBUG: Calculated participant index: ${this.participantIndex}`);
       this._log(`Initializing DKG with participant index: ${this.participantIndex}, total: ${this.sessionInfo.total}, threshold: ${this.sessionInfo.threshold}`);
 
       // Initialize FROST DKG instance if not already done
@@ -499,9 +575,15 @@ export class WebRTCManager {
     try {
       this._updateDkgState(DkgState.Round1InProgress);
 
+      this._log(`🔧 DEBUG: About to call generate_round1() with participant index: ${this.participantIndex}`);
       // Generate our Round 1 package
-      const round1Package = this.frostDkg.generate_round1();
-      this._log(`Generated Round 1 package: ${round1Package.substring(0, 100)}...`);
+      const round1PackageHex = this.frostDkg.generate_round1();
+      this._log(`🔧 DEBUG: generate_round1() completed, package length: ${round1PackageHex.length}`);
+      this._log(`Generated Round 1 package hex: ${round1PackageHex.substring(0, 100)}...`);
+
+      // Decode hex to JSON to get the proper FROST package structure
+      const round1PackageJson = this._hexToJson(round1PackageHex);
+      this._log(`Decoded Round 1 package: ${JSON.stringify(round1PackageJson).substring(0, 200)}...`);
 
       // Mark ourselves as having provided Round 1 package
       this.receivedRound1Packages.add(this.localPeerId);
@@ -511,11 +593,7 @@ export class WebRTCManager {
         if (peerId !== this.localPeerId) {
           const message: WebRTCAppMessage = {
             webrtc_msg_type: 'DkgRound1Package',
-            package: {
-              from: this.localPeerId,
-              sender_index: this.participantIndex!,
-              data: round1Package
-            }
+            package: round1PackageJson // Send the parsed JSON structure, not wrapped
           };
           this.sendWebRTCAppMessage(peerId, message);
           this._log(`Sent Round 1 package to ${peerId}`);
@@ -531,6 +609,26 @@ export class WebRTCManager {
     }
   }
 
+  private _hexToJson(hexString: string): any {
+    try {
+      // Remove "0x" prefix if present
+      const cleanHex = hexString.startsWith('0x') ? hexString.slice(2) : hexString;
+
+      // Convert hex to bytes
+      const bytes = new Uint8Array(cleanHex.length / 2);
+      for (let i = 0; i < cleanHex.length; i += 2) {
+        bytes[i / 2] = parseInt(cleanHex.substr(i, 2), 16);
+      }
+
+      // Convert bytes to string and parse as JSON
+      const jsonString = new TextDecoder().decode(bytes);
+      return JSON.parse(jsonString);
+    } catch (error) {
+      this._log(`Error decoding hex to JSON: ${error}`);
+      throw error;
+    }
+  }
+
   private _handleDkgRound1Package(fromPeerId: string, packageData: any): void {
     if (!this.frostDkg || !this.sessionInfo) {
       this._log(`Ignoring Round 1 package from ${fromPeerId}: DKG not initialized`);
@@ -543,10 +641,39 @@ export class WebRTCManager {
     }
 
     try {
-      this._log(`Processing Round 1 package from ${fromPeerId}, sender_index: ${packageData.sender_index}`);
+      let senderIndex: number;
+      let packageHex: string;
+
+      // Handle different package formats:
+      // 1. Old format from CLI nodes: { sender_index: number, data: string }
+      // 2. New format from CLI nodes: { header: {...}, commitment: [...], proof_of_knowledge: string }
+      if (packageData.sender_index !== undefined && packageData.data !== undefined) {
+        // Old format with explicit sender_index and hex data
+        senderIndex = packageData.sender_index;
+        packageHex = packageData.data;
+        this._log(`Processing Round 1 package from ${fromPeerId} (old format), sender_index: ${senderIndex}`);
+      } else if (packageData.header && packageData.commitment && packageData.proof_of_knowledge) {
+        // New format - direct FROST package structure, need to determine sender index
+        // and serialize to hex
+        const peerIndex = this.sessionInfo.participants.indexOf(fromPeerId);
+        if (peerIndex === -1) {
+          throw new Error(`Peer ${fromPeerId} not found in session participants`);
+        }
+        senderIndex = peerIndex + 1; // FROST uses 1-based indexing
+
+        // Convert the FROST package back to hex for WASM
+        const packageJson = JSON.stringify(packageData);
+        packageHex = Array.from(new TextEncoder().encode(packageJson))
+          .map(b => b.toString(16).padStart(2, '0'))
+          .join('');
+
+        this._log(`Processing Round 1 package from ${fromPeerId} (new format), calculated sender_index: ${senderIndex}`);
+      } else {
+        throw new Error(`Invalid package format from ${fromPeerId}: ${JSON.stringify(packageData)}`);
+      }
 
       // Add the package to our DKG instance
-      this.frostDkg.add_round1_package(packageData.sender_index, packageData.data);
+      this.frostDkg.add_round1_package(senderIndex, packageHex);
 
       // Mark this peer as having provided their Round 1 package
       this.receivedRound1Packages.add(fromPeerId);
@@ -563,13 +690,24 @@ export class WebRTCManager {
   }
 
   private _checkRound1Completion(): void {
-    if (!this.sessionInfo || !this.frostDkg) return;
+    this._log("🔍 _checkRound1Completion: Method called");
+    if (!this.sessionInfo || !this.frostDkg) {
+      this._log("🔍 _checkRound1Completion: Early return - missing sessionInfo or frostDkg");
+      return;
+    }
+
+    this._log(`🔍 _checkRound1Completion: Checking completion. Received: ${this.receivedRound1Packages.size}/${this.sessionInfo.participants.length}`);
 
     // Check if we've received Round 1 packages from all participants
     if (this.receivedRound1Packages.size === this.sessionInfo.participants.length) {
       this._log("All Round 1 packages received! Proceeding to Round 2.");
 
-      if (this.frostDkg.can_start_round2()) {
+      this._log("🔍 _checkRound1Completion: Checking if can_start_round2()");
+      this._log(`🔧 DEBUG: About to call can_start_round2() - current participant index: ${this.participantIndex}`);
+      const canStartRound2 = this.frostDkg.can_start_round2();
+      this._log(`🔧 DEBUG: can_start_round2() returned: ${canStartRound2}`);
+      if (canStartRound2) {
+        this._log("🔍 _checkRound1Completion: can_start_round2() returned true, updating state and calling _generateAndBroadcastRound2");
         this._updateDkgState(DkgState.Round1Complete);
         this._generateAndBroadcastRound2();
       } else {
@@ -582,34 +720,85 @@ export class WebRTCManager {
   }
 
   private _generateAndBroadcastRound2(): void {
+    this._log("🔄 _generateAndBroadcastRound2: Method called");
+
     if (!this.frostDkg || !this.sessionInfo) {
       this._log("Cannot generate Round 2: DKG not initialized");
       return;
     }
 
+    this._log("🔄 _generateAndBroadcastRound2: Starting Round 2 generation");
+
     try {
+      this._log("🔄 _generateAndBroadcastRound2: Updating state to Round2InProgress");
       this._updateDkgState(DkgState.Round2InProgress);
 
-      // Generate Round 2 packages
+      // Generate Round 2 packages map
+      this._log("🔄 _generateAndBroadcastRound2: Calling WASM generate_round2()");
       const round2PackagesHex = this.frostDkg.generate_round2();
       this._log(`Generated Round 2 packages: ${round2PackagesHex.substring(0, 100)}...`);
+
+      // Decode hex to JSON to get the map of packages for each participant
+      const round2PackagesMap = this._hexToJson(round2PackagesHex);
+      this._log(`Decoded Round 2 packages map with ${Object.keys(round2PackagesMap).length} entries`);
+      this._log(`Round 2 package keys: ${Object.keys(round2PackagesMap).join(', ')}`);
 
       // Mark ourselves as having provided Round 2 packages
       this.receivedRound2Packages.add(this.localPeerId);
 
-      // Broadcast to all other participants
+      // Send individual packages to each recipient (similar to Round 1 approach)
       this.sessionInfo.participants.forEach(peerId => {
         if (peerId !== this.localPeerId) {
-          const message: WebRTCAppMessage = {
-            webrtc_msg_type: 'DkgRound2Package',
-            package: {
-              from: this.localPeerId,
-              sender_index: this.participantIndex!,
-              data: round2PackagesHex
+          const recipientIndex = this.sessionInfo!.participants.indexOf(peerId) + 1; // FROST uses 1-based indexing
+          this._log(`Looking for Round 2 package for ${peerId} (participant index ${recipientIndex})`);
+
+          // Find the package for this recipient in the map
+          let recipientPackage = null;
+          let recipientKey = null;
+
+          // Try each key in the map to find the one for this recipient
+          for (const [hexKey, packageData] of Object.entries(round2PackagesMap)) {
+            this._log(`Checking key ${hexKey} for recipient ${peerId}`);
+
+            // Try simple approach first - check if any keys match the pattern we expect
+            try {
+              // Convert hex string to bytes array (browser-compatible alternative to Buffer)
+              const keyBytes = new Uint8Array(hexKey.length / 2);
+              for (let i = 0; i < hexKey.length; i += 2) {
+                keyBytes[i / 2] = parseInt(hexKey.substr(i, 2), 16);
+              }
+              this._log(`Key ${hexKey} decoded to ${keyBytes.length} bytes: ${Array.from(keyBytes).slice(0, 8).join(',')}`);
+
+              // For Ed25519, try little-endian u16 at start (based on test file)
+              if (keyBytes.length >= 2) {
+                // Read little-endian u16 from bytes (browser-compatible alternative to readUInt16LE)
+                const participantIndex = keyBytes[0] | (keyBytes[1] << 8);
+                this._log(`Extracted participant index ${participantIndex} from key ${hexKey}`);
+
+                if (participantIndex === recipientIndex) {
+                  recipientPackage = packageData;
+                  recipientKey = hexKey;
+                  this._log(`Found matching package for ${peerId}: key ${hexKey}, participant ${participantIndex}`);
+                  break;
+                }
+              }
+            } catch (error) {
+              this._log(`Error parsing key ${hexKey}: ${error}`);
             }
-          };
-          this.sendWebRTCAppMessage(peerId, message);
-          this._log(`Sent Round 2 packages to ${peerId}`);
+          }
+
+          if (recipientPackage) {
+            const message: WebRTCAppMessage = {
+              webrtc_msg_type: 'DkgRound2Package',
+              package: recipientPackage // Send the direct FROST package structure
+            };
+            this.sendWebRTCAppMessage(peerId, message);
+            this._log(`✅ Sent Round 2 package to ${peerId} (index ${recipientIndex}, key ${recipientKey})`);
+          } else {
+            this._log(`❌ Error: No Round 2 package found for ${peerId} (index ${recipientIndex})`);
+            this._log(`Available keys in map: ${Object.keys(round2PackagesMap).join(', ')}`);
+            // Don't fail immediately, continue trying other recipients
+          }
         }
       });
 
@@ -617,12 +806,15 @@ export class WebRTCManager {
       this._checkRound2Completion();
 
     } catch (error) {
-      this._log(`Error generating Round 2 packages: ${error}`);
+      this._log(`❌ Error generating Round 2 packages: ${error}`);
       this._log(`Error type: ${typeof error}`);
       if (error && typeof error === 'object') {
         this._log(`Error properties: ${Object.getOwnPropertyNames(error).join(', ')}`);
         if ('message' in error) {
           this._log(`WASM error message: ${(error as any).message}`);
+        }
+        if ('stack' in error) {
+          this._log(`Error stack: ${(error as any).stack}`);
         }
       }
       this._updateDkgState(DkgState.Failed);
@@ -641,10 +833,37 @@ export class WebRTCManager {
     }
 
     try {
-      this._log(`Processing Round 2 package from ${fromPeerId}, sender_index: ${packageData.sender_index}`);
+      let senderIndex: number;
+      let packageHex: string;
+
+      // Handle both old and new package formats
+      if (packageData.sender_index !== undefined && packageData.data !== undefined) {
+        // Old format with explicit sender_index and hex data
+        senderIndex = packageData.sender_index;
+        packageHex = packageData.data;
+        this._log(`Processing Round 2 package from ${fromPeerId} (old format), sender_index: ${senderIndex}`);
+      } else if (packageData.header && packageData.signing_share) {
+        // New format - direct FROST package structure, need to determine sender index
+        // and serialize to hex
+        const peerIndex = this.sessionInfo!.participants.indexOf(fromPeerId);
+        if (peerIndex === -1) {
+          throw new Error(`Peer ${fromPeerId} not found in session participants`);
+        }
+        senderIndex = peerIndex + 1; // FROST uses 1-based indexing
+
+        // Convert the FROST package back to hex for WASM
+        const packageJson = JSON.stringify(packageData);
+        packageHex = Array.from(new TextEncoder().encode(packageJson))
+          .map(b => b.toString(16).padStart(2, '0'))
+          .join('');
+
+        this._log(`Processing Round 2 package from ${fromPeerId} (new format), calculated sender_index: ${senderIndex}`);
+      } else {
+        throw new Error(`Invalid package format from ${fromPeerId}: ${JSON.stringify(packageData)}`);
+      }
 
       // Add the package to our DKG instance
-      this.frostDkg.add_round2_package(packageData.sender_index, packageData.data);
+      this.frostDkg.add_round2_package(senderIndex, packageHex);
 
       // Mark this peer as having provided their Round 2 packages
       this.receivedRound2Packages.add(fromPeerId);
@@ -772,10 +991,8 @@ export class WebRTCManager {
 
   public sendDirectMessage(toPeerId: string, message: string): boolean {
     const directMessage: WebRTCAppMessage = {
-      webrtc_msg_type: 'DirectMessage',
-      from: this.localPeerId,
-      message: message,
-      timestamp: Date.now() // Add required timestamp property
+      webrtc_msg_type: 'SimpleMessage',
+      text: message
     };
 
     const dc = this.dataChannels.get(toPeerId);
@@ -1079,9 +1296,23 @@ export class WebRTCManager {
   }
 
   private _handleLocalChannelOpen(peerId: string): void {
+    console.log(`🔗 _handleLocalChannelOpen CALLED for peer: ${peerId}`);
     // This is called when OUR data channel to peerId opens.
     // We need to check if this completes our part of the mesh.
-    this._log(`Local data channel to ${peerId} is now open.`);
+    this._log(`🔗 Local data channel to ${peerId} is now OPEN!`);
+
+    // Log current data channel status
+    if (this.sessionInfo) {
+      const expectedPeers = this.sessionInfo.participants.filter(p => p !== this.localPeerId);
+      const openDataChannelsToPeers = expectedPeers.filter(p => {
+        const dc = this.dataChannels.get(p);
+        return dc && dc.readyState === 'open';
+      });
+      console.log(`Data channel status: ${openDataChannelsToPeers.length}/${expectedPeers.length} channels open`);
+      this._log(`Data channel status after ${peerId} opened: ${openDataChannelsToPeers.length}/${expectedPeers.length} channels open`);
+    }
+
+    console.log(`🔗 About to call _checkMeshStatus from _handleLocalChannelOpen`);
     this._checkMeshStatus();
   }
 
@@ -1098,14 +1329,14 @@ export class WebRTCManager {
         this._checkMeshStatus(); // Re-check mesh status as peer confirmed their side.
         break;
 
-      case 'DirectMessage':
-        // Handle direct messages between peers
-        if ('message' in message && 'from' in message) {
-          this._log(`Received direct message from ${fromPeerId}: ${(message as any).message}`);
+      case 'SimpleMessage':
+        // Handle simple text messages between peers
+        if ('text' in message) {
+          this._log(`Received simple message from ${fromPeerId}: ${(message as any).text}`);
           // Forward to the onWebRTCAppMessage callback for external handling
           this.onWebRTCAppMessage(fromPeerId, message);
         } else {
-          this._log(`DirectMessage from ${fromPeerId} missing required fields.`);
+          this._log(`SimpleMessage from ${fromPeerId} missing required fields.`);
         }
         break;
 

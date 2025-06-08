@@ -48,7 +48,7 @@ export interface SessionResponse {
 export type WebRTCAppMessage =
   | { webrtc_msg_type: 'ChannelOpen'; peer_id: string }
   | { webrtc_msg_type: 'MeshReady'; session_id: string; peer_id: string }
-  | { webrtc_msg_type: 'DirectMessage'; message: string; from: string; timestamp: number }
+  | { webrtc_msg_type: 'SimpleMessage'; text: string }
   | { webrtc_msg_type: 'DkgRound1Package'; package: any }
   | { webrtc_msg_type: 'DkgRound2Package'; package: any };
 

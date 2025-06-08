@@ -525,8 +525,7 @@ export default defineBackground(() => {
                                     const acceptanceData = {
                                         websocket_msg_type: "SessionResponse",
                                         session_id: message.session_id,
-                                        accepted: true,
-                                        peer_id: appState.peerId
+                                        accepted: true
                                     };
 
                                     if (wsClient?.getReadyState() === WebSocket.OPEN) {
