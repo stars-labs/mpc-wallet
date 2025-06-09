@@ -1,7 +1,7 @@
-import { SessionInfo, DkgState, MeshStatus, WebRTCAppMessage, MeshStatusType } from "../../types/appstate";
+import { SessionInfo, DkgState, MeshStatus, WebRTCAppMessage, MeshStatusType, SigningState } from "../../types/appstate";
 import { WebSocketMessagePayload, WebRTCSignal } from '../../types/websocket';
 
-export { DkgState, MeshStatusType }; // Export DkgState and MeshStatusType
+export { DkgState, MeshStatusType, SigningState }; // Export DkgState and MeshStatusType
 
 // --- WebRTCManager Class ---
 const ICE_SERVERS = [{ urls: 'stun:stun.l.google.com:19302' }]; // Example STUN server
@@ -27,6 +27,23 @@ export class WebRTCManager {
   private receivedRound2Packages: Set<string> = new Set();
   private groupPublicKey: string | null = null;
   private solanaAddress: string | null = null;
+  private walletAddress: string | null = null; // Generic address property for current blockchain
+  private currentBlockchain: "ethereum" | "solana" = "solana"; // Store current blockchain selection
+
+  // Package buffering for handling packages that arrive before DKG initialization
+  private bufferedRound1Packages: Array<{ fromPeerId: string; packageData: any }> = [];
+  private bufferedRound2Packages: Array<{ fromPeerId: string; packageData: any }> = [];
+
+  // FROST Signing integration
+  public signingState: SigningState = SigningState.Idle;
+  private currentMessage: Uint8Array | null = null;
+  private transactionData: any = null;
+  private receivedCommitments: Set<string> = new Set();
+  private receivedShares: Set<string> = new Set();
+  private selectedSigners: string[] = [];
+  private signingCommitments: Map<string, any> = new Map();
+  private signingShares: Map<string, any> = new Map();
+  private aggregatedSignature: any = null;
 
   // Callbacks
   public onLog: (message: string) => void = console.log;
@@ -34,6 +51,7 @@ export class WebRTCManager {
   public onMeshStatusUpdate: (status: MeshStatus) => void = () => { };
   public onWebRTCAppMessage: (fromPeerId: string, message: WebRTCAppMessage) => void = () => { };
   public onDkgStateUpdate: (state: DkgState) => void = () => { };
+  public onSigningStateUpdate: (state: SigningState) => void = () => { };
   public onWebRTCConnectionUpdate: (peerId: string, connected: boolean) => void = () => { };
 
   // Add the missing callback property and constructor parameter
@@ -83,7 +101,9 @@ export class WebRTCManager {
       this._log("Mesh is Ready! Checking DKG trigger conditions.");
       // Only trigger DKG in browser environment (skip in tests/Node)
       if (typeof window !== 'undefined') {
-        this.checkAndTriggerDkg().catch(error => {
+        // Use the stored blockchain parameter from the current session
+        this._log(`Using blockchain parameter for mesh-triggered DKG: ${this.currentBlockchain}`);
+        this.checkAndTriggerDkg(this.currentBlockchain).catch(error => {
           this._log(`Error triggering DKG: ${error}`);
         });
       } else {
@@ -95,6 +115,11 @@ export class WebRTCManager {
   private _updateDkgState(newState: DkgState) {
     this.dkgState = newState;
     this.onDkgStateUpdate(this.dkgState);
+  }
+
+  private _updateSigningState(newState: SigningState) {
+    this.signingState = newState;
+    this.onSigningStateUpdate(this.signingState);
   }
 
   public handleWebSocketMessagePayload(fromPeerId: string, msg: WebSocketMessagePayload): void {
@@ -365,6 +390,12 @@ export class WebRTCManager {
     }, 500); // 500ms delay to allow data channels to open
   }
 
+  public setBlockchain(blockchain: "ethereum" | "solana"): void {
+    this._log(`Setting blockchain selection to: ${blockchain}`);
+    this.currentBlockchain = blockchain;
+    this._log(`Blockchain updated successfully - current selection: ${this.currentBlockchain}`);
+  }
+
   // --- Mesh Management ---
   private _checkMeshStatus(): void {
     console.log("🔍 _checkMeshStatus CALLED - Starting mesh status check");
@@ -450,10 +481,10 @@ export class WebRTCManager {
       // Conditions not met
       this._log("❌ Mesh readiness conditions NOT MET");
       if (!hasAllRequiredConnections) {
-        this._log(`   Missing data channels: ${expectedPeers.length - openDataChannelsToPeers.length} of ${expectedPeers.length}`);
+        this._log(`   - Missing data channels: ${expectedPeers.length - openDataChannelsToPeers.length} of ${expectedPeers.length}`);
       }
       if (!allParticipantsAccepted) {
-        this._log(`   Missing session acceptances: ${this.sessionInfo.participants.length - this.sessionInfo.accepted_peers.length} of ${this.sessionInfo.participants.length}`);
+        this._log(`   - Missing session acceptances: ${this.sessionInfo.participants.length - this.sessionInfo.accepted_peers.length} of ${this.sessionInfo.participants.length}`);
       }
 
       if (this.meshStatus.type !== MeshStatusType.Incomplete) {
@@ -498,15 +529,19 @@ export class WebRTCManager {
   }
 
   // --- DKG Implementation ---
-  public async checkAndTriggerDkg(): Promise<void> {
+  public async checkAndTriggerDkg(blockchain: "ethereum" | "solana" = "solana"): Promise<void> {
+    // Store the blockchain parameter for future use (like mesh-triggered DKG)
+    this.currentBlockchain = blockchain;
+
     this._log(`Checking DKG trigger conditions:`);
     this._log(`  - Session: ${!!this.sessionInfo} (${this.sessionInfo?.session_id})`);
     this._log(`  - Mesh Status: ${MeshStatusType[this.meshStatus.type]}`);
     this._log(`  - DKG State: ${DkgState[this.dkgState]}`);
+    this._log(`  - Blockchain: ${blockchain}`);
 
     if (this.sessionInfo && this.meshStatus.type === MeshStatusType.Ready && this.dkgState === DkgState.Idle) {
       this._log("✅ All conditions met: Session active, Mesh ready, DKG idle. Triggering DKG Round 1.");
-      await this._initializeDkg();
+      await this._initializeDkg(blockchain);
     } else {
       this._log(`❌ DKG trigger conditions not met:`);
       if (!this.sessionInfo) this._log(`   - Missing session info`);
@@ -515,7 +550,7 @@ export class WebRTCManager {
     }
   }
 
-  private async _initializeDkg(): Promise<void> {
+  private async _initializeDkg(blockchain: "ethereum" | "solana" = "solana"): Promise<void> {
     if (!this.sessionInfo) {
       this._log("Cannot initialize DKG: no session info");
       return;
@@ -545,8 +580,15 @@ export class WebRTCManager {
           // In browser environment, dynamically import and initialize WASM
           const wasmModule = await import('../../../pkg/mpc_wallet.js');
           await wasmModule.default(); // Initialize WASM
-          this.frostDkg = new wasmModule.FrostDkg();
-          this._log('FROST DKG WASM module initialized successfully');
+
+          // Use the appropriate DKG class based on blockchain selection
+          if (blockchain === "ethereum") {
+            this.frostDkg = new wasmModule.FrostDkgSecp256k1();
+            this._log('FROST DKG WASM module initialized successfully for Ethereum (Secp256k1)');
+          } else {
+            this.frostDkg = new wasmModule.FrostDkg(); // FrostDkg is Ed25519 (for Solana)
+            this._log('FROST DKG WASM module initialized successfully for Solana (Ed25519)');
+          }
         }
       }
 
@@ -557,8 +599,11 @@ export class WebRTCManager {
         this.sessionInfo.threshold
       );
 
-      // Generate and broadcast Round 1 package
-      await this._generateAndBroadcastRound1();
+      // Generate and broadcast Round 1 package first (this sets the state to Round1InProgress)
+      this._generateAndBroadcastRound1();
+
+      // Now replay any buffered packages that arrived before DKG was initialized
+      this._replayBufferedPackages();
 
     } catch (error) {
       this._log(`Error initializing DKG: ${error}`);
@@ -630,13 +675,17 @@ export class WebRTCManager {
   }
 
   private _handleDkgRound1Package(fromPeerId: string, packageData: any): void {
+    // If DKG is not initialized yet, buffer the package for later processing
     if (!this.frostDkg || !this.sessionInfo) {
-      this._log(`Ignoring Round 1 package from ${fromPeerId}: DKG not initialized`);
+      this._log(`🔴 DKG not initialized yet, buffering Round 1 package from ${fromPeerId}`);
+      this._log(`🔴 Current state: frostDkg=${!!this.frostDkg}, sessionInfo=${!!this.sessionInfo}, dkgState=${DkgState[this.dkgState]}`);
+      this.bufferedRound1Packages.push({ fromPeerId, packageData });
+      this._log(`🔴 Total buffered Round 1 packages: ${this.bufferedRound1Packages.length}`);
       return;
     }
 
     if (this.dkgState !== DkgState.Round1InProgress) {
-      this._log(`Ignoring Round 1 package from ${fromPeerId}: not in Round 1 state (current: ${DkgState[this.dkgState]})`);
+      this._log(`🟡 Ignoring Round 1 package from ${fromPeerId}: not in Round 1 state (current: ${DkgState[this.dkgState]})`);
       return;
     }
 
@@ -672,10 +721,11 @@ export class WebRTCManager {
         throw new Error(`Invalid package format from ${fromPeerId}: ${JSON.stringify(packageData)}`);
       }
 
-      // Add the package to our DKG instance
+      // **CRITICAL FIX**: Actually add the package to the DKG instance
+      this._log(`Adding Round 1 package from ${fromPeerId} (sender_index: ${senderIndex}) to DKG instance`);
       this.frostDkg.add_round1_package(senderIndex, packageHex);
 
-      // Mark this peer as having provided their Round 1 package
+      // Mark this peer as having provided their Round 1 package  
       this.receivedRound1Packages.add(fromPeerId);
 
       this._log(`Received Round 1 packages from: [${Array.from(this.receivedRound1Packages).join(', ')}]`);
@@ -697,6 +747,9 @@ export class WebRTCManager {
     }
 
     this._log(`🔍 _checkRound1Completion: Checking completion. Received: ${this.receivedRound1Packages.size}/${this.sessionInfo.participants.length}`);
+    this._log(`🔍 _checkRound1Completion: Session participants: [${this.sessionInfo.participants.join(', ')}]`);
+    this._log(`🔍 _checkRound1Completion: Received packages from: [${Array.from(this.receivedRound1Packages).join(', ')}]`);
+    this._log(`🔍 _checkRound1Completion: Current DKG state: ${DkgState[this.dkgState]}`);
 
     // Check if we've received Round 1 packages from all participants
     if (this.receivedRound1Packages.size === this.sessionInfo.participants.length) {
@@ -716,6 +769,7 @@ export class WebRTCManager {
       }
     } else {
       this._log(`Waiting for Round 1 packages. Received: ${this.receivedRound1Packages.size}/${this.sessionInfo.participants.length}`);
+      this._log(`🔍 _checkRound1Completion: Missing packages from: [${this.sessionInfo.participants.filter(p => !this.receivedRound1Packages.has(p)).join(', ')}]`);
     }
   }
 
@@ -769,18 +823,35 @@ export class WebRTCManager {
               }
               this._log(`Key ${hexKey} decoded to ${keyBytes.length} bytes: ${Array.from(keyBytes).slice(0, 8).join(',')}`);
 
-              // For Ed25519, try little-endian u16 at start (based on test file)
-              if (keyBytes.length >= 2) {
-                // Read little-endian u16 from bytes (browser-compatible alternative to readUInt16LE)
-                const participantIndex = keyBytes[0] | (keyBytes[1] << 8);
-                this._log(`Extracted participant index ${participantIndex} from key ${hexKey}`);
+              // Handle different key encodings based on blockchain/curve
+              let participantIndex: number;
 
-                if (participantIndex === recipientIndex) {
-                  recipientPackage = packageData;
-                  recipientKey = hexKey;
-                  this._log(`Found matching package for ${peerId}: key ${hexKey}, participant ${participantIndex}`);
-                  break;
+              if (this.currentBlockchain === "ethereum") {
+                // For Secp256k1 (Ethereum), the participant index is encoded as a u16 in the last 2 bytes (big-endian)
+                if (keyBytes.length === 32) {
+                  // Extract the last 2 bytes and interpret as big-endian u16
+                  participantIndex = (keyBytes[30] << 8) | keyBytes[31];
+                  this._log(`Extracted participant index ${participantIndex} from Secp256k1 key ${hexKey} (last 2 bytes, big-endian)`);
+                } else {
+                  this._log(`Unexpected Secp256k1 key length: ${keyBytes.length} bytes`);
+                  continue;
                 }
+              } else {
+                // For Ed25519 (Solana), try little-endian u16 at start
+                if (keyBytes.length >= 2) {
+                  participantIndex = keyBytes[0] | (keyBytes[1] << 8);
+                  this._log(`Extracted participant index ${participantIndex} from Ed25519 key ${hexKey} (little-endian u16)`);
+                } else {
+                  this._log(`Unexpected Ed25519 key length: ${keyBytes.length} bytes`);
+                  continue;
+                }
+              }
+
+              if (participantIndex === recipientIndex) {
+                recipientPackage = packageData;
+                recipientKey = hexKey;
+                this._log(`Found matching package for ${peerId}: key ${hexKey}, participant ${participantIndex}`);
+                break;
               }
             } catch (error) {
               this._log(`Error parsing key ${hexKey}: ${error}`);
@@ -822,8 +893,10 @@ export class WebRTCManager {
   }
 
   private _handleDkgRound2Package(fromPeerId: string, packageData: any): void {
+    // If DKG is not initialized yet, buffer the package for later processing
     if (!this.frostDkg || !this.sessionInfo) {
-      this._log(`Ignoring Round 2 package from ${fromPeerId}: DKG not initialized`);
+      this._log(`DKG not initialized yet, buffering Round 2 package from ${fromPeerId}`);
+      this.bufferedRound2Packages.push({ fromPeerId, packageData });
       return;
     }
 
@@ -929,14 +1002,24 @@ export class WebRTCManager {
       // Update state to complete first
       this._updateDkgState(DkgState.Complete);
 
-      // Now try to get the derived address
+      // Now try to get the derived address based on blockchain type
       try {
-        const solAddress = this.frostDkg.get_sol_address();
-        this._log(`Generated Solana address: ${solAddress}`);
-        // Store the Solana address as a property
-        this.solanaAddress = solAddress;
+        let walletAddress: string;
+        if (this.currentBlockchain === "ethereum") {
+          walletAddress = this.frostDkg.get_eth_address();
+          this._log(`Generated Ethereum address: ${walletAddress}`);
+        } else {
+          walletAddress = this.frostDkg.get_sol_address();
+          this._log(`Generated Solana address: ${walletAddress}`);
+          // Also store in legacy property for backward compatibility
+          this.solanaAddress = walletAddress;
+        }
+
+        // Store the address in a generic property 
+        this.walletAddress = walletAddress;
+
       } catch (addressError) {
-        this._log(`Warning: DKG completed but failed to generate Solana address: ${(addressError as any).message || addressError}`);
+        this._log(`Warning: DKG completed but failed to generate ${this.currentBlockchain} address: ${(addressError as any).message || addressError}`);
         // Don't fail the entire DKG for address generation issues
       }
 
@@ -960,6 +1043,385 @@ export class WebRTCManager {
     this.receivedRound2Packages.clear();
     this.groupPublicKey = null;
     this.solanaAddress = null;
+    this.currentBlockchain = "solana"; // Reset to default blockchain
+
+    // Clear package buffers when resetting DKG state
+    this.bufferedRound1Packages = [];
+    this.bufferedRound2Packages = [];
+  }
+
+  private _replayBufferedPackages(): void {
+    this._log(`🔄 Replaying buffered packages: ${this.bufferedRound1Packages.length} Round 1, ${this.bufferedRound2Packages.length} Round 2`);
+    this._log(`🔄 Current DKG state before replay: ${DkgState[this.dkgState]}`);
+    this._log(`🔄 Current receivedRound1Packages before replay: [${Array.from(this.receivedRound1Packages).join(', ')}]`);
+
+    // Replay buffered Round 1 packages
+    const round1Buffer = [...this.bufferedRound1Packages]; // Copy array to avoid modification during iteration
+    this.bufferedRound1Packages = []; // Clear buffer
+
+    for (const { fromPeerId, packageData } of round1Buffer) {
+      this._log(`🔄 Replaying buffered Round 1 package from ${fromPeerId}`);
+      this._handleDkgRound1Package(fromPeerId, packageData);
+    }
+
+    this._log(`🔄 After Round 1 replay - receivedRound1Packages: [${Array.from(this.receivedRound1Packages).join(', ')}]`);
+
+    // Replay buffered Round 2 packages
+    const round2Buffer = [...this.bufferedRound2Packages]; // Copy array to avoid modification during iteration
+    this.bufferedRound2Packages = []; // Clear buffer
+
+    for (const { fromPeerId, packageData } of round2Buffer) {
+      this._log(`🔄 Replaying buffered Round 2 package from ${fromPeerId}`);
+      this._handleDkgRound2Package(fromPeerId, packageData);
+    }
+
+    this._log(`🔄 Replay completed. Final receivedRound1Packages: [${Array.from(this.receivedRound1Packages).join(', ')}]`);
+  }
+
+  // --- FROST Signing Methods ---
+
+  public initiateSigning(txData: any, blockchain: "ethereum" | "solana" = "solana"): boolean {
+    this._log(`Initiating FROST signing for ${blockchain} transaction`);
+
+    // Check if DKG is complete
+    if (this.dkgState !== DkgState.Complete) {
+      this._log(`Cannot start signing: DKG not complete (current state: ${DkgState[this.dkgState]})`);
+      return false;
+    }
+
+    // Check if mesh is ready
+    if (this.meshStatus.type !== MeshStatusType.Ready) {
+      this._log(`Cannot start signing: Mesh not ready (current status: ${this.meshStatus.type})`);
+      return false;
+    }
+
+    // Reset signing state
+    this._resetSigningState();
+
+    // Store transaction data and blockchain
+    this.transactionData = txData;
+    this.currentBlockchain = blockchain;
+
+    // Update state
+    this._updateSigningState(SigningState.TransactionComposition);
+
+    // Broadcast SignTx message to all peers
+    const signTxMessage = {
+      webrtc_msg_type: 'SignTx' as const,
+      tx_data: txData,
+      blockchain: blockchain
+    };
+
+    this._broadcastToAllPeers(signTxMessage);
+    this._log(`Broadcasted SignTx message to all peers`);
+
+    return true;
+  }
+
+  private _handleSignTx(fromPeerId: string, txData: any): void {
+    this._log(`Handling SignTx from ${fromPeerId}`);
+
+    // Validate DKG state
+    if (this.dkgState !== DkgState.Complete) {
+      this._log(`Ignoring SignTx: DKG not complete`);
+      return;
+    }
+
+    // Store transaction data
+    this.transactionData = txData;
+    this._updateSigningState(SigningState.SigningCommitment);
+
+    // Generate signing commitment
+    this._generateSigningCommitment();
+  }
+
+  private _generateSigningCommitment(): void {
+    this._log(`Generating signing commitment`);
+
+    try {
+      // Get participant info
+      if (!this.groupPublicKey || this.participantIndex === null) {
+        this._log(`Missing group public key or participant index for signing commitment`);
+        this._updateSigningState(SigningState.Failed);
+        return;
+      }
+
+      // Import the appropriate WASM module
+      let frostCommit;
+      if (this.currentBlockchain === "ethereum") {
+        frostCommit = (window as any).eth_sign?.frost_round1?.commit;
+      } else {
+        frostCommit = (window as any).sol_sign?.frost_round1?.commit;
+      }
+
+      if (!frostCommit) {
+        this._log(`FROST commit function not available for ${this.currentBlockchain}`);
+        this._updateSigningState(SigningState.Failed);
+        return;
+      }
+
+      // Generate commitment
+      const commitment = frostCommit(this.participantIndex);
+
+      // Store our commitment
+      this.signingCommitments.set(this.localPeerId, commitment);
+
+      // Broadcast commitment to all peers
+      const commitmentMessage = {
+        webrtc_msg_type: 'SignCommitment' as const,
+        commitment: commitment,
+        participant_index: this.participantIndex
+      };
+
+      this._broadcastToAllPeers(commitmentMessage);
+      this._log(`Broadcasted signing commitment to all peers`);
+
+    } catch (error) {
+      this._log(`Error generating signing commitment: ${(error as any).message || error}`);
+      this._updateSigningState(SigningState.Failed);
+    }
+  }
+
+  private _handleSignCommitment(fromPeerId: string, commitment: any): void {
+    this._log(`Handling SignCommitment from ${fromPeerId}`);
+
+    // Store the commitment
+    this.signingCommitments.set(fromPeerId, commitment);
+    this.receivedCommitments.add(fromPeerId);
+
+    this._log(`Received ${this.receivedCommitments.size} commitments so far`);
+
+    // Check if we have all commitments (including our own)
+    const expectedPeers = this._getExpectedPeers();
+    if (this.receivedCommitments.size >= expectedPeers.length) {
+      this._log(`All commitments received, proceeding to signer selection`);
+      this._performSignerSelection();
+    }
+  }
+
+  private _performSignerSelection(): void {
+    this._log(`Performing signer selection`);
+
+    // For now, use all available participants as signers
+    // In a production system, this could be more sophisticated
+    this.selectedSigners = this._getExpectedPeers();
+
+    this._updateSigningState(SigningState.SignerSelection);
+
+    // Broadcast signer selection
+    const signerSelectionMessage = {
+      webrtc_msg_type: 'SignerSelection' as const,
+      signers: this.selectedSigners
+    };
+
+    this._broadcastToAllPeers(signerSelectionMessage);
+    this._log(`Broadcasted signer selection: [${this.selectedSigners.join(', ')}]`);
+
+    // Proceed to signature generation
+    this._generateSignature();
+  }
+
+  private _handleSignerSelection(fromPeerId: string, signers: string[]): void {
+    this._log(`Handling SignerSelection from ${fromPeerId}: [${signers.join(', ')}]`);
+
+    // Update selected signers (should be consistent across all peers)
+    this.selectedSigners = signers;
+    this._updateSigningState(SigningState.SignerSelection);
+
+    // If we're in the signer list, generate our signature
+    if (signers.includes(this.localPeerId)) {
+      this._generateSignature();
+    }
+  }
+
+  private _generateSignature(): void {
+    this._log(`Generating signature`);
+
+    try {
+      if (!this.transactionData || this.participantIndex === null) {
+        this._log(`Missing transaction data or participant index for signature generation`);
+        this._updateSigningState(SigningState.Failed);
+        return;
+      }
+
+      this._updateSigningState(SigningState.SignatureGeneration);
+
+      // Import the appropriate WASM module
+      let frostSign;
+      if (this.currentBlockchain === "ethereum") {
+        frostSign = (window as any).eth_sign?.frost_round2?.sign;
+      } else {
+        frostSign = (window as any).sol_sign?.frost_round2?.sign;
+      }
+
+      if (!frostSign) {
+        this._log(`FROST sign function not available for ${this.currentBlockchain}`);
+        this._updateSigningState(SigningState.Failed);
+        return;
+      }
+
+      // Generate signature share
+      const messageBytes = typeof this.transactionData === 'string'
+        ? new TextEncoder().encode(this.transactionData)
+        : this.transactionData;
+
+      const signatureShare = frostSign(messageBytes, this.participantIndex);
+
+      // Store our signature share
+      this.signingShares.set(this.localPeerId, signatureShare);
+
+      // Broadcast signature share to all peers
+      const signShareMessage = {
+        webrtc_msg_type: 'SignShare' as const,
+        share: signatureShare,
+        participant_index: this.participantIndex
+      };
+
+      this._broadcastToAllPeers(signShareMessage);
+      this._log(`Broadcasted signature share to all peers`);
+
+    } catch (error) {
+      this._log(`Error generating signature: ${(error as any).message || error}`);
+      this._updateSigningState(SigningState.Failed);
+    }
+  }
+
+  private _handleSignShare(fromPeerId: string, share: any): void {
+    this._log(`Handling SignShare from ${fromPeerId}`);
+
+    // Store the signature share
+    this.signingShares.set(fromPeerId, share);
+    this.receivedShares.add(fromPeerId);
+
+    this._log(`Received ${this.receivedShares.size} signature shares so far`);
+
+    // Check if we have enough shares to aggregate
+    if (this.receivedShares.size >= this.selectedSigners.length) {
+      this._log(`All signature shares received, proceeding to aggregation`);
+      this._aggregateSignatures();
+    }
+  }
+
+  private _aggregateSignatures(): void {
+    this._log(`Aggregating signatures`);
+
+    try {
+      this._updateSigningState(SigningState.SignatureAggregation);
+
+      // Import the appropriate WASM module
+      let frostAggregate;
+      if (this.currentBlockchain === "ethereum") {
+        frostAggregate = (window as any).eth_sign?.frost?.aggregate;
+      } else {
+        frostAggregate = (window as any).sol_sign?.frost?.aggregate;
+      }
+
+      if (!frostAggregate) {
+        this._log(`FROST aggregate function not available for ${this.currentBlockchain}`);
+        this._updateSigningState(SigningState.Failed);
+        return;
+      }
+
+      // Collect all signature shares
+      const shares = Array.from(this.signingShares.values());
+
+      // Aggregate signatures
+      const aggregatedSignature = frostAggregate(shares);
+      this.aggregatedSignature = aggregatedSignature;
+
+      // Broadcast aggregated signature
+      const signAggregatedMessage = {
+        webrtc_msg_type: 'SignAggregated' as const,
+        signature: aggregatedSignature
+      };
+
+      this._broadcastToAllPeers(signAggregatedMessage);
+      this._log(`Broadcasted aggregated signature to all peers`);
+
+      this._updateSigningState(SigningState.SignatureVerification);
+      this._verifyAggregatedSignature();
+
+    } catch (error) {
+      this._log(`Error aggregating signatures: ${(error as any).message || error}`);
+      this._updateSigningState(SigningState.Failed);
+    }
+  }
+
+  private _handleSignAggregated(fromPeerId: string, signature: any): void {
+    this._log(`Handling SignAggregated from ${fromPeerId}`);
+
+    // Store the aggregated signature
+    this.aggregatedSignature = signature;
+    this._updateSigningState(SigningState.SignatureVerification);
+
+    // Verify the signature
+    this._verifyAggregatedSignature();
+  }
+
+  private _verifyAggregatedSignature(): void {
+    this._log(`Verifying aggregated signature`);
+
+    try {
+      if (!this.aggregatedSignature || !this.groupPublicKey || !this.transactionData) {
+        this._log(`Missing signature, group public key, or transaction data for verification`);
+        this._updateSigningState(SigningState.Failed);
+        return;
+      }
+
+      // Import the appropriate WASM module for verification
+      let frostVerify;
+      if (this.currentBlockchain === "ethereum") {
+        frostVerify = (window as any).eth_sign?.frost?.verify;
+      } else {
+        frostVerify = (window as any).sol_sign?.frost?.verify;
+      }
+
+      if (!frostVerify) {
+        this._log(`FROST verify function not available for ${this.currentBlockchain}`);
+        this._updateSigningState(SigningState.Failed);
+        return;
+      }
+
+      // Verify signature
+      const messageBytes = typeof this.transactionData === 'string'
+        ? new TextEncoder().encode(this.transactionData)
+        : this.transactionData;
+
+      const isValid = frostVerify(this.aggregatedSignature, messageBytes, this.groupPublicKey);
+
+      if (isValid) {
+        this._log(`✅ Signature verification successful!`);
+        this._updateSigningState(SigningState.Complete);
+      } else {
+        this._log(`❌ Signature verification failed!`);
+        this._updateSigningState(SigningState.Failed);
+      }
+
+    } catch (error) {
+      this._log(`Error verifying signature: ${(error as any).message || error}`);
+      this._updateSigningState(SigningState.Failed);
+    }
+  }
+
+  private _resetSigningState(): void {
+    this._log("Resetting signing state");
+
+    this.currentMessage = null;
+    this.transactionData = null;
+    this.receivedCommitments.clear();
+    this.receivedShares.clear();
+    this.selectedSigners = [];
+    this.signingCommitments.clear();
+    this.signingShares.clear();
+    this.aggregatedSignature = null;
+    this._updateSigningState(SigningState.Idle);
+  }
+
+  private _getExpectedPeers(): string[] {
+    if (!this.sessionInfo) {
+      return [];
+    }
+    return [...this.sessionInfo.participants];
   }
 
   // --- Status and Information Methods ---
@@ -1371,6 +1833,51 @@ export class WebRTCManager {
         }
         break;
 
+      case 'SignTx':
+        if ('tx_data' in message) {
+          this._log(`Received SignTx from ${fromPeerId}`);
+          this._handleSignTx(fromPeerId, (message as any).tx_data);
+        } else {
+          this._log(`SignTx from ${fromPeerId} missing tx_data field.`);
+        }
+        break;
+
+      case 'SignCommitment':
+        if ('commitment' in message) {
+          this._log(`Received SignCommitment from ${fromPeerId}`);
+          this._handleSignCommitment(fromPeerId, (message as any).commitment);
+        } else {
+          this._log(`SignCommitment from ${fromPeerId} missing commitment field.`);
+        }
+        break;
+
+      case 'SignShare':
+        if ('share' in message) {
+          this._log(`Received SignShare from ${fromPeerId}`);
+          this._handleSignShare(fromPeerId, (message as any).share);
+        } else {
+          this._log(`SignShare from ${fromPeerId} missing share field.`);
+        }
+        break;
+
+      case 'SignAggregated':
+        if ('signature' in message) {
+          this._log(`Received SignAggregated from ${fromPeerId}`);
+          this._handleSignAggregated(fromPeerId, (message as any).signature);
+        } else {
+          this._log(`SignAggregated from ${fromPeerId} missing signature field.`);
+        }
+        break;
+
+      case 'SignerSelection':
+        if ('signers' in message) {
+          this._log(`Received SignerSelection from ${fromPeerId}`);
+          this._handleSignerSelection(fromPeerId, (message as any).signers);
+        } else {
+          this._log(`SignerSelection from ${fromPeerId} missing signers field.`);
+        }
+        break;
+
       default:
         this._log(`Unknown WebRTCAppMessage type from ${fromPeerId}: ${(message as any).webrtc_msg_type}. Full message: ${JSON.stringify(message)}`);
         break;
@@ -1427,6 +1934,7 @@ export class WebRTCManager {
       state: this.dkgState,
       stateName: DkgState[this.dkgState],
       participantIndex: this.participantIndex,
+      blockchain: this.currentBlockchain,
       sessionInfo: this.sessionInfo ? {
         session_id: this.sessionInfo.session_id,
         total: this.sessionInfo.total,
@@ -1488,5 +1996,19 @@ export class WebRTCManager {
       }
       return null;
     }
+  }
+
+  private _broadcastToAllPeers(message: WebRTCAppMessage): void {
+    if (!this.sessionInfo) {
+      this._log("Cannot broadcast: no active session");
+      return;
+    }
+
+    this.sessionInfo.participants.forEach(peerId => {
+      if (peerId !== this.localPeerId) {
+        this.sendWebRTCAppMessage(peerId, message);
+        this._log(`Sent ${message.webrtc_msg_type} message to ${peerId}`);
+      }
+    });
   }
 }

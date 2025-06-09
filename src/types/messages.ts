@@ -1,4 +1,4 @@
-import type { SessionInfo, DkgState, MeshStatus, SessionProposal, SessionResponse } from './appstate';
+import type { SessionInfo, DkgState, SigningState, MeshStatus, SessionProposal, SessionResponse } from './appstate';
 import type { AppState } from './appstate';
 import type { WebRTCAppMessage as DataChannelMessage } from './webrtc';
 import { ServerMsg, ClientMsg, WebSocketMessagePayload, WebRTCSignal } from './websocket';
@@ -36,7 +36,11 @@ export type BackgroundMessage = BaseMessage & (
     | { type: 'getWebRTCStatus' }
     // session management
     | { type: 'proposeSession'; session_id: string; total: number; threshold: number; participants: string[] }
-    | { type: 'acceptSession'; session_id: string; accepted: boolean }
+    | { type: 'acceptSession'; session_id: string; accepted: boolean; blockchain?: "ethereum" | "solana" }
+
+    // Signing operations  
+    | { type: 'initiateSign'; message: string; transaction_data?: any }
+    | { type: 'getSigningState' }
 
     // Management operations
     | { type: 'createOffscreen' }
@@ -65,8 +69,8 @@ export type OffscreenMessage = BaseMessage & (
     | { type: 'webrtcConnectionUpdate'; peerId: string; connected: boolean }
     | { type: 'meshStatusUpdate'; status: MeshStatus }
     | { type: 'dkgStateUpdate'; state: DkgState }
-    | { type: 'sessionAccepted'; sessionInfo: SessionInfo; currentPeerId: string }
-    | { type: 'sessionAllAccepted'; sessionInfo: SessionInfo; currentPeerId: string }
+    | { type: 'sessionAccepted'; sessionInfo: SessionInfo; currentPeerId: string; blockchain?: "ethereum" | "solana" }
+    | { type: 'sessionAllAccepted'; sessionInfo: SessionInfo; currentPeerId: string; blockchain?: "ethereum" | "solana" }
     | { type: 'sessionResponseUpdate'; sessionInfo: SessionInfo; currentPeerId: string }
 );
 
@@ -137,10 +141,11 @@ export function validateSessionProposal(msg: BackgroundMessage): msg is Backgrou
         'participants' in msg && Array.isArray(msg.participants);
 }
 
-export function validateSessionAcceptance(msg: BackgroundMessage): msg is BackgroundMessage & { session_id: string; accepted: boolean } {
+export function validateSessionAcceptance(msg: BackgroundMessage): msg is BackgroundMessage & { session_id: string; accepted: boolean; blockchain?: "ethereum" | "solana" } {
     return msg.type === 'acceptSession' &&
         'session_id' in msg && typeof msg.session_id === 'string' &&
-        'accepted' in msg && typeof msg.accepted === 'boolean';
+        'accepted' in msg && typeof msg.accepted === 'boolean' &&
+        (!('blockchain' in msg) || (typeof msg.blockchain === 'string' && ['ethereum', 'solana'].includes(msg.blockchain)));
 }
 
 // --- Legacy Types (kept for compatibility) ---

@@ -217,6 +217,13 @@ chrome.runtime.onMessage.addListener((message: { type?: string; payload?: any },
                 console.log(`Offscreen: Setting up WebRTC for accepted session: ${payload.sessionInfo.session_id}`);
                 console.log(`Offscreen: Current peer: ${payload.currentPeerId}, Participants:`, payload.sessionInfo.participants);
 
+                // Extract blockchain parameter from payload
+                const blockchain = payload.blockchain || "solana"; // Default to solana if not specified
+                console.log("🔗 Offscreen: Blockchain selection for session setup:", blockchain);
+
+                // Set the blockchain selection on WebRTCManager
+                webRTCManager.setBlockchain(blockchain);
+
                 // Update the WebRTCManager with the session info
                 webRTCManager.sessionInfo = payload.sessionInfo;
 
@@ -238,7 +245,7 @@ chrome.runtime.onMessage.addListener((message: { type?: string; payload?: any },
                     console.log(`Offscreen: No peers to initiate offers to based on ID ordering. Waiting for incoming offers.`);
                 }
 
-                sendResponse({ success: true, message: "Session accepted and WebRTC setup initiated." });
+                sendResponse({ success: true, message: `Session accepted and WebRTC setup initiated with blockchain: ${blockchain}.` });
             } else {
                 const debugInfo = {
                     webRTCManagerReady: !!webRTCManager,
@@ -257,10 +264,22 @@ chrome.runtime.onMessage.addListener((message: { type?: string; payload?: any },
             if (webRTCManager && payload.sessionInfo) {
                 console.log(`📋 Session info: participants=[${payload.sessionInfo.participants.join(', ')}], accepted=[${payload.sessionInfo.accepted_peers.join(', ')}]`);
 
-                // Update session info and trigger mesh readiness check
+                // Extract blockchain parameter from payload
+                const blockchain = payload.blockchain || "solana"; // Default to solana if not specified
+                console.log("🔗 Offscreen: Blockchain selection for DKG:", blockchain);
+
+                // Set the blockchain selection on WebRTCManager
+                webRTCManager.setBlockchain(blockchain);
+
+                // Update session info and trigger mesh readiness check with blockchain parameter
                 webRTCManager.updateSessionInfo(payload.sessionInfo);
-                console.log("✅ Offscreen: Updated session info and triggered mesh readiness check");
-                sendResponse({ success: true, message: "Session all accepted processed - mesh readiness triggered." });
+
+                // Trigger DKG with the correct blockchain parameter
+                console.log("🚀 Offscreen: Triggering DKG with blockchain:", blockchain);
+                webRTCManager.checkAndTriggerDkg(blockchain);
+
+                console.log("✅ Offscreen: Updated session info and triggered mesh readiness check with blockchain");
+                sendResponse({ success: true, message: "Session all accepted processed - mesh readiness and DKG triggered with blockchain." });
             } else {
                 console.warn("❌ Offscreen: Cannot handle sessionAllAccepted - WebRTCManager not ready or missing sessionInfo");
                 sendResponse({ success: false, error: "WebRTCManager not ready or missing sessionInfo" });

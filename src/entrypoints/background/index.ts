@@ -7,7 +7,7 @@ import { toHex } from 'viem';
 import WalletController from "../../services/walletController";
 import { WebSocketClient } from "./websocket";
 import {
-    SessionProposal, SessionResponse, SessionInfo, AppState, MeshStatusType, DkgState
+    SessionProposal, SessionResponse, SessionInfo, AppState, MeshStatusType, DkgState, SigningState
 } from "../../types/appstate";
 import {
     type JsonRpcRequest,
@@ -260,7 +260,9 @@ let appState: AppState = {
     invites: [],
     meshStatus: { type: MeshStatusType.Incomplete },
     dkgState: DkgState.Idle,
-    webrtcConnections: {}
+    signingState: SigningState.Idle,
+    webrtcConnections: {},
+    blockchain: undefined // Will be set when session is accepted
 };
 
 // Broadcast state to all connected popup ports
@@ -292,7 +294,7 @@ export default defineBackground(() => {
                 type: "initialState",
                 ...appState
             };
-            console.log("[Background] Sending initial state to popup:", initialStateMessage);
+            console.log("[Background] Sending initial state to popup");
             port.postMessage(initialStateMessage);
 
             port.onDisconnect.addListener(() => {
@@ -501,6 +503,10 @@ export default defineBackground(() => {
                         if (validateSessionAcceptance(message)) {
                             console.log("[Background] Received session acceptance:", message);
 
+                            // Extract blockchain parameter from message
+                            const blockchain = message.blockchain || "solana"; // Default to solana if not specified
+                            console.log("[Background] Session blockchain selection:", blockchain);
+
                             // Find the session in invites
                             const sessionIndex = appState.invites.findIndex(invite => invite.session_id === message.session_id);
 
@@ -513,6 +519,9 @@ export default defineBackground(() => {
                                     // Move from invites to current session
                                     appState.sessionInfo = { ...session, status: "accepted" };
                                     appState.invites.splice(sessionIndex, 1);
+
+                                    // Store blockchain selection for this session
+                                    appState.blockchain = blockchain;
 
                                     // Ensure this peer is in the accepted peers list
                                     if (!appState.sessionInfo.accepted_peers.includes(appState.peerId)) {
@@ -550,7 +559,7 @@ export default defineBackground(() => {
                                             } as any);
 
                                             // Forward session info to offscreen for WebRTC setup
-                                            console.log("[Background] Forwarding session info to offscreen for WebRTC setup");
+                                            console.log("[Background] Forwarding session info to offscreen for WebRTC setup with blockchain:", blockchain);
 
                                             if (appState.sessionInfo) {
                                                 safelySendOffscreenMessage({
@@ -558,7 +567,8 @@ export default defineBackground(() => {
                                                     payload: {
                                                         type: "sessionAccepted",
                                                         sessionInfo: appState.sessionInfo,
-                                                        currentPeerId: appState.peerId
+                                                        currentPeerId: appState.peerId,
+                                                        blockchain: blockchain
                                                     }
                                                 }, "sessionAccepted");
                                             } else {
@@ -652,6 +662,17 @@ export default defineBackground(() => {
                             sendResponse({ success: true, message: "WebRTC status request sent to offscreen" });
                         } else {
                             sendResponse({ success: false, error: `Failed to get WebRTC status: ${webrtcResult.error}` });
+                        }
+                        break;
+
+                    case "setBlockchain":
+                        if ('blockchain' in message) {
+                            console.log("[Background] Setting blockchain selection:", message.blockchain);
+                            appState.blockchain = message.blockchain;
+                            sendResponse({ success: true, blockchain: appState.blockchain });
+                        } else {
+                            console.warn("[Background] setBlockchain message missing blockchain field");
+                            sendResponse({ success: false, error: "Missing blockchain field" });
                         }
                         break;
 
@@ -1112,7 +1133,8 @@ export default defineBackground(() => {
                     const sessionAllAcceptedMessage: OffscreenMessage = {
                         type: "sessionAllAccepted",
                         sessionInfo: appState.sessionInfo,
-                        currentPeerId: appState.peerId
+                        currentPeerId: appState.peerId,
+                        blockchain: appState.blockchain || "solana" // Use stored blockchain or default to solana
                     };
 
                     safelySendOffscreenMessage({

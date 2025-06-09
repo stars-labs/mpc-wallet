@@ -114,6 +114,15 @@
           console.log("[UI] No session acceptance status in initial state");
           sessionAcceptanceStatus = {};
         }
+
+        // Initialize blockchain selection from background
+        if (message.blockchain) {
+          console.log(
+            "[UI] Initializing blockchain selection from background:",
+            message.blockchain,
+          );
+          chain = message.blockchain;
+        }
         break;
 
       case "wsStatus":
@@ -324,6 +333,27 @@
     ensurePrivateKey();
   }
 
+  // Reactive statement to send blockchain selection changes to background
+  $: if (chain && port) {
+    console.log("[UI] Chain selection changed to:", chain);
+    chrome.runtime.sendMessage(
+      {
+        type: "setBlockchain",
+        blockchain: chain,
+      },
+      (response) => {
+        if (chrome.runtime.lastError) {
+          console.error(
+            "[UI] Error setting blockchain:",
+            chrome.runtime.lastError.message,
+          );
+        } else {
+          console.log("[UI] Blockchain selection saved to background:", chain);
+        }
+      },
+    );
+  }
+
   async function fetchAddress() {
     error = "";
     signature = "";
@@ -438,8 +468,14 @@
       type: "acceptSession",
       session_id: sessionId,
       accepted: true,
+      blockchain: chain, // Include blockchain selection
     });
-    console.log("[UI] Accepting session invite:", sessionId);
+    console.log(
+      "[UI] Accepting session invite:",
+      sessionId,
+      "with blockchain:",
+      chain,
+    );
   }
 
   // Add function to send direct message for testing

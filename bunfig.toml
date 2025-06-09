@@ -1,0 +1,39 @@
+[install]
+# Faster installs by avoiding unnecessary files
+cache = true
+progress = true
+exact = true
+
+# Optimize for the project's needs
+peer = false
+dev = true
+optional = true
+
+[install.scopes]
+# Configure any scoped package registries if needed in the future
+
+[run]
+# Enable shell expansion for scripts
+shell = "zsh"
+silent = false
+
+[test]
+# Test configuration
+coverage = true
+timeout = 30000
+preload = ["./test-setup.ts"]
+
+[build]
+# Build optimizations
+minify = true
+target = "browser"
+splitting = true
+
+[lockfile]
+# Lockfile settings
+save = true
+print = "yarn"
+
+# Performance optimizations
+[experimental]
+macros = true
