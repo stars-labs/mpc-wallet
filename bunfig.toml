@@ -14,7 +14,7 @@ optional = true
 
 [run]
 # Enable shell expansion for scripts
-shell = "zsh"
+shell = "system"
 silent = false
 
 [test]
