@@ -8,7 +8,7 @@ beforeAll(async () => {
     if (!wasmInitialized) {
         try {
             // Dynamic import to avoid issues during test discovery
-            const wasmInit = await import('../pkg/mpc_wallet.js');
+            const wasmInit = await import('./pkg/mpc_wallet.js');
             await wasmInit.default();
             console.log('✅ WASM initialized globally for all tests');
             wasmInitialized = true;
@@ -24,11 +24,11 @@ afterAll(() => {
 });
 
 // Global test utilities
-globalThis.hexEncode = (str: string): string => {
+(globalThis as any).hexEncode = (str: string): string => {
     return Buffer.from(str, 'utf8').toString('hex');
 };
 
-globalThis.participantIndexToHexKey = (index: number, isSecp256k1: boolean): string => {
+(globalThis as any).participantIndexToHexKey = (index: number, isSecp256k1: boolean): string => {
     const buffer = Buffer.alloc(32);
     if (isSecp256k1) {
         buffer.writeUInt32BE(index, 28);
