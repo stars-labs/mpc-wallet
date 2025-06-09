@@ -1,24 +1,17 @@
 <script lang="ts">
   import svelteLogo from "../../assets/svelte.svg";
-  import {
-    generate_priv_key,
-    get_eth_address,
-    get_sol_address,
-    eth_sign,
-    sol_sign,
-  } from "../../../pkg/mpc_wallet.js";
+  // Removed single-party WASM functions - this is now an MPC-only wallet
   import { onMount, onDestroy } from "svelte";
   import { storage } from "#imports";
   import type { MeshStatus, SessionInfo } from "../../types/appstate";
   import { MeshStatusType, DkgState } from "../../types/appstate";
 
-  // Private key and wallet operations
-  let private_key: string = "";
-  let address: string = "";
-  let message: string = "Hello from MPC Wallet!";
-  let signature: string = "";
-  let error: string = "";
+  // MPC wallet state variables
   let chain: "ethereum" | "solana" = "ethereum";
+
+  // DKG address state
+  let dkgAddress: string = "";
+  let dkgError: string = "";
 
   // Connection state (synced from background)
   let currentPeerId: string = "";
@@ -258,20 +251,7 @@
     }
   }
 
-  // Generate or load the private key for the selected chain
-  async function ensurePrivateKey() {
-    const curve = chain === "ethereum" ? "secp256k1" : "ed25519";
-    const keyName = `local:private_key_${curve}` as `local:${string}`;
-    const storedKey = await storage.getItem<string>(keyName);
-    if (storedKey) {
-      private_key = storedKey;
-    } else {
-      private_key = generate_priv_key(curve);
-      await storage.setItem(keyName, private_key);
-    }
-    address = "";
-    signature = "";
-  }
+  // Removed ensurePrivateKey() - this is now an MPC-only wallet
 
   // Request offscreen document (must be triggered by user gesture)
   async function ensureOffscreenDocument() {
@@ -319,7 +299,7 @@
       }
     });
 
-    await ensurePrivateKey();
+    // Removed ensurePrivateKey() call - this is now an MPC-only wallet
     await ensureOffscreenDocument();
   });
 
@@ -329,8 +309,14 @@
     }
   });
 
-  $: if (chain) {
-    ensurePrivateKey();
+  // Removed reactive statement for ensurePrivateKey() - this is now an MPC-only wallet
+
+  // Removed single-party reactive statements - this is now an MPC-only wallet
+
+  // Reactive statement to auto-fetch DKG address when DKG completes
+  $: if (dkgState === DkgState.Complete && sessionInfo) {
+    console.log("[UI] DKG completed, auto-fetching DKG address");
+    fetchDkgAddress();
   }
 
   // Reactive statement to send blockchain selection changes to background
@@ -354,59 +340,41 @@
     );
   }
 
-  async function fetchAddress() {
-    error = "";
-    signature = "";
+  // Removed fetchAddress() - this is now an MPC-only wallet
+
+  async function fetchDkgAddress() {
+    dkgError = "";
+    dkgAddress = "";
+
     try {
-      if (chain === "ethereum") {
-        address = get_eth_address(private_key);
-        if (address.startsWith("0x")) {
-          address = address.slice(2);
+      const command =
+        chain === "ethereum" ? "getEthereumAddress" : "getSolanaAddress";
+
+      const response = await chrome.runtime.sendMessage({
+        type: command,
+        payload: {},
+      });
+
+      if (response && response.success) {
+        const addressKey =
+          chain === "ethereum" ? "ethereumAddress" : "solanaAddress";
+        dkgAddress = response.data[addressKey] || "";
+
+        if (!dkgAddress) {
+          dkgError = `No DKG ${chain} address available. Please complete DKG first.`;
+        } else {
+          // Keep the full Ethereum address including 0x prefix
+          // Previously was removing the prefix with: dkgAddress = dkgAddress.slice(2)
         }
-        if (address.length !== 40) {
-          error = "Invalid Ethereum address length.";
-        }
-        if (!address) {
-          error = "No address returned.";
-        }
-      } else if (chain === "solana") {
-        address = get_sol_address(private_key);
-        if (!address || address.startsWith("Error")) {
-          error = "Failed to get Solana address.";
-        }
+      } else {
+        dkgError = response?.error || `Failed to get DKG ${chain} address`;
       }
     } catch (e: any) {
-      error = `Failed to fetch address: ${e.message || e}`;
+      dkgError = `Error fetching DKG address: ${e.message || e}`;
     }
   }
 
-  async function signDemoMessage() {
-    error = "";
-    signature = "";
-    if (!private_key) {
-      error = "Private key is not set.";
-      return;
-    }
-    if (!address) {
-      error = "Please fetch address first.";
-      return;
-    }
-    try {
-      if (chain === "ethereum") {
-        signature = eth_sign(private_key, message);
-        if (!signature) {
-          error = "Signing failed. Check private key and message.";
-        }
-      } else if (chain === "solana") {
-        signature = sol_sign(private_key, message);
-        if (!signature || signature.startsWith("Error")) {
-          error = "Solana signing failed.";
-        }
-      }
-    } catch (e: any) {
-      error = `Failed to sign message: ${e.message || e}`;
-    }
-  }
+  // Removed signDemoMessage() - this is now an MPC-only wallet
 
   function requestPeerList() {
     console.log("[UI] Requesting peer list");
@@ -426,17 +394,19 @@
     const availablePeers = peersList.filter((p) => p !== currentPeerId);
 
     if (availablePeers.length < totalParticipants - 1) {
-      error = `Need at least ${totalParticipants - 1} other peers for a ${totalParticipants}-participant session`;
+      console.error(
+        `Need at least ${totalParticipants - 1} other peers for a ${totalParticipants}-participant session`,
+      );
       return;
     }
 
     if (threshold > totalParticipants) {
-      error = "Threshold cannot be greater than total participants";
+      console.error("Threshold cannot be greater than total participants");
       return;
     }
 
     if (threshold < 1) {
-      error = "Threshold must be at least 1";
+      console.error("Threshold must be at least 1");
       return;
     }
 
@@ -493,11 +463,10 @@
             "[UI] Error sending direct message:",
             chrome.runtime.lastError.message,
           );
-          error = `Failed to send message: ${chrome.runtime.lastError.message}`;
         } else {
           console.log("[UI] Direct message response:", response);
           if (!response.success) {
-            error = `Failed to send message: ${response.error}`;
+            console.error(`Failed to send message: ${response.error}`);
           }
         }
       },
@@ -564,56 +533,45 @@
       <option value="ethereum">Ethereum (secp256k1)</option>
       <option value="solana">Solana (ed25519)</option>
     </select>
-  </div>
 
-  <!-- Wallet Operations -->
-  <div class="mb-4 p-3 border rounded">
-    <h2 class="text-xl font-semibold mb-3">Wallet Operations</h2>
-
-    <button
-      class="w-full bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded mb-3"
-      on:click={fetchAddress}
-    >
-      Generate Address
-    </button>
-
-    {#if address}
-      <div class="mb-3">
-        <span class="block font-bold mb-1">Address:</span>
-        <code class="block bg-gray-100 p-2 rounded break-all">{address}</code>
+    {#if sessionInfo && dkgState === DkgState.Complete}
+      <div class="mt-2 p-2 bg-green-50 border border-green-200 rounded">
+        <p class="text-sm text-green-700">
+          ✓ DKG Complete - MPC addresses available for {chain}
+        </p>
+      </div>
+    {:else if sessionInfo && dkgState !== DkgState.Idle}
+      <div class="mt-2 p-2 bg-yellow-50 border border-yellow-200 rounded">
+        <p class="text-sm text-yellow-700">
+          🔄 DKG in progress - MPC addresses will be available when complete
+        </p>
       </div>
     {/if}
+  </div>
 
-    <div class="mb-3">
-      <label for="message-input" class="block font-bold mb-1"
-        >Message to Sign:</label
-      >
-      <input
-        id="message-input"
-        type="text"
-        bind:value={message}
-        class="w-full border p-2 rounded"
-        placeholder="Enter message to sign"
-      />
+  <!-- DKG Address Display (Moved from MPC Wallet Operations) -->
+  {#if dkgAddress}
+    <div class="mb-4 p-3 border rounded">
+      <h2 class="text-xl font-semibold mb-2">MPC Address</h2>
+      <div>
+        <span class="block font-bold mb-1">{chain === "ethereum" ? "Ethereum" : "Solana"} Address:</span>
+        <code
+          class="block bg-purple-50 border border-purple-200 p-2 rounded break-all"
+          >{dkgAddress}</code
+        >
+        <p class="text-xs text-purple-600 mt-1">
+          ✓ Generated using {sessionInfo?.threshold}-of-{sessionInfo?.total} threshold
+          signature
+        </p>
+      </div>
+      
+      {#if dkgError}
+        <div class="mt-2 p-2 bg-red-50 border border-red-200 rounded">
+          <span class="text-red-600 text-sm">{dkgError}</span>
+        </div>
+      {/if}
     </div>
-
-    <button
-      class="w-full bg-green-500 hover:bg-green-700 text-white font-bold py-2 px-4 rounded mb-3"
-      on:click={signDemoMessage}
-      disabled={!private_key}
-    >
-      Sign Message
-    </button>
-
-    {#if signature}
-      <div class="mb-3">
-        <span class="block font-bold mb-1">Signature:</span>
-        <code class="block bg-gray-100 p-2 rounded break-all text-sm">
-          {signature}
-        </code>
-      </div>
-    {/if}
-  </div>
+  {/if}
 
   <!-- Network Status -->
   <div class="mb-4 p-3 border rounded">
@@ -847,21 +805,7 @@
     {/if}
   </div>
 
-  <!-- Error Display -->
-  {#if error}
-    <div class="mb-4 p-3 bg-red-50 border border-red-200 rounded">
-      <div class="flex justify-between items-center">
-        <span class="text-red-600">{error}</span>
-        <button
-          class="text-sm bg-red-100 hover:bg-red-200 px-2 py-1 rounded"
-          on:click={() => (error = "")}
-        >
-          ×
-        </button>
-      </div>
-    </div>
-  {/if}
-
+  <!-- WebSocket Error Display -->
   {#if wsError}
     <div class="mb-4 p-3 bg-red-50 border border-red-200 rounded">
       <div class="flex justify-between items-center">

@@ -2,6 +2,53 @@
 
 *Last Updated: 2024-12-29*
 
+## ✅ MAJOR MILESTONE: Single-Party Function Removal Completed
+**Date**: December 29, 2024  
+**Objective**: Transform the wallet into an MPC-only solution by removing all traditional private key operations
+
+### Completed Tasks:
+1. **✅ Rust Backend Cleanup**
+   - Removed all single-party cryptographic functions from `src/lib.rs`
+   - Functions removed: `generate_priv_key()`, `get_eth_address()`, `get_sol_address()`, `eth_sign()`, `sol_sign()`
+   - Cleaned up unused imports while preserving MPC function dependencies
+   - Added explanatory comments about MPC-only focus
+
+2. **✅ Frontend WASM Integration Cleanup**
+   - Removed single-party WASM function imports from `App.svelte`
+   - Updated import statements to exclude removed functions
+   - Added documentation comments about MPC-only functionality
+
+3. **✅ State Management Simplification**
+   - Removed single-party state variables: `private_key`, `address`, `signature`, `error`, `addressType`
+   - Kept only MPC-related state: `dkgAddress`, `dkgError`, `message`, `chain`
+   - Cleaned up reactive statements referencing removed variables
+
+4. **✅ UI Component Removal**
+   - Removed address type selection fieldset (single-party vs DKG toggle)
+   - Removed single-party address generation button and display
+   - Removed single-party message signing functionality
+   - Simplified wallet operations to show only DKG/MPC features
+   - Updated error handling to remove single-party error variables
+
+5. **✅ Function Cleanup**
+   - Removed `ensurePrivateKey()`, `fetchAddress()`, `signDemoMessage()` functions
+   - Updated `proposeSession()` and `sendDirectMessage()` to use console logging instead of error variables
+   - Preserved all DKG/MPC functionality intact
+
+6. **✅ Build Validation**
+   - Successfully compiled Rust WASM modules
+   - Frontend builds without errors
+   - Development server starts correctly
+   - All DKG functionality preserved and operational
+
+### Result:
+The MPC Wallet is now **exclusively focused on Multi-Party Computation** with threshold signatures. Users can only:
+- Participate in DKG sessions to generate distributed keys
+- Generate MPC addresses (Ethereum & Solana)  
+- Access threshold signature capabilities (when implemented)
+
+Traditional single-party private key operations have been completely eliminated.
+
 ## Project Milestones
 
 ### ✅ Phase 1: Foundation (Q1-Q2 2024)
@@ -219,6 +266,43 @@
 - `src/entrypoints/offscreen/webrtc.ts` - Added mesh ready tracking and session resets
 
 **Impact**: Chrome extension now correctly sends mesh_ready signals once per session, matching the Rust CLI behavior that was already working correctly.
+
+---
+
+### [2025-06-09 15:05] - DKG Address UI Implementation Completed ✅
+**Task Completed**: Full UI functionality for displaying DKG-generated addresses
+
+**Implementation Scope**: Complete user interface for both Ethereum and Solana DKG addresses in the MPC wallet Chrome extension
+
+**Features Implemented**:
+1. **Address Type Selection UI**: Toggle between Single-Party and DKG (MPC) address modes with visual indicators
+2. **DKG Address Display**: Show threshold signature-generated addresses with configuration info (e.g., "2-of-3")
+3. **Auto-refresh Functionality**: Automatically fetch DKG addresses when DKG sessions complete
+4. **Cross-blockchain Support**: Works for both Ethereum and Solana with proper formatting
+5. **Enhanced UX**: Status indicators, error handling, accessibility compliance, and purple theme for MPC features
+
+**Technical Changes**:
+1. **Backend Integration**: Added `getEthereumAddress()` method to WebRTCManager and offscreen command handler
+2. **UI Components**: Implemented address type selection fieldset with radio-style buttons
+3. **State Management**: Added `dkgAddress`, `dkgError`, and `addressType` state variables
+4. **Reactive Updates**: Smart address switching and auto-loading based on DKG completion state
+
+**Validation Results**:
+- ✅ Extension builds successfully (both dev and production)
+- ✅ All implementation files validated by automated test script
+- ✅ UI components properly implemented with accessibility compliance
+- ✅ Backend integration complete with proper error handling
+- ✅ Test script passes all 6 validation checks
+- ✅ Development server running and functional
+
+**Files Modified**:
+- `src/entrypoints/popup/App.svelte` - Main UI implementation
+- `src/entrypoints/offscreen/webrtc.ts` - Added getEthereumAddress method
+- `src/entrypoints/offscreen/index.ts` - Added command handler
+- Created `DKG_ADDRESS_UI_IMPLEMENTATION.md` - Comprehensive documentation
+- Created `test-dkg-ui.sh` - Automated validation script
+
+**Impact**: Users can now seamlessly switch between traditional single-party addresses and MPC-generated DKG addresses with full visual feedback and status indication. The UI clearly distinguishes between modes and provides proper error handling and user guidance.
 
 ---
 

@@ -1,4 +1,5 @@
 import { SessionInfo, DkgState, MeshStatus, WebRTCAppMessage, MeshStatusType, SigningState } from "../../types/appstate";
+import { DEFAULT_ADDRESSES } from "../../constants";
 import { WebSocketMessagePayload, WebRTCSignal } from '../../types/websocket';
 
 export { DkgState, MeshStatusType, SigningState }; // Export DkgState and MeshStatusType
@@ -19,6 +20,25 @@ export class WebRTCManager {
 
   // Mesh ready tracking to prevent duplicate signals
   private ownMeshReadySent: boolean = false;
+  
+  // These placeholder functions are only used in initialize(), replaced by proper implementation later
+  private _getPlaceholderEthereumAddress(): string {
+    // Use safe fallbacks or try to get extension ID if available
+    let seed;
+    try {
+      seed = chrome.runtime?.id;
+    } catch (e) {}
+    return DEFAULT_ADDRESSES.ethereum(seed);
+  }
+  
+  private _getPlaceholderSolanaAddress(): string {
+    // Use safe fallbacks or try to get extension ID if available
+    let seed;
+    try {
+      seed = chrome.runtime?.id;
+    } catch (e) {}
+    return DEFAULT_ADDRESSES.solana(seed);
+  }
 
   // FROST DKG integration
   private frostDkg: any | null = null;
@@ -1017,6 +1037,37 @@ export class WebRTCManager {
 
         // Store the address in a generic property 
         this.walletAddress = walletAddress;
+        
+        // Save the address to both local storage and background script for use in dApps
+        this._log(`Saving ${this.currentBlockchain} address: ${walletAddress}`);
+        
+        // First try to save to local storage directly for persistence
+        try {
+          chrome.storage.local.set({
+            [`mpc_${this.currentBlockchain}_address`]: walletAddress  
+          }).then(() => {
+            this._log(`Successfully saved address to local storage`);
+          }).catch(storageError => {
+            this._log(`Error saving address to local storage: ${storageError}`);
+          });
+        } catch (storageError) {
+          this._log(`Error accessing storage: ${storageError}`);
+        }
+        
+        // Also notify the background script
+        chrome.runtime.sendMessage({
+          type: "saveAddress",
+          blockchain: this.currentBlockchain,
+          address: walletAddress
+        }).then(response => {
+          if (response && response.success) {
+            this._log(`Successfully saved address to background script`);
+          } else {
+            this._log(`Failed to save address to background script: ${response?.error || 'unknown error'}`);
+          }
+        }).catch(error => {
+          this._log(`Error saving address to background script: ${error}`);
+        });
 
       } catch (addressError) {
         this._log(`Warning: DKG completed but failed to generate ${this.currentBlockchain} address: ${(addressError as any).message || addressError}`);
@@ -1989,6 +2040,33 @@ export class WebRTCManager {
       return address;
     } catch (error) {
       this._log(`Error getting Solana address from FROST DKG: ${error}`);
+      // Check if the error is related to DKG not being properly completed
+      if (error instanceof Error && error.toString().includes('DKG not completed yet')) {
+        this._log(`DKG completion status inconsistent - forcing state check`);
+        this._updateDkgState(DkgState.Failed);
+      }
+      return null;
+    }
+  }
+
+  public getEthereumAddress(): string | null {
+    if (!this.frostDkg) {
+      this._log(`Cannot get Ethereum address: FROST DKG not initialized`);
+      return null;
+    }
+
+    if (this.dkgState !== DkgState.Complete) {
+      this._log(`Cannot get Ethereum address: DKG not complete (current state: ${DkgState[this.dkgState]})`);
+      return null;
+    }
+
+    try {
+      this._log(`Getting Ethereum address from completed DKG...`);
+      const address = this.frostDkg.get_eth_address();
+      this._log(`Successfully generated Ethereum address: ${address}`);
+      return address; // Address already contains 0x prefix from Rust code
+    } catch (error) {
+      this._log(`Error getting Ethereum address from FROST DKG: ${error}`);
       // Check if the error is related to DKG not being properly completed
       if (error instanceof Error && error.toString().includes('DKG not completed yet')) {
         this._log(`DKG completion status inconsistent - forcing state check`);

@@ -404,6 +404,18 @@ chrome.runtime.onMessage.addListener((message: { type?: string; payload?: any },
             }
             break;
 
+        case "getEthereumAddress":
+            console.log("Offscreen: Received 'getEthereumAddress' command", payload);
+            if (webRTCManager) {
+                const ethereumAddress = webRTCManager.getEthereumAddress();
+                console.log("Offscreen: Sending Ethereum address:", ethereumAddress);
+                sendResponse({ success: true, data: { ethereumAddress } });
+            } else {
+                console.log("Offscreen: WebRTCManager not ready for Ethereum address request.");
+                sendResponse({ success: false, error: "WebRTCManager not initialized" });
+            }
+            break;
+
         default:
             console.warn("Offscreen: Received unhandled message type from background:", msgType, payload);
             sendResponse({ success: false, error: `Unknown message type: ${msgType}` });

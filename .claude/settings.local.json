@@ -12,7 +12,10 @@
       "Bash(git pull:*)",
       "Bash(gh pr merge:*)",
       "Bash(gh pr view:*)",
-      "Bash(gh pr create:*)"
+      "Bash(gh pr create:*)",
+      "WebFetch(domain:eips.ethereum.org)",
+      "Bash(bun run:*)",
+      "Bash(cat:*)"
     ],
     "deny": []
   }
