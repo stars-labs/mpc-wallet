@@ -1,20 +1,34 @@
-import { Chain, mainnet, sepolia } from 'viem/chains';
+import { mainnet, sepolia } from 'viem/chains';
+import type { Chain } from '../types/network';
+import { createPublicClient, http } from 'viem';
 
 type NetworkChangeCallback = (network: Chain | undefined) => void;
 
 class NetworkService {
     private static instance: NetworkService;
-    private networks: Chain[] = [];
-    private currentNetwork: Chain | undefined;
+    private networks: Record<string, Chain[]> = {
+        ethereum: [],
+        solana: []
+    };
+    private currentBlockchain: 'ethereum' | 'solana' = 'ethereum';
+    private currentNetworks: Record<string, Chain | undefined> = {
+        ethereum: undefined,
+        solana: undefined
+    };
     private readonly STORAGE_KEY = 'wallet_networks';
-    private readonly CURRENT_NETWORK_KEY = 'wallet_current_network';
+    private readonly CURRENT_NETWORK_KEY = 'wallet_current_networks';
+    private readonly CURRENT_BLOCKCHAIN_KEY = 'wallet_current_blockchain';
     private changeCallbacks: NetworkChangeCallback[] = [];
+    private initialized: boolean = false;
 
-    // 受保护的默认网络 chainId 列表
-    private static readonly PROTECTED_NETWORK_CHAIN_IDS: number[] = [mainnet.id, sepolia.id];
+    // Protected network chainIds by blockchain
+    private static readonly PROTECTED_NETWORK_IDS: Record<string, number[]> = {
+        ethereum: [mainnet.id, sepolia.id],
+        solana: []
+    };
 
     private constructor() {
-        this.loadNetworks();
+        this.initializeAsync();
     }
 
     public static getInstance(): NetworkService {
@@ -24,135 +38,270 @@ class NetworkService {
         return NetworkService.instance;
     }
 
-    private async loadNetworks(): Promise<void> {
-        try {
-            // 加载存储的网络
-            const result = await chrome.storage.local.get(this.STORAGE_KEY);
-            this.networks = result[this.STORAGE_KEY] || [];
-
-            // 如果没有网络，添加默认网络
-            if (this.networks.length === 0) {
-                const defaultNetworks = this.getDefaultNetworks();
-                for (const network of defaultNetworks) {
-                    await this.addNetwork(network);
-                }
-            }
-
-            // 加载当前网络
-            const currentNetworkResult = await chrome.storage.local.get(this.CURRENT_NETWORK_KEY);
-            this.currentNetwork = currentNetworkResult[this.CURRENT_NETWORK_KEY];
-
-            // 如果没有当前网络，设置为以太坊主网
-            if (!this.currentNetwork) {
-                const mainnetNetwork = this.networks.find(n => n.id === mainnet.id);
-                if (mainnetNetwork) {
-                    await this.setCurrentNetwork(mainnetNetwork.id);
-                }
-            }
-        } catch (error) {
-            console.error('Failed to load networks:', error);
-            this.networks = [];
+    private async initializeAsync(): Promise<void> {
+        if (!this.initialized) {
+            await this.loadNetworks();
+            this.initialized = true;
         }
     }
 
-    private getDefaultNetworks(): Chain[] {
-        return [mainnet, sepolia];
+    public async ensureInitialized(): Promise<void> {
+        if (!this.initialized) {
+            await this.initializeAsync();
+        }
+    }
+
+    // Testing utility method to reset singleton instance
+    public static resetInstance(): void {
+        NetworkService.instance = undefined as any;
+    }
+
+    private async loadNetworks(): Promise<void> {
+        try {
+            // Load stored networks
+            if (typeof chrome !== 'undefined' && chrome.storage) {
+                const result = await chrome.storage.local.get([
+                    this.STORAGE_KEY,
+                    this.CURRENT_BLOCKCHAIN_KEY,
+                    this.CURRENT_NETWORK_KEY
+                ]);
+                const storedNetworks = result[this.STORAGE_KEY];
+
+                // Initialize with default structure if not found or invalid
+                if (!storedNetworks || typeof storedNetworks !== 'object') {
+                    this.networks = { ethereum: [], solana: [] };
+                } else {
+                    // Ensure the networks object has the correct structure
+                    this.networks = {
+                        ethereum: Array.isArray(storedNetworks.ethereum) ? storedNetworks.ethereum : [],
+                        solana: Array.isArray(storedNetworks.solana) ? storedNetworks.solana : []
+                    };
+                }
+
+                // Load current blockchain
+                this.currentBlockchain = result[this.CURRENT_BLOCKCHAIN_KEY] || 'ethereum';
+
+                // Load current networks for each blockchain
+                this.currentNetworks = result[this.CURRENT_NETWORK_KEY] || { ethereum: undefined, solana: undefined };
+
+                // Add default networks if none exist for the current blockchain
+                if (!this.networks.ethereum || this.networks.ethereum.length === 0) {
+                    const defaultEthNetworks = this.getDefaultNetworks('ethereum');
+                    for (const network of defaultEthNetworks) {
+                        // Check if network already exists before adding
+                        const exists = this.networks.ethereum.some(n => n.id === network.id);
+                        if (!exists) {
+                            await this.addNetwork('ethereum', network);
+                        }
+                    }
+                }
+
+                // If no current network is set for ethereum, set to mainnet
+                if (!this.currentNetworks.ethereum) {
+                    const mainnetNetwork = this.networks.ethereum.find(n => n.id === mainnet.id);
+                    if (mainnetNetwork) {
+                        await this.setCurrentNetwork('ethereum', mainnetNetwork.id);
+                    }
+                }
+            } else {
+                // Fallback for test environment
+                this.networks = { ethereum: [], solana: [] };
+                this.currentBlockchain = 'ethereum';
+                this.currentNetworks = { ethereum: undefined, solana: undefined };
+            }
+        } catch (error) {
+            console.error('Failed to load networks:', error);
+            this.networks = { ethereum: [], solana: [] };
+        }
+    }
+
+    private getDefaultNetworks(blockchain: 'ethereum' | 'solana'): Chain[] {
+        if (blockchain === 'ethereum') {
+            return [
+                {
+                    id: mainnet.id,
+                    name: mainnet.name,
+                    network: 'mainnet',
+                    nativeCurrency: {
+                        name: mainnet.nativeCurrency.name,
+                        symbol: mainnet.nativeCurrency.symbol,
+                        decimals: mainnet.nativeCurrency.decimals
+                    },
+                    rpcUrls: {
+                        default: {
+                            http: [...(mainnet.rpcUrls.default.http as readonly string[])]
+                        }
+                    },
+                    blockExplorers: {
+                        default: {
+                            name: mainnet.blockExplorers.default.name,
+                            url: mainnet.blockExplorers.default.url
+                        }
+                    }
+                },
+                {
+                    id: sepolia.id,
+                    name: sepolia.name,
+                    network: 'sepolia',
+                    nativeCurrency: {
+                        name: sepolia.nativeCurrency.name,
+                        symbol: sepolia.nativeCurrency.symbol,
+                        decimals: sepolia.nativeCurrency.decimals
+                    },
+                    rpcUrls: {
+                        default: {
+                            http: [...(sepolia.rpcUrls.default.http as readonly string[])]
+                        }
+                    },
+                    blockExplorers: {
+                        default: {
+                            name: sepolia.blockExplorers.default.name,
+                            url: sepolia.blockExplorers.default.url
+                        }
+                    }
+                }
+            ];
+        }
+        // Add default Solana networks if needed
+        return [];
     }
 
     private async saveNetworks(): Promise<void> {
         try {
-            await chrome.storage.local.set({ [this.STORAGE_KEY]: this.networks });
+            if (typeof chrome !== 'undefined' && chrome.storage) {
+                await chrome.storage.local.set({ [this.STORAGE_KEY]: this.networks });
+            }
         } catch (error) {
             console.error('Failed to save networks:', error);
         }
     }
 
-    private async saveCurrentNetwork(): Promise<void> {
+    private async saveCurrentNetworks(): Promise<void> {
         try {
-            await chrome.storage.local.set({ [this.CURRENT_NETWORK_KEY]: this.currentNetwork });
+            if (typeof chrome !== 'undefined' && chrome.storage) {
+                await chrome.storage.local.set({ [this.CURRENT_NETWORK_KEY]: this.currentNetworks });
+            }
         } catch (error) {
-            console.error('Failed to save current network:', error);
+            console.error('Failed to save current networks:', error);
         }
     }
 
-    public async addNetwork(network: Chain): Promise<void> {
-        if (this.networks.some(n => n.id === network.id)) {
-            throw new Error('Network already exists');
+    private async saveCurrentBlockchain(): Promise<void> {
+        try {
+            if (typeof chrome !== 'undefined' && chrome.storage) {
+                await chrome.storage.local.set({ [this.CURRENT_BLOCKCHAIN_KEY]: this.currentBlockchain });
+            }
+        } catch (error) {
+            console.error('Failed to save current blockchain:', error);
+        }
+    }
+
+    public async addNetwork(blockchain: 'ethereum' | 'solana', network: Chain): Promise<void> {
+        // Validate network structure
+        if (!network || typeof network !== 'object') {
+            throw new Error('Invalid network: must be an object');
         }
 
-        this.networks.push(network);
+        if (typeof network.id !== 'number') {
+            throw new Error('Invalid network: id is required and must be a number');
+        }
+
+        if (!network.name || typeof network.name !== 'string') {
+            throw new Error('Invalid network: name is required and must be a string');
+        }
+
+        if (this.networks[blockchain].some(n => n.id === network.id)) {
+            throw new Error('Network with this ID already exists');
+        }
+
+        this.networks[blockchain].push(network);
         await this.saveNetworks();
     }
 
-    public async removeNetwork(chainId: number): Promise<void> {
-        const network = this.networks.find(n => n.id === chainId);
+    public async removeNetwork(blockchain: 'ethereum' | 'solana', chainId: number): Promise<void> {
+        const network = this.networks[blockchain].find(n => n.id === chainId);
         if (!network) {
             throw new Error('Network not found');
         }
 
-        // 不能删除受保护的默认网络
-        if (NetworkService.PROTECTED_NETWORK_CHAIN_IDS.includes(chainId)) {
+        // Cannot remove protected networks
+        if (NetworkService.PROTECTED_NETWORK_IDS[blockchain].includes(chainId)) {
             throw new Error('Cannot remove protected network');
         }
 
-        // 如果删除的是当前网络，切换到默认网络
-        if (this.currentNetwork?.id === chainId) {
-            const mainnetNetwork = this.networks.find(n => n.id === mainnet.id);
-            if (mainnetNetwork) {
-                await this.setCurrentNetwork(mainnetNetwork.id);
+        // If removing the current network, switch to a default one
+        if (this.currentNetworks[blockchain]?.id === chainId) {
+            if (blockchain === 'ethereum') {
+                const mainnetNetwork = this.networks[blockchain].find(n => n.id === mainnet.id);
+                if (mainnetNetwork) {
+                    await this.setCurrentNetwork(blockchain, mainnetNetwork.id);
+                }
             }
         }
 
-        this.networks = this.networks.filter(n => n.id !== chainId);
+        this.networks[blockchain] = this.networks[blockchain].filter(n => n.id !== chainId);
         await this.saveNetworks();
     }
 
-    public async updateNetwork(network: Chain): Promise<void> {
-        const index = this.networks.findIndex(n => n.id === network.id);
+    public async updateNetwork(blockchain: 'ethereum' | 'solana', network: Chain): Promise<void> {
+        const index = this.networks[blockchain].findIndex(n => n.id === network.id);
         if (index === -1) {
             throw new Error('Network not found');
         }
 
-        // 不能修改受保护网络的 chainId
-        if (NetworkService.PROTECTED_NETWORK_CHAIN_IDS.includes(network.id)) {
+        // Cannot modify protected networks
+        if (NetworkService.PROTECTED_NETWORK_IDS[blockchain].includes(network.id)) {
             throw new Error('Cannot modify protected network');
         }
 
-        this.networks[index] = network;
+        this.networks[blockchain][index] = network;
         await this.saveNetworks();
     }
 
-    public getNetworks(): Chain[] {
+    public getNetworks(blockchain?: 'ethereum' | 'solana'): Chain[] | Record<string, Chain[]> {
+        if (blockchain) {
+            return this.networks[blockchain];
+        }
         return this.networks;
     }
 
-    public getNetwork(chainId: number): Chain | undefined {
-        return this.networks.find(n => n.id === chainId);
+    public getNetwork(blockchain: 'ethereum' | 'solana', chainId: number): Chain | undefined {
+        return this.networks[blockchain].find(n => n.id === chainId);
     }
 
-    public getCurrentNetwork(): Chain | undefined {
-        return this.currentNetwork;
-    }
-
-    public async setCurrentNetwork(chainId: number): Promise<void> {
-        const network = this.networks.find(n => n.id === chainId);
-        if (!network) {
-            // 如果找不到网络，设置为以太坊主网
-            const mainnetNetwork = this.networks.find(n => n.id === mainnet.id);
-            if (!mainnetNetwork) {
-                throw new Error('No default network found');
-            }
-            this.currentNetwork = mainnetNetwork;
-        } else {
-            this.currentNetwork = network;
+    public getCurrentNetwork(blockchain?: 'ethereum' | 'solana'): Chain | undefined {
+        if (blockchain) {
+            return this.currentNetworks[blockchain];
         }
-        await this.saveCurrentNetwork();
-        this.notifyNetworkChange(this.currentNetwork);
+        return this.currentNetworks[this.currentBlockchain];
     }
 
-    public async clearNetworks(): Promise<void> {
-        // 只保留受保护的默认网络
-        this.networks = this.networks.filter(n => NetworkService.PROTECTED_NETWORK_CHAIN_IDS.includes(n.id));
+    public getCurrentBlockchain(): 'ethereum' | 'solana' {
+        return this.currentBlockchain;
+    }
+
+    public async setCurrentBlockchain(blockchain: 'ethereum' | 'solana'): Promise<void> {
+        this.currentBlockchain = blockchain;
+        await this.saveCurrentBlockchain();
+        this.notifyNetworkChange(this.currentNetworks[blockchain]);
+    }
+
+    public async setCurrentNetwork(blockchain: 'ethereum' | 'solana', chainId: number): Promise<void> {
+        const network = this.networks[blockchain].find(n => n.id === chainId);
+        if (!network) {
+            throw new Error('Network not found');
+        }
+
+        this.currentNetworks[blockchain] = network;
+        await this.saveCurrentNetworks();
+        this.notifyNetworkChange(this.currentNetworks[blockchain]);
+    }
+
+    public async clearNetworks(blockchain: 'ethereum' | 'solana'): Promise<void> {
+        // Only keep protected networks for the specified blockchain
+        this.networks[blockchain] = this.networks[blockchain].filter(n =>
+            NetworkService.PROTECTED_NETWORK_IDS[blockchain].includes(n.id)
+        );
         await this.saveNetworks();
     }
 
@@ -167,6 +316,40 @@ class NetworkService {
     private notifyNetworkChange(network: Chain | undefined): void {
         this.changeCallbacks.forEach(callback => callback(network));
     }
+
+    // Helper method to get a public client for the current network
+    public getPublicClient() {
+        if (this.currentBlockchain !== 'ethereum') {
+            throw new Error('Public client is only available for Ethereum networks');
+        }
+
+        const currentNetwork = this.currentNetworks.ethereum;
+        if (!currentNetwork) {
+            throw new Error('No current Ethereum network selected');
+        }
+
+        // Convert our Chain to viem's Chain format
+        const viemChain = {
+            id: currentNetwork.id,
+            name: currentNetwork.name,
+            network: currentNetwork.network,
+            nativeCurrency: currentNetwork.nativeCurrency || {
+                name: 'Ether',
+                symbol: 'ETH',
+                decimals: 18
+            },
+            rpcUrls: currentNetwork.rpcUrls || {
+                default: { http: [] },
+                public: { http: [] }
+            },
+            blockExplorers: currentNetwork.blockExplorers
+        };
+
+        return createPublicClient({
+            chain: viemChain,
+            transport: http()
+        });
+    }
 }
 
-export default NetworkService; 
+export default NetworkService;

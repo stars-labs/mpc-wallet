@@ -5,9 +5,13 @@
   import { storage } from "#imports";
   import type { MeshStatus, SessionInfo } from "../../types/appstate";
   import { MeshStatusType, DkgState } from "../../types/appstate";
+  import Settings from "../../components/Settings.svelte";
 
   // MPC wallet state variables
   let chain: "ethereum" | "solana" = "ethereum";
+  
+  // UI state
+  let showSettings = false;
 
   // DKG address state
   let dkgAddress: string = "";
@@ -517,37 +521,57 @@
 </script>
 
 <main class="p-4 max-w-2xl mx-auto">
-  <div class="text-center mb-6">
-    <img src={svelteLogo} class="logo svelte mx-auto mb-2" alt="Svelte Logo" />
-    <h1 class="text-3xl font-bold">MPC Wallet</h1>
-  </div>
-
-  <!-- Chain Selection -->
-  <div class="mb-4 p-3 border rounded">
-    <label for="chain-select" class="block font-bold mb-2">Blockchain:</label>
-    <select
-      id="chain-select"
-      bind:value={chain}
-      class="w-full border p-2 rounded"
+  <div class="text-center mb-6 flex justify-between items-center">
+    <img src={svelteLogo} class="logo svelte mb-2" alt="Svelte Logo" />
+    <h1 class="text-3xl font-bold flex-grow text-center">MPC Wallet</h1>
+    <button 
+      class="bg-blue-500 hover:bg-blue-600 text-white p-2 rounded-full"
+      on:click={() => showSettings = !showSettings}
+      title="Settings"
     >
-      <option value="ethereum">Ethereum (secp256k1)</option>
-      <option value="solana">Solana (ed25519)</option>
-    </select>
-
-    {#if sessionInfo && dkgState === DkgState.Complete}
-      <div class="mt-2 p-2 bg-green-50 border border-green-200 rounded">
-        <p class="text-sm text-green-700">
-          ✓ DKG Complete - MPC addresses available for {chain}
-        </p>
-      </div>
-    {:else if sessionInfo && dkgState !== DkgState.Idle}
-      <div class="mt-2 p-2 bg-yellow-50 border border-yellow-200 rounded">
-        <p class="text-sm text-yellow-700">
-          🔄 DKG in progress - MPC addresses will be available when complete
-        </p>
-      </div>
-    {/if}
+      <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+      </svg>
+    </button>
   </div>
+
+  {#if showSettings}
+    <Settings on:backToWallet={({detail}) => {
+      chain = detail.chain;
+      showSettings = false;
+    }} />
+  {:else}
+    <!-- Wallet Status Banner -->
+    <div class="mb-4 p-3 border rounded">
+      <div class="flex justify-between items-center mb-2">
+        <div class="font-bold">Current Network:</div>
+        <span class="text-sm text-blue-600 cursor-pointer" on:click={() => showSettings = true}>
+          Configure Wallet
+        </span>
+      </div>
+
+      <div class="p-2 bg-blue-50 border border-blue-200 rounded mb-2">
+        <p class="text-blue-700">
+          {chain === "ethereum" ? "Ethereum (secp256k1)" : "Solana (ed25519)"}
+        </p>
+      </div>
+
+      {#if sessionInfo && dkgState === DkgState.Complete}
+        <div class="p-2 bg-green-50 border border-green-200 rounded">
+          <p class="text-sm text-green-700">
+            ✓ DKG Complete - MPC addresses available for {chain}
+          </p>
+        </div>
+      {:else if sessionInfo && dkgState !== DkgState.Idle}
+        <div class="p-2 bg-yellow-50 border border-yellow-200 rounded">
+          <p class="text-sm text-yellow-700">
+            🔄 DKG in progress - MPC addresses will be available when complete
+          </p>
+        </div>
+      {/if}
+    </div>
+  {/if}
 
   <!-- DKG Address Display (Moved from MPC Wallet Operations) -->
   {#if dkgAddress}
@@ -826,6 +850,79 @@
     width: 400px;
     height: 600px;
     overflow: auto;
+  }
+  
+  /* Dark mode styles */
+  :global(.dark) {
+    color-scheme: dark;
+  }
+
+  :global(.dark body) {
+    background-color: #1a1a1a;
+    color: #e5e5e5;
+  }
+  
+  :global(.dark .border) {
+    border-color: #333333;
+  }
+  
+  :global(.dark .bg-gray-50) {
+    background-color: #262626;
+  }
+  
+  :global(.dark .bg-gray-100) {
+    background-color: #333333;
+  }
+  
+  :global(.dark .bg-green-50) {
+    background-color: #064e3b;
+    color: #a7f3d0;
+  }
+  
+  :global(.dark .bg-yellow-50) {
+    background-color: #78350f;
+    color: #fde68a;
+  }
+  
+  :global(.dark .bg-blue-50) {
+    background-color: #082f49;
+    color: #bae6fd;
+  }
+  
+  :global(.dark .text-green-700) {
+    color: #a7f3d0;
+  }
+  
+  :global(.dark .text-yellow-700) {
+    color: #fde68a;
+  }
+  
+  :global(.dark .text-blue-700) {
+    color: #bae6fd;
+  }
+  
+  :global(.dark .text-blue-600) {
+    color: #60a5fa;
+  }
+  
+  :global(.dark .bg-blue-500) {
+    background-color: #2563eb;
+  }
+  
+  :global(.dark .bg-blue-600) {
+    background-color: #1d4ed8;
+  }
+  
+  :global(.dark .border-green-200) {
+    border-color: #065f46;
+  }
+  
+  :global(.dark .border-yellow-200) {
+    border-color: #92400e;
+  }
+  
+  :global(.dark .border-blue-200) {
+    border-color: #0c4a6e;
   }
 
   .logo {

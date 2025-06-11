@@ -1,5 +1,5 @@
 import { defineBackground } from '#imports';
-import { MESSAGE_PREFIX, MessageType, DEFAULT_ADDRESSES } from '../../constants';
+import { MESSAGE_PREFIX, MessageType } from '../../constants';
 import AccountService from '../../services/accountService';
 import NetworkService from '../../services/networkService';
 import WalletClientService from '../../services/walletClient';
@@ -7,7 +7,7 @@ import { toHex } from 'viem';
 import WalletController from "../../services/walletController";
 import { WebSocketClient } from "./websocket";
 import {
-    SessionProposal, SessionResponse, SessionInfo, AppState, MeshStatusType, DkgState, SigningState
+    SessionProposal, SessionResponse, SessionInfo, AppState, MeshStatusType, DkgState
 } from "../../types/appstate";
 import {
     type JsonRpcRequest,
@@ -32,46 +32,6 @@ const accountService = AccountService.getInstance();
 const networkService = NetworkService.getInstance();
 const walletClientService = WalletClientService.getInstance();
 
-// Helper to get MPC address - will be useful for other wallet operations
-async function getMPCAddress(): Promise<string | null> {
-    if (!appState.blockchain || appState.dkgState !== DkgState.Complete) {
-        return null;
-    }
-    
-    try {
-        // Determine which address type to get based on blockchain selection
-        const addressType = appState.blockchain === "ethereum" ? "getEthereumAddress" : "getSolanaAddress";
-        console.log(`[Background] Getting MPC ${appState.blockchain} address from offscreen using ${addressType}`);
-        
-        const offscreenResponse = await chrome.runtime.sendMessage({
-            type: addressType
-        });
-        
-        // Extract the correct address field based on blockchain
-        const addressField = appState.blockchain === "ethereum" ? "ethereumAddress" : "solanaAddress";
-        
-        if (offscreenResponse && offscreenResponse.success && offscreenResponse.data[addressField]) {
-            return offscreenResponse.data[addressField];
-        }
-    } catch (e) {
-        console.error(`[Background] Error getting ${appState.blockchain} address:`, e);
-    }
-    
-    return null;
-}
-
-// Get a default placeholder address based on current blockchain
-function getPlaceholderAddress(): string {
-    // Use extension ID to generate consistent placeholder addresses
-    let seed;
-    try {
-        seed = chrome.runtime?.id;
-    } catch (e) {}
-    return appState.blockchain === "ethereum" 
-        ? DEFAULT_ADDRESSES.ethereum(seed)
-        : DEFAULT_ADDRESSES.solana(seed);
-}
-
 // 处理 RPC 请求
 async function handleRpcRequest(request: JsonRpcRequest): Promise<unknown> {
     try {
@@ -79,81 +39,43 @@ async function handleRpcRequest(request: JsonRpcRequest): Promise<unknown> {
         switch (request.method) {
             case 'eth_accounts':
             case 'eth_requestAccounts':
-                // 返回当前选中的账户地址
-                const currentAccount = accountService.getCurrentAccount();
+                // Try to get current account
+                let currentAccount = accountService.getCurrentAccount();
                 
-                // Check if we have a regular account already
-                if (currentAccount) {
-                    return [currentAccount.address];
+                // If no account exists and user requested accounts, try to create a default one
+                if (!currentAccount && request.method === 'eth_requestAccounts') {
+                    console.log('[Background] No account selected, attempting to create default account');
+                    currentAccount = await accountService.ensureDefaultAccount();
                 }
                 
-                // If using MPC wallet with completed DKG, get address from there
-                if (appState.dkgState === DkgState.Complete && appState.blockchain) {
-                    // Get MPC address
-                    const mpcAddress = await getMPCAddress() || getPlaceholderAddress();
-                    console.log(`[Background] Using MPC ${appState.blockchain} address:`, mpcAddress);
-                    
-                    // Auto-create account in the AccountService so future calls work
-                    console.log(`[Background] Auto-creating MPC account with address:`, mpcAddress);
-                    
-                    // Create a new MPC account
-                    const mpcAccount = {
-                        address: mpcAddress,
-                        type: "mpc",
-                        name: `MPC ${appState.blockchain.charAt(0).toUpperCase() + appState.blockchain.slice(1)} Wallet`
-                    };
-                    
-                    try {
-                        await accountService.addAccount(mpcAccount as any);
-                        console.log(`[Background] Successfully created MPC account`);
-                    } catch (e) {
-                        console.log("[Background] Account may already exist:", e);
-                        try {
-                            // Try to set it as current account if it exists
-                            await accountService.setCurrentAccount(mpcAddress);
-                        } catch (e2) {
-                            console.error("[Background] Failed to set MPC account as current:", e2);
-                        }
+                // If we still don't have an account, handle appropriately
+                if (!currentAccount) {
+                    if (request.method === 'eth_requestAccounts') {
+                        // For eth_requestAccounts, this is considered an error
+                        throw new Error('No accounts available. Please create an account first.');
+                    } else {
+                        // For eth_accounts, returning an empty array is acceptable
+                        return [];
                     }
-                    
-                    return [mpcAddress];
                 }
                 
-                // No account available
-                throw new Error('No account selected');
+                return [currentAccount.address];
 
             case 'eth_chainId':
                 // 返回当前网络的 chainId
-                // First try to get from NetworkService
                 const currentNetwork = networkService.getCurrentNetwork();
-                if (currentNetwork) {
-                    return toHex(currentNetwork.id);
+                if (!currentNetwork) {
+                    throw new Error('No current network found');
                 }
-                
-                // For MPC wallet on Ethereum, use mainnet by default
-                if (appState.blockchain === "ethereum") {
-                    console.log("[Background] Using default Ethereum mainnet chainId (1)");
-                    return "0x1"; // Ethereum mainnet
-                } else {
-                    console.log("[Background] Using Solana, eth_chainId not applicable");
-                    return "0x0"; // Not applicable for Solana
-                }
+                return toHex(currentNetwork.id);
 
             case 'net_version':
                 // 返回当前网络的 chainId
                 const network = networkService.getCurrentNetwork();
-                if (network) {
-                    return toHex(network.id);
+                if (!network) {
+                    throw new Error('No current network found');
                 }
-                
-                // For MPC wallet on Ethereum, use mainnet by default
-                if (appState.blockchain === "ethereum") {
-                    console.log("[Background] Using default Ethereum mainnet net_version (1)");
-                    return "0x1"; // Ethereum mainnet
-                } else {
-                    console.log("[Background] Using Solana, net_version not applicable");
-                    return "0x0"; // Not applicable for Solana
-                }
+                return toHex(network.id);
 
             default:
                 // 使用 walletClient 处理其他 RPC 请求
@@ -353,7 +275,6 @@ let appState: AppState = {
     invites: [],
     meshStatus: { type: MeshStatusType.Incomplete },
     dkgState: DkgState.Idle,
-    signingState: SigningState.Idle,
     webrtcConnections: {},
     blockchain: undefined // Will be set when session is accepted
 };
@@ -405,36 +326,6 @@ export default defineBackground(() => {
     // Simplified message handling with runtime validation
     chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) => {
         console.log("[Background] Received message:", message, "from sender:", sender);
-        
-        // Special handling for any message with a payload field first - highest priority
-        if (message && typeof message === 'object' && 'payload' in message && 
-            message.payload && typeof message.payload === 'object') {
-            
-            const payload = message.payload as any;
-            
-            // Check if it looks like a JSON-RPC request
-            if (payload.id !== undefined && payload.jsonrpc === '2.0' && 
-                typeof payload.method === 'string' && payload.method) {
-                
-                console.log(`[Background] Processing JSON-RPC request:`, payload.method);
-                
-                // Process any payload with method as a JSON-RPC request
-                (async () => {
-                    try {
-                        const result = await handleRpcRequest(payload);
-                        console.log(`[Background] JSON-RPC request completed:`, result);
-                        sendResponse({ success: true, result });
-                    } catch (error) {
-                        console.error(`[Background] JSON-RPC request failed:`, error);
-                        sendResponse({ 
-                            success: false, 
-                            error: error instanceof Error ? error.message : 'Unknown error handling request' 
-                        });
-                    }
-                })();
-                return true; // Keep sendResponse valid
-            }
-        }
 
         // Validate basic message structure
         if (!validateMessage(message)) {
@@ -443,36 +334,9 @@ export default defineBackground(() => {
             return true;
         }
 
-        // Add additional logging to debug message handling
-        console.log("[Background] Processing message with type:", message.type, typeof message.type);
-        console.log("[Background] Message type comparison:", {
-            isForwardRequest: message.type === 'FORWARD_REQUEST',
-            typeComparison: message.type === 'FORWARD_REQUEST' ? 'exact match' : 'no match',
-            typeToString: String(message.type),
-            typeOfType: typeof message.type
-        });
-        
         // Handle async operations
         (async () => {
             try {
-                // Check for FORWARD_REQUEST first as a special case
-                if (message.type === 'FORWARD_REQUEST' && 'payload' in message && message.payload) {
-                    console.log(`[Background] Detected FORWARD_REQUEST at top level`);
-                    try {
-                        const result = await handleRpcRequest(message.payload as JsonRpcRequest);
-                        console.log(`[Background] Forwarded request completed successfully:`, result);
-                        sendResponse({ success: true, result });
-                        return; // Exit early
-                    } catch (error) {
-                        console.error(`[Background] Error handling forwarded request:`, error);
-                        sendResponse({ 
-                            success: false, 
-                            error: error instanceof Error ? error.message : 'Unknown error handling request' 
-                        });
-                        return; // Exit early
-                    }
-                }
-                
                 // Simple switch on message type with runtime validation
                 switch (message.type) {
                     case MESSAGE_TYPES.GET_STATE:
@@ -825,238 +689,44 @@ export default defineBackground(() => {
                             sendResponse({ success: false, error: "Missing blockchain field" });
                         }
                         break;
-                        
-                    case "getEthereumAddress":
+
+                    case MESSAGE_TYPES.GET_ETHEREUM_ADDRESS:
                         console.log("[Background] Received getEthereumAddress request");
-                        // First check if we have a saved real address from a previous DKG
+                        // Forward to offscreen document
                         try {
-                            const savedResult = await chrome.storage.local.get(['mpc_ethereum_address']);
-                            
-                            if (savedResult && savedResult.mpc_ethereum_address && 
-                                savedResult.mpc_ethereum_address !== DEFAULT_ADDRESSES.ethereum() &&
-                                !savedResult.mpc_ethereum_address.startsWith('0x0000000')) {
-                                
-                                console.log("[Background] Found saved real Ethereum address:", savedResult.mpc_ethereum_address);
-                                sendResponse({
-                                    success: true,
-                                    data: { ethereumAddress: savedResult.mpc_ethereum_address }
-                                });
-                                return true;
-                            }
-                        } catch (e) {
-                            console.log("[Background] Error checking storage for saved address:", e);
-                        }
-                        
-                        // If DKG is not complete and we didn't find a saved real address
-                        if (appState.dkgState !== 6) { // DkgState.Complete is 6
-                            // Use fallback for smoother experience
-                            let seed;
-                            try {
-                                seed = chrome.runtime?.id;
-                            } catch (e) {}
-                            const fallbackAddress = DEFAULT_ADDRESSES.ethereum(seed);
-                            console.log("[Background] DKG not completed, using fallback address:", fallbackAddress);
-                            
-                            // Don't save the fallback address to storage - this way we preserve any real address
-                            // that might be saved there from a previous DKG completion
-                            
-                            sendResponse({
-                                success: true,
-                                data: { ethereumAddress: fallbackAddress }
-                            });
-                            return true;
-                        }
-                        
-                        // Forward to offscreen document
-                        const ethAddressResult = await safelySendOffscreenMessage({
-                            type: "fromBackground",
-                            payload: {
-                                type: "getEthereumAddress"
-                            }
-                        }, "getEthereumAddress");
-                        
-                        if (ethAddressResult.success) {
-                            // Get the address from the offscreen response
-                            const offscreenResponse = await chrome.runtime.sendMessage({
-                                type: "getEthereumAddress"
-                            });
-                            
-                            const address = offscreenResponse && offscreenResponse.success && offscreenResponse.data.ethereumAddress
-                                ? offscreenResponse.data.ethereumAddress
-                                : DEFAULT_ADDRESSES.ethereum(); // Fallback
-                                
-                            // Also save the address to storage for content script quick access
-                            try {
-                                // Notify all content scripts to save this address
-                                chrome.tabs.query({}, tabs => {
-                                    tabs.forEach(tab => {
-                                        if (tab.id) {
-                                            chrome.tabs.sendMessage(tab.id, {
-                                                type: "SAVE_ADDRESS",
-                                                blockchain: "ethereum",
-                                                address: address
-                                            }).catch(() => {});
-                                        }
-                                    });
-                                });
-                            } catch (e) {
-                                console.error("[Background] Error saving address to content scripts:", e);
-                            }
-                            
-                            sendResponse({ 
-                                success: true, 
-                                data: { ethereumAddress: address } 
-                            });
-                        } else {
-                            let seed;
-                            try {
-                                seed = chrome.runtime?.id;
-                            } catch (e) {}
-                            const fallbackAddress = DEFAULT_ADDRESSES.ethereum(seed);
-                            console.log("[Background] Failed to get address from offscreen, using fallback:", fallbackAddress);
-                            sendResponse({ 
-                                success: true, 
-                                data: { ethereumAddress: fallbackAddress }
-                            });
+                            await ensureOffscreenDocument();
+                            const ethResult = await safelySendOffscreenMessage({
+                                type: "fromBackground",
+                                payload: {
+                                    type: "getEthereumAddress"
+                                }
+                            }, "getEthereumAddress");
+                            sendResponse(ethResult);
+                        } catch (error) {
+                            console.error("[Background] Error getting Ethereum address:", error);
+                            sendResponse({ success: false, error: `Error getting Ethereum address: ${(error as Error).message}` });
                         }
                         break;
                         
-                    case "getSolanaAddress":
+                    case MESSAGE_TYPES.GET_SOLANA_ADDRESS:
                         console.log("[Background] Received getSolanaAddress request");
-                        if (appState.dkgState !== 6) { // DkgState.Complete is 6
-                            sendResponse({
-                                success: false,
-                                error: "DKG not completed yet. Complete DKG process first."
-                            });
-                            return true;
-                        }
-                        
                         // Forward to offscreen document
-                        const solAddressResult = await safelySendOffscreenMessage({
-                            type: "fromBackground",
-                            payload: {
-                                type: "getSolanaAddress"
-                            }
-                        }, "getSolanaAddress");
-                        
-                        if (solAddressResult.success) {
-                            // Get the address from the offscreen response
-                            const offscreenResponse = await chrome.runtime.sendMessage({
-                                type: "getSolanaAddress"
-                            });
-                            
-                            if (offscreenResponse && offscreenResponse.success) {
-                                sendResponse({ success: true, data: offscreenResponse.data });
-                            } else {
-                                let seed;
-                                try {
-                                    seed = chrome.runtime?.id;
-                                } catch (e) {}
-                                const placeholderSolanaAddress = DEFAULT_ADDRESSES.solana(seed);
-                                sendResponse({ success: true, data: { solanaAddress: placeholderSolanaAddress } });
-                            }
-                        } else {
-                            sendResponse({ success: false, error: `Failed to get Solana address: ${solAddressResult.error}` });
-                        }
-                        break;
-                        
-                    case "saveAddress":
-                        console.log("[Background] Received saveAddress request:", message);
-                        if ('blockchain' in message && 'address' in message) {
-                            const blockchain = message.blockchain as string;
-                            const address = message.address as string;
-                            
-                            console.log(`[Background] Saving ${blockchain} address: ${address}`);
-                            
-                            // Save to storage for persistence
-                            try {
-                                await chrome.storage.local.set({
-                                    [`mpc_${blockchain}_address`]: address
-                                });
-                                console.log(`[Background] Successfully saved ${blockchain} address to storage`);
-                                
-                                // Try to notify content scripts
-                                try {
-                                    chrome.tabs.query({}, tabs => {
-                                        tabs.forEach(tab => {
-                                            if (tab.id) {
-                                                chrome.tabs.sendMessage(tab.id, {
-                                                    type: "SAVE_ADDRESS",
-                                                    blockchain,
-                                                    address
-                                                }).catch(() => {
-                                                    // Ignore errors - content scripts may not be loaded yet
-                                                });
-                                            }
-                                        });
-                                    });
-                                } catch (e) {
-                                    console.log("[Background] Error notifying content scripts, not critical:", e);
+                        try {
+                            await ensureOffscreenDocument();
+                            const solResult = await safelySendOffscreenMessage({
+                                type: "fromBackground",
+                                payload: {
+                                    type: "getSolanaAddress"
                                 }
-                                
-                                // Create account in AccountService
-                                try {
-                                    if (blockchain === "ethereum") {
-                                        const mpcAccount = {
-                                            address: address,
-                                            type: "mpc",
-                                            name: "MPC Ethereum Wallet"
-                                        };
-                                        await accountService.addAccount(mpcAccount as any);
-                                    }
-                                } catch (e) {
-                                    console.log("[Background] Account may already exist:", e);
-                                }
-                                
-                                sendResponse({ success: true });
-                            } catch (e) {
-                                console.error("[Background] Error saving address to storage:", e);
-                                sendResponse({ success: false, error: `${e}` });
-                            }
-                        } else {
-                            sendResponse({ success: false, error: "Missing blockchain or address" });
+                            }, "getSolanaAddress");
+                            sendResponse(solResult);
+                        } catch (error) {
+                            console.error("[Background] Error getting Solana address:", error);
+                            sendResponse({ success: false, error: `Error getting Solana address: ${(error as Error).message}` });
                         }
                         break;
 
-                    case MESSAGE_TYPES.FORWARD_REQUEST:
-                        console.log(`[Background] Handling forwarded request from content script:`, message);
-                        if ('payload' in message && message.payload) {
-                            try {
-                                const result = await handleRpcRequest(message.payload as JsonRpcRequest);
-                                console.log(`[Background] Forwarded request completed successfully:`, result);
-                                sendResponse({ success: true, result });
-                            } catch (error) {
-                                console.error(`[Background] Error handling forwarded request:`, error);
-                                sendResponse({ 
-                                    success: false, 
-                                    error: error instanceof Error ? error.message : 'Unknown error handling request' 
-                                });
-                            }
-                        } else {
-                            console.warn(`[Background] Invalid FORWARD_REQUEST, missing payload`); 
-                            sendResponse({ success: false, error: 'Invalid request: missing payload' });
-                        }
-                        break;
-                        
                     default:
-                        // Handle FORWARD_REQUEST directly in the default case as a fallback
-                        if (message.type === 'FORWARD_REQUEST' && 'payload' in message && message.payload) {
-                            console.log(`[Background] Handling forwarded request from content script in default case:`, message);
-                            try {
-                                const result = await handleRpcRequest(message.payload as JsonRpcRequest);
-                                console.log(`[Background] Forwarded request completed successfully:`, result);
-                                sendResponse({ success: true, result });
-                                return; // Exit early
-                            } catch (error) {
-                                console.error(`[Background] Error handling forwarded request:`, error);
-                                sendResponse({ 
-                                    success: false, 
-                                    error: error instanceof Error ? error.message : 'Unknown error handling request' 
-                                });
-                                return; // Exit early
-                            }
-                        }
-                        // Original default case handling
                         if (isRpcMessage(message)) {
                             const result = await handleRpcRequest(message.payload);
                             sendResponse({ success: true, result });

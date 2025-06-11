@@ -1,5 +1,6 @@
 import { WebRTCManager } from './webrtc'; // Adjust path as necessary
-import type { SessionInfo, MeshStatus, DkgState, WebRTCAppMessage } from '../../types/appstate'; // Fixed import
+import type { SessionInfo, MeshStatus, DkgState } from '../../types/appstate'; // Fixed import
+import type { WebRTCAppMessage } from '../../types/webrtc';
 import { ServerMsg, ClientMsg, WebSocketMessagePayload, WebRTCSignal } from '../../types/websocket';
 console.log("Offscreen script loaded.");
 

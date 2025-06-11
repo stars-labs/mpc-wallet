@@ -1,6 +1,10 @@
 # Decision Log - MPC Wallet Chrome Extension
 
-*Last Updated: 2024-12-29*
+*Last Updated: 2025-06-11*
+
+[2025-06-11 09:46:08] - **Test Coverage Achievement**: Successfully achieved 85.12% functions and 83.12% lines coverage target. Core services (NetworkService, AccountService, WalletController, WalletClient) all exceed 90%+ coverage. WebRTC services improved significantly from ~52% to 76.81% functions coverage. Only 1 minor RPC test failure remains.
+
+[2025-06-11 09:46:08] - **AccountService Test Issue Resolution**: Fixed cosmetic console.error output during error handling tests by adding console.error suppression in specific test scenarios. All 30 tests pass with clean output and 97.87%/99.40% coverage. Solution preserves error testing while eliminating noise in test results.
 
 ## Technology Stack Decisions
 

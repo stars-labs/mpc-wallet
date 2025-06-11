@@ -21,19 +21,6 @@ export enum DkgState {
   Failed,
 }
 
-export enum SigningState {
-  Idle,
-  TransactionComposition, // Initiator only
-  SigningCommitment,
-  SignerSelection, // Initiator only
-  SignatureGeneration,
-  SignatureAggregation, // Initiator only
-  TransactionSubmission, // Initiator only
-  SignatureVerification, // Non-initiator
-  Complete,
-  Failed,
-}
-
 export enum MeshStatusType {
   Incomplete,
   PartiallyReady,
@@ -63,12 +50,7 @@ export type WebRTCAppMessage =
   | { webrtc_msg_type: 'MeshReady'; session_id: string; peer_id: string }
   | { webrtc_msg_type: 'SimpleMessage'; text: string }
   | { webrtc_msg_type: 'DkgRound1Package'; package: any }
-  | { webrtc_msg_type: 'DkgRound2Package'; package: any }
-  | { webrtc_msg_type: 'SignTx'; tx_data: any; blockchain?: "ethereum" | "solana" }
-  | { webrtc_msg_type: 'SignCommitment'; commitment: any; participant_index?: number }
-  | { webrtc_msg_type: 'SignShare'; share: any; participant_index?: number }
-  | { webrtc_msg_type: 'SignAggregated'; signature: any }
-  | { webrtc_msg_type: 'SignerSelection'; signers: string[] };
+  | { webrtc_msg_type: 'DkgRound2Package'; package: any };
 
 // Define the main application state interface
 export interface AppState {
@@ -79,7 +61,6 @@ export interface AppState {
   invites: SessionInfo[];
   meshStatus: MeshStatus;
   dkgState: DkgState;
-  signingState: SigningState;
   webrtcConnections: Record<string, boolean>;
   blockchain?: "ethereum" | "solana"; // Current blockchain selection for the active session
 }

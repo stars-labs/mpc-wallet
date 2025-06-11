@@ -408,8 +408,8 @@ describe('WebRTCManager DKG Process', () => {
             dkgC_sim_full?.free();
         }
 
-        await (manager as any)._finalizeDkg();
-
+        // _finalizeDkg() should have been called automatically by _handleDkgRound2Package
+        // No need to call it manually again
         expect(manager.dkgState).toBe(DkgState.Complete);
         expect((manager as any).groupPublicKey).toBeDefined();
         expect((manager as any).solanaAddress).toBeDefined();
@@ -820,6 +820,9 @@ describe('WebRTCManager DKG Process', () => {
             threshold: 2
         } as any;
 
+        // Set blockchain to ethereum for correct curve display in logs
+        (manager as any).currentBlockchain = "ethereum";
+
         // Use actual WASM initialization
         expect(() => {
             (manager as any).frostDkg = new FrostDkgSecp256k1();
@@ -877,6 +880,11 @@ describe('WebRTCManager DKG Process', () => {
             (managerA as any).participantIndex = 1;
             (managerB as any).participantIndex = 2;
             (managerC as any).participantIndex = 3;
+
+            // Set blockchain to ethereum for correct curve display in logs
+            (managerA as any).currentBlockchain = "ethereum";
+            (managerB as any).currentBlockchain = "ethereum";
+            (managerC as any).currentBlockchain = "ethereum";
 
             // Initialize DKG for all participants
             console.log('\\\\n=== DKG INITIALIZATION ===');
@@ -947,26 +955,26 @@ describe('WebRTCManager DKG Process', () => {
             // Exchange Round 2 packages
 
             // A processes packages from B and C (for A)
-            const r2B_for_A = extractPackageFromMap(1, round2PackageB_map_hex, true); // Corrected: isSecp256k1 was false
+            const r2B_for_A = extractPackageFromMap(1, round2PackageB_map_hex, true); // secp256k1 format with FrostDkgSecp256k1
             frostDkgA!.add_round2_package(2, r2B_for_A);
             (managerA as any).receivedRound2Packages.add('b');
-            const r2C_for_A = extractPackageFromMap(1, round2PackageC_map_hex, true); // Corrected: isSecp256k1 was false
+            const r2C_for_A = extractPackageFromMap(1, round2PackageC_map_hex, true); // secp256k1 format with FrostDkgSecp256k1
             frostDkgA!.add_round2_package(3, r2C_for_A);
             (managerA as any).receivedRound2Packages.add('c');
 
             // B processes packages from A and C (for B)
-            const r2A_for_B = extractPackageFromMap(2, round2PackageA_map_hex, true); // Corrected: isSecp256k1 was false
+            const r2A_for_B = extractPackageFromMap(2, round2PackageA_map_hex, true); // secp256k1 format with FrostDkgSecp256k1
             frostDkgB!.add_round2_package(1, r2A_for_B);
             (managerB as any).receivedRound2Packages.add('a');
-            const r2C_for_B = extractPackageFromMap(2, round2PackageC_map_hex, true); // Corrected: isSecp256k1 was false
+            const r2C_for_B = extractPackageFromMap(2, round2PackageC_map_hex, true); // secp256k1 format with FrostDkgSecp256k1
             frostDkgB!.add_round2_package(3, r2C_for_B);
             (managerB as any).receivedRound2Packages.add('c');
 
             // C processes packages from A and B (for C)
-            const r2A_for_C = extractPackageFromMap(3, round2PackageA_map_hex, true); // Corrected: isSecp256k1 was false
+            const r2A_for_C = extractPackageFromMap(3, round2PackageA_map_hex, true); // secp256k1 format with FrostDkgSecp256k1
             frostDkgC!.add_round2_package(1, r2A_for_C);
             (managerC as any).receivedRound2Packages.add('a');
-            const r2B_for_C = extractPackageFromMap(3, round2PackageB_map_hex, true); // Corrected: isSecp256k1 was false
+            const r2B_for_C = extractPackageFromMap(3, round2PackageB_map_hex, true); // secp256k1 format with FrostDkgSecp256k1
             frostDkgC!.add_round2_package(2, r2B_for_C);
             (managerC as any).receivedRound2Packages.add('b');
 
@@ -1047,6 +1055,9 @@ describe('WebRTCManager DKG Process', () => {
         const manager = new WebRTCManager('a', dummySend);
         manager.sessionInfo = sessionInfo as any;
         (manager as any)._updateDkgState(DkgState.Round1InProgress);
+
+        // Set blockchain to ethereum for correct curve display in logs
+        (manager as any).currentBlockchain = "ethereum";
 
         const frostDkg = new FrostDkgSecp256k1();
         (manager as any).frostDkg = frostDkg;

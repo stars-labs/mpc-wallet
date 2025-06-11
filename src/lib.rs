@@ -748,6 +748,11 @@ impl FrostDkg {
     pub fn get_sol_address(&self) -> Result<String, WasmError> {
         self.inner.get_address()
     }
+
+    #[wasm_bindgen]
+    pub fn get_eth_address(&self) -> Result<String, WasmError> {
+        self.inner.get_address()
+    }
 }
 
 // Initialize the library

@@ -1,4 +1,4 @@
-import type { SessionInfo, DkgState, SigningState, MeshStatus, SessionProposal, SessionResponse } from './appstate';
+import type { SessionInfo, DkgState, MeshStatus, SessionProposal, SessionResponse } from './appstate';
 import type { AppState } from './appstate';
 import type { WebRTCAppMessage as DataChannelMessage } from './webrtc';
 import { ServerMsg, ClientMsg, WebSocketMessagePayload, WebRTCSignal } from './websocket';
@@ -34,15 +34,13 @@ export type BackgroundMessage = BaseMessage & (
     | { type: 'listPeers' }
     | { type: 'sendDirectMessage'; toPeerId: string; message: string }
     | { type: 'getWebRTCStatus' }
+    | { type: 'getEthereumAddress' }
+    | { type: 'getSolanaAddress' }
+    | { type: 'setBlockchain'; blockchain: "ethereum" | "solana" }
+    
     // session management
     | { type: 'proposeSession'; session_id: string; total: number; threshold: number; participants: string[] }
     | { type: 'acceptSession'; session_id: string; accepted: boolean; blockchain?: "ethereum" | "solana" }
-
-    // Signing operations  
-    | { type: 'initiateSign'; message: string; transaction_data?: any }
-    | { type: 'getSigningState' }
-    | { type: 'getEthereumAddress'; payload: any }
-    | { type: 'getSolanaAddress'; payload: any }
 
     // Management operations
     | { type: 'createOffscreen' }
@@ -169,8 +167,6 @@ export const MESSAGE_TYPES = {
     LIST_PEERS: "listPeers",
     PROPOSE_SESSION: "proposeSession",
     ACCEPT_SESSION: "acceptSession",
-    GET_ETHEREUM_ADDRESS: "getEthereumAddress",
-    GET_SOLANA_ADDRESS: "getSolanaAddress",
     RELAY: "relay",
     FROM_OFFSCREEN: "fromOffscreen",
     OFFSCREEN_READY: "offscreenReady",
@@ -183,8 +179,9 @@ export const MESSAGE_TYPES = {
     SESSION_UPDATE: "sessionUpdate",
     PEER_CONNECTION_STATUS_UPDATE: "peerConnectionStatusUpdate",
     DATA_CHANNEL_STATUS_UPDATE: "dataChannelStatusUpdate",
-    // Content script communication
-    FORWARD_REQUEST: "FORWARD_REQUEST",
+    GET_ETHEREUM_ADDRESS: "getEthereumAddress",
+    GET_SOLANA_ADDRESS: "getSolanaAddress",
+    SET_BLOCKCHAIN: "setBlockchain",
     // Legacy support
     ACCOUNT_MANAGEMENT: "ACCOUNT_MANAGEMENT",
     NETWORK_MANAGEMENT: "NETWORK_MANAGEMENT",

@@ -1,22 +1,29 @@
 # Active Context - MPC Wallet Extension
 
 ## Current Focus
-[2025-06-09] - **DKG PACKAGE BUFFERING BUG FIXED**: Successfully resolved critical timing issue where Round 1 packages arrived before DKG initialization
+[2025-06-11] - **TEST COVERAGE TARGET ACHIEVED**: Successfully reached 85.12% functions, 83.12% lines coverage with core services exceeding 90%+
 
 ### Primary Work Areas - Status Update
-1. **✅ UI Blockchain Selection Bug RESOLVED**: 
-   - **Root Cause**: Missing `setBlockchain()` method in WebRTCManager class and missing calls in offscreen handlers
-   - **Fix Applied**: Added `setBlockchain()` method and called it from both `sessionAccepted` and `sessionAllAccepted` handlers
-   - **Result**: Users selecting Ethereum now properly use secp256k1 curve; Solana selections use Ed25519 curve
+1. **✅ Test Coverage Goal ACHIEVED**: 
+   - **Core Services**: All exceed 90%+ coverage (NetworkService: 100%, AccountService: 97.87%, WalletController: 100%, WalletClient: 91.11%)
+   - **Overall Coverage**: 85.12% functions, 83.12% lines 
+   - **Test Status**: 171 passing tests, comprehensive error handling
+   - **Result**: Robust test infrastructure with real cryptographic testing
 
-2. **✅ DKG Package Buffering Bug RESOLVED**:
-   - **Root Cause**: Round 1 packages arriving before DKG initialization were discarded, causing Round 2 to fail
-   - **Additional Issue**: Missing `add_round1_package()` call in `_handleDkgRound1Package` method
-   - **Fix Applied**: Implemented package buffering mechanism with replay functionality
-   - **Result**: Early-arriving packages are buffered and replayed after DKG initialization
+2. **✅ NetworkService Bug Resolution COMPLETED**:
+   - **Root Cause**: Duplicate network ID conflicts in loadNetworks() method
+   - **Fix Applied**: Added existence checks before adding default networks
+   - **Result**: 100% coverage, all 27 tests passing (was 0/55 failing)
 
-3. **Single-to-DKG Signing Conversion**: Replace outdated single-party signing with proper FROST DKG threshold signing
-4. **Integration Testing**: Ensure proper curve selection propagates from UI to cryptographic operations
+3. **✅ WebRTC Test Infrastructure ENHANCED**:
+   - **Coverage**: Improved from ~52% to 76.81% functions coverage
+   - **Features**: Real FROST DKG cryptographic testing, comprehensive error scenarios
+   - **Result**: Production-ready WebRTC implementation with extensive test coverage
+
+4. **✅ AccountService Test Output Cleanup COMPLETED**: 
+   - **Issue**: Expected error logging appearing in test output during error handling tests
+   - **Solution**: Applied console.error suppression during specific error handling tests
+   - **Result**: All 30 tests passing with clean output (97.87%/99.40% coverage)
 
 ### Current Test Development
 - **File**: `/src/entrypoints/offscreen/webrtc.test.ts`

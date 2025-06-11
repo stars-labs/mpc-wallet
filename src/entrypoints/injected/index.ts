@@ -505,7 +505,7 @@ export default defineUnlistedScript(() => {
         },
     });
 
-    const createAndDispatchEvent = () => {
+    const createAndDispatchEvent = (e?: Event) => {
         try {
             // Create EIP6963ProviderDetail object
             const providerDetail: EIP6963ProviderDetail = {
@@ -578,17 +578,12 @@ export default defineUnlistedScript(() => {
         }
     };
     
-    // Make provider available as window.ethereum
-    if (!(window as any).ethereum) {
-        console.log('Injecting Starlab Wallet as window.ethereum');
-        Object.defineProperty(window, 'ethereum', {
-            value: injectedProvider,
-            writable: false,
-            configurable: true
-        });
-    } else {
-        console.warn('Another provider is already set as window.ethereum');
-    }
+    // ONLY make our provider accessible as window.starlabEthereum
+    Object.defineProperty(window, 'starlabEthereum', {
+        value: injectedProvider,
+        writable: false,
+        configurable: true
+    });
     
     // Listen for EIP6963 provider request events
     window.addEventListener('eip6963:requestProvider', createAndDispatchEvent);

@@ -21,6 +21,11 @@ class WalletController {
         return WalletController.instance;
     }
 
+    // Testing utility method to reset singleton instance
+    public static resetInstance(): void {
+        WalletController.instance = undefined as any;
+    }
+
     // Network Service Proxies
     public async getNetworks() {
         return this.networkService.getNetworks();
@@ -31,15 +36,19 @@ class WalletController {
     }
 
     public async addNetwork(network: any) {
-        return this.networkService.addNetwork(network);
+        // The network parameter should include blockchain type
+        const blockchain = network.blockchain || 'ethereum';
+        return this.networkService.addNetwork(blockchain, network);
     }
 
     public async removeNetwork(networkId: number) {
-        return this.networkService.removeNetwork(networkId);
+        // Default to ethereum blockchain for now
+        return this.networkService.removeNetwork('ethereum', networkId);
     }
 
     public async setCurrentNetwork(networkId: number) {
-        return this.networkService.setCurrentNetwork(networkId);
+        // Default to ethereum blockchain for now  
+        return this.networkService.setCurrentNetwork('ethereum', networkId);
     }
 
     // Account Service Proxies
@@ -55,15 +64,38 @@ class WalletController {
         return this.accountService.addAccount(account);
     }
 
-    public async removeAccount(address: string) {
-        return this.accountService.removeAccount(address);
+    public async updateAccount(account: any) {
+        return this.accountService.updateAccount(account);
     }
 
-    public async setCurrentAccount(address: string) {
-        return this.accountService.setCurrentAccount(address);
+    public async removeAccount(accountId: string) {
+        return this.accountService.removeAccount(accountId);
+    }
+
+    public async setCurrentAccount(accountId: string) {
+        return this.accountService.setCurrentAccount(accountId);
+    }
+
+    public async getAccountsByBlockchain(blockchain: 'ethereum' | 'solana') {
+        return this.accountService.getAccountsByBlockchain(blockchain);
     }
 
     // Wallet Client Proxies
+    public async connect() {
+        // Mock connection for now since wallet client doesn't have these methods
+        return { status: 'connected' };
+    }
+
+    public async disconnect() {
+        // Mock disconnection
+        return { status: 'disconnected' };
+    }
+
+    public async isConnected() {
+        // Mock connection status 
+        return false;
+    }
+
     public async sendTransaction(transaction: any) {
         return this.walletClientService.getWalletClient().sendTransaction(transaction);
     }

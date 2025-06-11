@@ -1,8 +1,11 @@
 export interface Account {
+    id: string;
     address: string;
     name: string;
+    balance: string;
     publicKey?: string;
-    created: number;
+    blockchain: 'ethereum' | 'solana';
+    created?: number;
     lastUsed?: number;
 }
 

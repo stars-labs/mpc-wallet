@@ -15,7 +15,10 @@
       "Bash(gh pr create:*)",
       "WebFetch(domain:eips.ethereum.org)",
       "Bash(bun run:*)",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "WebFetch(domain:metamask.github.io)",
+      "Bash(bun test:*)",
+      "Bash(grep:*)"
     ],
     "deny": []
   }

@@ -7,9 +7,10 @@ export type WebRTCAppMessage =
   | { webrtc_msg_type: 'DkgRound2Package'; package: any } // frost_core::keys::dkg::round2::Package<Ed25519Sha512>
   | { webrtc_msg_type: 'ChannelOpen'; peer_id: string }
   | { webrtc_msg_type: 'MeshReady'; session_id: string; peer_id: string }
-  // FROST Signing Messages (compatible with CLI nodes)
-  | { webrtc_msg_type: 'SignTx'; message_bytes: number[]; transaction_data?: any }
-  | { webrtc_msg_type: 'SignCommitment'; sender_identifier: string; commitment: any }
-  | { webrtc_msg_type: 'SignShare'; sender_identifier: string; share: any }
-  | { webrtc_msg_type: 'SignAggregated'; signature_bytes: number[] }
-  | { webrtc_msg_type: 'SignerSelection'; selected_identifiers: string[] };
+  // Signing Messages
+  | { webrtc_msg_type: 'SigningRequest'; signing_id: string; transaction_data: string; threshold: number; participants: string[] }
+  | { webrtc_msg_type: 'SigningAcceptance'; signing_id: string; accepted: boolean }
+  | { webrtc_msg_type: 'SignerSelection'; signing_id: string; selected_signers: string[] }
+  | { webrtc_msg_type: 'SigningCommitment'; signing_id: string; commitment: any } // FROST commitment
+  | { webrtc_msg_type: 'SignatureShare'; signing_id: string; signature_share: any } // FROST signature share
+  | { webrtc_msg_type: 'AggregatedSignature'; signing_id: string; signature: string }; // Final signature as string
