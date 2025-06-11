@@ -13,28 +13,28 @@ describe('WebRTCManager mesh readiness', () => {
         const manager = new WebRTCManager('a', dummySend);
         // Set session and initial mesh status
         manager.sessionInfo = sessionInfo as any;
-        (manager as any)._updateMeshStatus({ 
+        (manager as any)._updateMeshStatus({
             type: MeshStatusType.Incomplete,
-            ready_peers: new Set(['a']) // Initialize with local peer in the set already
+            ready_devices: new Set(['a']) // Initialize with local peer in the set already
         });
 
         // Simulate receiving MeshReady from 'b'
         (manager as any)._processPeerMeshReady('b');
 
         expect(manager.meshStatus.type).toBe(MeshStatusType.PartiallyReady);
-        const readyPeers = (manager.meshStatus as any).ready_peers as Set<string>;
-        expect(readyPeers.has('a')).toBe(true);
-        expect(readyPeers.has('b')).toBe(true);
+        const readydevices = (manager.meshStatus as any).ready_devices as Set<string>;
+        expect(readydevices.has('a')).toBe(true);
+        expect(readydevices.has('b')).toBe(true);
     });
 
     it('should transition to Ready when all MeshReady received', () => {
         const manager = new WebRTCManager('a', dummySend);
         manager.sessionInfo = sessionInfo as any;
-        // Simulate two peers already ready
+        // Simulate two devices already ready
         (manager as any)._updateMeshStatus({
             type: MeshStatusType.PartiallyReady,
-            ready_peers: new Set(['a', 'b']),
-            total_peers: 3
+            ready_devices: new Set(['a', 'b']),
+            total_devices: 3
         });
 
         // Now simulate receiving MeshReady from 'c'
@@ -50,18 +50,18 @@ describe('WebRTCManager mesh readiness', () => {
         // Set up ready mesh
         (manager as any)._updateMeshStatus({
             type: MeshStatusType.Ready,
-            ready_peers: new Set(['a', 'b', 'c']),
-            total_peers: 3
+            ready_devices: new Set(['a', 'b', 'c']),
+            total_devices: 3
         });
 
         // Simulate peer 'b' disconnecting
         (manager as any)._handlePeerDisconnection('b');
 
         expect(manager.meshStatus.type).toBe(MeshStatusType.PartiallyReady);
-        const readyPeers = (manager.meshStatus as any).ready_peers as Set<string>;
-        expect(readyPeers.has('b')).toBe(false);
-        expect(readyPeers.has('a')).toBe(true);
-        expect(readyPeers.has('c')).toBe(true);
+        const readydevices = (manager.meshStatus as any).ready_devices as Set<string>;
+        expect(readydevices.has('b')).toBe(false);
+        expect(readydevices.has('a')).toBe(true);
+        expect(readydevices.has('c')).toBe(true);
     });
 
     it('should handle mesh status updates correctly', () => {
@@ -73,16 +73,16 @@ describe('WebRTCManager mesh readiness', () => {
         // Update to PartiallyReady
         (manager as any)._updateMeshStatus({
             type: MeshStatusType.PartiallyReady,
-            ready_peers: new Set(['a', 'b']),
-            total_peers: 3
+            ready_devices: new Set(['a', 'b']),
+            total_devices: 3
         });
         expect(manager.meshStatus.type).toBe(MeshStatusType.PartiallyReady);
 
         // Update to Ready
         (manager as any)._updateMeshStatus({
             type: MeshStatusType.Ready,
-            ready_peers: new Set(['a', 'b', 'c']),
-            total_peers: 3
+            ready_devices: new Set(['a', 'b', 'c']),
+            total_devices: 3
         });
         expect(manager.meshStatus.type).toBe(MeshStatusType.Ready);
     });
@@ -115,14 +115,14 @@ describe('WebRTCManager connection management', () => {
         let sentToPeer: string = '';
 
         // Override WebRTCManager's sendWebRTCAppMessage method
-        manager.sendWebRTCAppMessage = (toPeerId: string, message: any) => {
-            sentToPeer = toPeerId;
+        manager.sendWebRTCAppMessage = (todeviceId: string, message: any) => {
+            sentToPeer = todeviceId;
             sentMessage = message;
         };
 
         const testMessage = {
             webrtc_msg_type: 'MeshReady',
-            peer_id: 'a'
+            device_id: 'a'
         };
 
         // Send message

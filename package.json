@@ -39,6 +39,7 @@
     "@tailwindcss/vite": "^4.1.8",
     "tailwindcss": "^4.1.8",
     "tonkotsu": "^1.0.17",
+    "ts-pattern": "^5.7.1",
     "uuid": "^11.1.0",
     "viem": "^2.30.6",
     "vite-plugin-top-level-await": "^1.5.0",

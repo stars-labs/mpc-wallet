@@ -7,6 +7,7 @@
         "@tailwindcss/vite": "^4.1.8",
         "tailwindcss": "^4.1.8",
         "tonkotsu": "^1.0.17",
+        "ts-pattern": "^5.7.1",
         "uuid": "^11.1.0",
         "viem": "^2.30.6",
         "vite-plugin-top-level-await": "^1.5.0",
@@ -19,7 +20,6 @@
         "@types/node": "^22.15.30",
         "@types/uuid": "^10.0.0",
         "@wxt-dev/module-svelte": "^2.0.3",
-        "bun-types": "^1.2.15",
         "svelte": "^5.33.14",
         "svelte-check": "^4.2.1",
         "tslib": "^2.8.1",
@@ -1074,6 +1074,8 @@
     "to-regex-range": ["to-regex-range@5.0.1", "", { "dependencies": { "is-number": "^7.0.0" } }, "sha512-65P7iz6X5yEr1cwcgvQxbbIw7Uk3gOy5dIdtZ4rDveLqhrdJP+Li/Hx6tyK0NEb+2GCyneCMJiGqrADCSNk8sQ=="],
 
     "tonkotsu": ["tonkotsu@1.0.17", "", { "dependencies": { "@inquirer/prompts": "^7.3.3", "axios": "^1.8.3", "chalk": "^5.4.1", "commander": "^13.1.0", "dotenv": "^16.4.7", "glob": "^11.0.1", "inquirer-file-selector": "^0.6.2", "keytar": "^7.9.0", "nanoid": "^5.1.5", "node-pty": "^0.10.0", "semver": "^7.7.1", "socket.io-client": "^4.8.1" }, "os": [ "linux", "darwin", ], "bin": { "tonkotsu": "dist/index.js" } }, "sha512-zEy18qQnf/cV18LPwVIGOi3mZyyyQXc0IZPcjFBo27u2B5By9N1c0ljDiVAXRZo9l9KiraP4qKWHx3CTL/ldQg=="],
+
+    "ts-pattern": ["ts-pattern@5.7.1", "", {}, "sha512-EGs8PguQqAAUIcQfK4E9xdXxB6s2GK4sJfT/vcc9V1ELIvC4LH/zXu2t/5fajtv6oiRCxdv7BgtVK3vWgROxag=="],
 
     "tslib": ["tslib@2.8.1", "", {}, "sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w=="],
 

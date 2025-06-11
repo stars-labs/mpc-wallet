@@ -50,7 +50,13 @@ export class WebSocketClient {
 
             this.ws.onmessage = (event) => {
                 const message: WebSocketServerMsg = JSON.parse(event.data);
-                console.log("Received from server:", message);
+                console.log("Received from server:", {
+                    type: message?.type,
+                    from: message?.from,
+                    data_type: message?.data?.websocket_msg_type,
+                    data_preview: typeof message?.data === 'object' ?
+                        JSON.stringify(message.data).substring(0, 100) + '...' : message?.data
+                });
                 this.onMessageCallbacks.forEach(callback => callback(message));
             };
 
@@ -69,17 +75,17 @@ export class WebSocketClient {
         }
     }
 
-    public register(peerId: string): void {
+    public register(deviceId: string): void {
         this.sendMessage({
             type: "register",
-            peer_id: peerId
+            device_id: deviceId
         });
     }
 
-    public listPeers(): void {
-        console.log("Sending listPeers command to WebSocket server");
+    public listdevices(): void {
+        console.log("Sending listdevices command to WebSocket server");
         this.sendMessage({
-            type: "list_peers"
+            type: "list_devices"
         });
     }
 

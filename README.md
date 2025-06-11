@@ -130,7 +130,7 @@ Popup ◄──────────► Background ◄───────�
 export type BackgroundMessage = BaseMessage & (
     // Core wallet operations
     | { type: 'getState' }                    // Request current app state
-    | { type: 'listPeers' }                   // Request peer discovery
+    | { type: 'listdevices' }                   // Request peer discovery
     
     // Session management
     | { type: 'proposeSession'; session_id: string; total: number; threshold: number; participants: string[] }
@@ -167,13 +167,13 @@ chrome.runtime.sendMessage({
 export type PopupMessage = BaseMessage & (
     | { type: 'wsStatus'; connected: boolean; reason?: string }
     | { type: 'wsMessage'; message: ServerMsg }
-    | { type: 'peerList'; peers: string[] }
+    | { type: 'deviceList'; devices: string[] }
     | { type: 'wsError'; error: string }
     | { type: 'fromOffscreen'; payload: OffscreenMessage }
     | { type: 'sessionUpdate'; sessionInfo: SessionInfo | null; invites: SessionInfo[] }
     | { type: 'meshStatusUpdate'; status: MeshStatus }
     | { type: 'dkgStateUpdate'; state: DkgState }
-    | { type: 'webrtcConnectionUpdate'; peerId: string; connected: boolean }
+    | { type: 'webrtcConnectionUpdate'; deviceId: string; connected: boolean }
     | { type: 'proposeSession'; session_id: string; total: number; threshold: number; participants: string[] }
     | { type: 'acceptSession'; session_id: string; accepted: boolean }
     | InitialStateMessage  // Full state on popup connection
@@ -182,8 +182,8 @@ export type PopupMessage = BaseMessage & (
 // InitialStateMessage contains complete app state
 export interface InitialStateMessage extends AppState {
     type: 'initialState';
-    peerId: string;
-    connectedPeers: string[];
+    deviceId: string;
+    connecteddevices: string[];
     wsConnected: boolean;
     sessionInfo: SessionInfo | null;
     invites: SessionInfo[];
@@ -213,13 +213,13 @@ export type BackgroundToOffscreenMessage = {
 // Where OffscreenMessage includes:
 export type OffscreenMessage = BaseMessage & (
     | { type: 'relayViaWs'; to: string; data: WebRTCSignal }
-    | { type: 'init'; peerId: string; wsUrl: string }
-    | { type: 'relayMessage'; fromPeerId: string; data: WebSocketMessagePayload }
+    | { type: 'init'; deviceId: string; wsUrl: string }
+    | { type: 'relayMessage'; fromdeviceId: string; data: WebSocketMessagePayload }
     | { type: 'meshStatusUpdate'; status: MeshStatus }
     | { type: 'dkgStateUpdate'; state: DkgState }
-    | { type: 'webrtcConnectionUpdate'; peerId: string; connected: boolean }
+    | { type: 'webrtcConnectionUpdate'; deviceId: string; connected: boolean }
     | { type: 'sessionUpdate'; sessionInfo: SessionInfo | null; invites: SessionInfo[] }
-    | { type: 'webrtcMessage'; fromPeerId: string; message: DataChannelMessage }
+    | { type: 'webrtcMessage'; fromdeviceId: string; message: DataChannelMessage }
 );
 
 // Example usage in background:
@@ -227,7 +227,7 @@ safelySendOffscreenMessage({
     type: 'fromBackground',
     payload: {
         type: 'init',
-        peerId: 'mpc-2',
+        deviceId: 'mpc-2',
         wsUrl: 'wss://auto-life.tech'
     }
 });
@@ -245,7 +245,7 @@ chrome.runtime.sendMessage({
     type: 'fromOffscreen',
     payload: {
         type: 'webrtcConnectionUpdate',
-        peerId: 'peer-123',
+        deviceId: 'peer-123',
         connected: true
     }
 });
@@ -256,7 +256,7 @@ chrome.runtime.sendMessage({
 ```typescript
 export const MESSAGE_TYPES = {
     GET_STATE: "getState",
-    LIST_PEERS: "listPeers",
+    LIST_devices: "listdevices",
     PROPOSE_SESSION: "proposeSession",
     ACCEPT_SESSION: "acceptSession",
     RELAY: "relay",
@@ -303,7 +303,7 @@ Background Script Startup
     │   │
     │   ├─► Offscreen sends: { type: 'offscreenReady' }
     │   │
-    │   └─► Background sends: { type: 'fromBackground', payload: { type: 'init', peerId, wsUrl } }
+    │   └─► Background sends: { type: 'fromBackground', payload: { type: 'init', deviceId, wsUrl } }
     │
     └─► Setup Popup Port Listeners
         │
@@ -325,11 +325,11 @@ Background Script
     │
     ├─► Send to each participant via WebSocket
     │   │
-    │   └─► wsClient.relayMessage(peerId, proposalData)
+    │   └─► wsClient.relayMessage(deviceId, proposalData)
     │
     └─► Broadcast to popup: { type: 'sessionUpdate', sessionInfo, invites }
 
-Meanwhile, for receiving peers:
+Meanwhile, for receiving devices:
 WebSocket Server → Background Script (Receiving Peer)
     │
     ├─► Process session proposal in handleSessionProposal()
@@ -365,18 +365,18 @@ Offscreen Document
     │
     ├─► Create RTCPeerConnection for each peer
     │
-    ├─► Exchange ICE candidates via Background ↔ WebSocket ↔ Peers
+    ├─► Exchange ICE candidates via Background ↔ WebSocket ↔ devices
     │
     ├─► Establish data channels
     │
-    └─► Report status: { type: 'fromOffscreen', payload: { type: 'webrtcConnectionUpdate', peerId, connected } }
+    └─► Report status: { type: 'fromOffscreen', payload: { type: 'webrtcConnectionUpdate', deviceId, connected } }
         │
         ▼
     Background Script
         │
-        ├─► Update appState.webrtcConnections[peerId] = connected
+        ├─► Update appState.webrtcConnections[deviceId] = connected
         │
-        └─► Broadcast: { type: 'webrtcConnectionUpdate', peerId, connected }
+        └─► Broadcast: { type: 'webrtcConnectionUpdate', deviceId, connected }
             │
             ▼
         Popup UI updates connection status indicators
@@ -409,7 +409,7 @@ Background Script (Peer B)
     │
     ├─► Extract WebRTC signal: { websocket_msg_type, ...webrtcSignalData } = data
     │
-    ├─► Forward: { type: 'fromBackground', payload: { type: 'relayViaWs', to: fromPeerId, data: webrtcSignalData } }
+    ├─► Forward: { type: 'fromBackground', payload: { type: 'relayViaWs', to: fromdeviceId, data: webrtcSignalData } }
     │
     ▼
 Offscreen Document (Peer B)
@@ -487,9 +487,9 @@ wsClient = new WebSocketClient(WEBSOCKET_URL);
 ```
 
 ### Message Types
-- **Registration**: Peers register with their unique ID
-- **Peer Discovery**: List available peers for MPC sessions
-- **Relay**: Forward WebRTC signaling data between peers
+- **Registration**: devices register with their unique ID
+- **Peer Discovery**: List available devices for MPC sessions
+- **Relay**: Forward WebRTC signaling data between devices
 - **Session Management**: Coordinate MPC session proposals
 
 ### Connection Management
@@ -620,8 +620,8 @@ npm run test
 3. **Chain Support**: Switch between Ethereum (secp256k1) and Solana (ed25519)
 
 ### MPC Session Management
-1. **Peer Discovery**: Click "List Peers" to find available participants
-2. **Create Session**: Click "Propose Session" with 3+ peers
+1. **Peer Discovery**: Click "List devices" to find available participants
+2. **Create Session**: Click "Propose Session" with 3+ devices
 3. **Join Session**: Accept incoming session invitations
 4. **Monitor Status**: View connection and session state in real-time
 
@@ -652,7 +652,7 @@ acceptSession(sessionId: string)
 resetSession()
 
 // Communication
-sendWebRTCAppMessage(toPeerId: string, message: WebRTCAppMessage)
+sendWebRTCAppMessage(todeviceId: string, message: WebRTCAppMessage)
 ```
 
 ### WebSocket Client API
@@ -660,11 +660,11 @@ sendWebRTCAppMessage(toPeerId: string, message: WebRTCAppMessage)
 // Connection Management
 connect()
 disconnect()
-register(peerId: string)
+register(deviceId: string)
 
 // Communication
 relayMessage(to: string, data: any)
-listPeers()
+listdevices()
 ```
 
 ## Error Handling and Recovery

@@ -99,7 +99,7 @@ chrome.runtime.sendMessage({ type: "getSolanaAddress" }, (response) => {
 ### Expected Behavior
 
 1. **Mesh Ready**: When all participants are connected, DKG should automatically start
-2. **Round 1**: Each node generates Round 1 packages and broadcasts to peers
+2. **Round 1**: Each node generates Round 1 packages and broadcasts to devices
 3. **Round 1 Collection**: Nodes collect packages from all other participants
 4. **Round 2**: Once all Round 1 packages received, Round 2 begins automatically
 5. **Round 2 Collection**: Nodes collect Round 2 packages from all participants

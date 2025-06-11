@@ -1,5 +1,5 @@
 import { Buffer } from 'buffer';
-import wasmInit, { FrostDkg, FrostDkgSecp256k1 } from '../../../pkg/mpc_wallet.js';
+import wasmInit, { FrostDkgEd25519, FrostDkgSecp256k1 } from '../../../pkg/mpc_wallet.js';
 
 // Initialize WASM once for all tests
 let wasmInitialized = false;
@@ -66,13 +66,13 @@ export function extractPackageFromMap(recipientIndex: number, packageMapHex: str
 export const createTestSessionInfo = () => ({
     session_id: 'test-session',
     participants: ['a', 'b', 'c'],
-    accepted_peers: ['a', 'b', 'c'],
+    accepted_devices: ['a', 'b', 'c'],
     total: 3,
     threshold: 2
 });
 
 // Dummy send function for WebRTCManager
-export const dummySend = (_toPeerId: string, _message: any) => { };
+export const dummySend = (_todeviceId: string, _message: any) => { };
 
 // Create mock data channel for testing
 export const createMockDataChannel = () => ({
@@ -85,9 +85,9 @@ export const createMockDataChannel = () => ({
 
 // Create and initialize FROST DKG instances for testing
 export async function createTestDkgInstances(isSecp256k1: boolean = false): Promise<{
-    frostDkgA: FrostDkg | FrostDkgSecp256k1,
-    frostDkgB: FrostDkg | FrostDkgSecp256k1,
-    frostDkgC: FrostDkg | FrostDkgSecp256k1
+    frostDkgA: FrostDkgEd25519 | FrostDkgSecp256k1,
+    frostDkgB: FrostDkgEd25519 | FrostDkgSecp256k1,
+    frostDkgC: FrostDkgEd25519 | FrostDkgSecp256k1
 }> {
     if (!await initializeWasmIfNeeded()) {
         throw new Error('WASM not initialized for test DKG instances');
@@ -100,9 +100,9 @@ export async function createTestDkgInstances(isSecp256k1: boolean = false): Prom
         frostDkgB = new FrostDkgSecp256k1();
         frostDkgC = new FrostDkgSecp256k1();
     } else {
-        frostDkgA = new FrostDkg();
-        frostDkgB = new FrostDkg();
-        frostDkgC = new FrostDkg();
+        frostDkgA = new FrostDkgEd25519();
+        frostDkgB = new FrostDkgEd25519();
+        frostDkgC = new FrostDkgEd25519();
     }
 
     // Initialize all instances
@@ -114,7 +114,7 @@ export async function createTestDkgInstances(isSecp256k1: boolean = false): Prom
 }
 
 // Cleanup DKG instances
-export function cleanupDkgInstances(...instances: Array<FrostDkg | FrostDkgSecp256k1 | null>) {
+export function cleanupDkgInstances(...instances: Array<FrostDkgEd25519 | FrostDkgSecp256k1 | null>) {
     instances.forEach(instance => {
         if (instance) {
             try {

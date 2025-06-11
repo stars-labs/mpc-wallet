@@ -9,7 +9,7 @@ import {
     createTestDkgInstances,
     cleanupDkgInstances
 } from './test-utils';
-import { FrostDkg, FrostDkgSecp256k1 } from '../../../pkg/mpc_wallet.js';
+import { FrostDkgEd25519, FrostDkgSecp256k1 } from '../../../pkg/mpc_wallet.js';
 
 beforeAll(async () => {
     await initializeWasmIfNeeded();
@@ -31,7 +31,7 @@ describe('WebRTCManager DKG Process', () => {
 
         try {
             // Directly create FROST DKG instance like the test expects
-            (manager as any).frostDkg = new FrostDkg();
+            (manager as any).frostDkg = new FrostDkgEd25519();
             (manager as any).participantIndex = 1;
             (manager as any).frostDkg.init_dkg(1, 3, 2);
 
@@ -58,12 +58,12 @@ describe('WebRTCManager DKG Process', () => {
         manager.sessionInfo = sessionInfo as any;
         (manager as any)._updateDkgState(DkgState.Round1InProgress);
 
-        let dkgA: FrostDkg | null = null;
-        let dkgB_sim: FrostDkg | null = null;
-        let dkgC_sim: FrostDkg | null = null;
+        let dkgA: FrostDkgEd25519 | null = null;
+        let dkgB_sim: FrostDkgEd25519 | null = null;
+        let dkgC_sim: FrostDkgEd25519 | null = null;
 
         try {
-            dkgA = new FrostDkg();
+            dkgA = new FrostDkgEd25519();
             dkgA.init_dkg(1, 3, 2);
             (manager as any).frostDkg = dkgA;
             (manager as any).participantIndex = 1;
@@ -72,13 +72,13 @@ describe('WebRTCManager DKG Process', () => {
             const round1A_self = dkgA.generate_round1();
             await (manager as any)._handleDkgRound1Package('a', { sender_index: 1, data: round1A_self });
 
-            // Simulate receiving Round 1 packages from peers
-            dkgB_sim = new FrostDkg();
+            // Simulate receiving Round 1 packages from devices
+            dkgB_sim = new FrostDkgEd25519();
             dkgB_sim.init_dkg(2, 3, 2);
             const round1B_sim = dkgB_sim.generate_round1();
             await (manager as any)._handleDkgRound1Package('b', { sender_index: 2, data: round1B_sim });
 
-            dkgC_sim = new FrostDkg();
+            dkgC_sim = new FrostDkgEd25519();
             dkgC_sim.init_dkg(3, 3, 2);
             const round1C_sim = dkgC_sim.generate_round1();
             await (manager as any)._handleDkgRound1Package('c', { sender_index: 3, data: round1C_sim });
@@ -109,13 +109,13 @@ describe('WebRTCManager DKG Process', () => {
         manager.sessionInfo = sessionInfo as any;
         (manager as any)._updateDkgState(DkgState.Round1InProgress);
 
-        let dkgA_full: FrostDkg | null = null;
-        let dkgB_sim_full: FrostDkg | null = null;
-        let dkgC_sim_full: FrostDkg | null = null;
+        let dkgA_full: FrostDkgEd25519 | null = null;
+        let dkgB_sim_full: FrostDkgEd25519 | null = null;
+        let dkgC_sim_full: FrostDkgEd25519 | null = null;
 
         try {
             // Set up complete Round 1 to get to Round 2
-            dkgA_full = new FrostDkg();
+            dkgA_full = new FrostDkgEd25519();
             dkgA_full.init_dkg(1, 3, 2);
             (manager as any).frostDkg = dkgA_full;
             (manager as any).participantIndex = 1;
@@ -123,11 +123,11 @@ describe('WebRTCManager DKG Process', () => {
             // Generate Round 1 packages for all participants
             const round1A_self_full = dkgA_full.generate_round1();
 
-            dkgB_sim_full = new FrostDkg();
+            dkgB_sim_full = new FrostDkgEd25519();
             dkgB_sim_full.init_dkg(2, 3, 2);
             const round1B_sim_full = dkgB_sim_full.generate_round1();
 
-            dkgC_sim_full = new FrostDkg();
+            dkgC_sim_full = new FrostDkgEd25519();
             dkgC_sim_full.init_dkg(3, 3, 2);
             const round1C_sim_full = dkgC_sim_full.generate_round1();
 
@@ -223,9 +223,9 @@ describe('WebRTCManager DKG Process', () => {
 
         const sessionInfo = createTestSessionInfo();
 
-        let frostDkgA: FrostDkg | null = null;
-        let frostDkgB: FrostDkg | null = null;
-        let frostDkgC: FrostDkg | null = null;
+        let frostDkgA: FrostDkgEd25519 | null = null;
+        let frostDkgB: FrostDkgEd25519 | null = null;
+        let frostDkgC: FrostDkgEd25519 | null = null;
 
         try {
             // Set up session info for all managers
@@ -237,9 +237,9 @@ describe('WebRTCManager DKG Process', () => {
 
             // Create and assign FROST DKG instances
             const dkgInstances = await createTestDkgInstances(false);
-            frostDkgA = dkgInstances.frostDkgA as FrostDkg;
-            frostDkgB = dkgInstances.frostDkgB as FrostDkg;
-            frostDkgC = dkgInstances.frostDkgC as FrostDkg;
+            frostDkgA = dkgInstances.frostDkgA as FrostDkgEd25519;
+            frostDkgB = dkgInstances.frostDkgB as FrostDkgEd25519;
+            frostDkgC = dkgInstances.frostDkgC as FrostDkgEd25519;
 
             (managerA as any).frostDkg = frostDkgA;
             (managerB as any).frostDkg = frostDkgB;
@@ -327,7 +327,7 @@ describe('WebRTCManager DKG Process', () => {
         // Set up some DKG state
         if (isWasmInitialized()) {
             try {
-                (manager as any).frostDkg = new FrostDkg();
+                (manager as any).frostDkg = new FrostDkgEd25519();
             } catch (error) {
                 console.warn('WASM DKG creation failed in test, using mock');
                 (manager as any).frostDkg = { free: () => { } };

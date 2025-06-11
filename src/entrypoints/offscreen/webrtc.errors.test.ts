@@ -7,7 +7,7 @@ import {
     dummySend,
     cleanupDkgInstances
 } from './test-utils';
-import { FrostDkg } from '../../../pkg/mpc_wallet.js';
+import { FrostDkgEd25519 } from '../../../pkg/mpc_wallet.js';
 
 let manager: WebRTCManager;
 
@@ -32,9 +32,9 @@ describe('WebRTCManager DKG Error Scenarios', () => {
             return;
         }
 
-        let dkgInstance: FrostDkg | null = null;
+        let dkgInstance: FrostDkgEd25519 | null = null;
         try {
-            dkgInstance = new FrostDkg();
+            dkgInstance = new FrostDkgEd25519();
             dkgInstance.init_dkg(1, 3, 2);
             (manager as any).frostDkg = dkgInstance;
             (manager as any).participantIndex = 1;
@@ -67,9 +67,9 @@ describe('WebRTCManager DKG Error Scenarios', () => {
             return;
         }
 
-        let dkgA: FrostDkg | null = null;
+        let dkgA: FrostDkgEd25519 | null = null;
         try {
-            dkgA = new FrostDkg();
+            dkgA = new FrostDkgEd25519();
             dkgA.init_dkg(1, 3, 2);
             (manager as any).frostDkg = dkgA;
             (manager as any).participantIndex = 1;
@@ -102,9 +102,9 @@ describe('WebRTCManager DKG Error Scenarios', () => {
             return;
         }
 
-        let dkgA_broken_finalize: FrostDkg | null = null;
+        let dkgA_broken_finalize: FrostDkgEd25519 | null = null;
         try {
-            dkgA_broken_finalize = new FrostDkg();
+            dkgA_broken_finalize = new FrostDkgEd25519();
             dkgA_broken_finalize.init_dkg(1, 3, 2);
 
             // Mock the finalize_dkg method to throw an error
@@ -175,9 +175,9 @@ describe('WebRTCManager DKG Error Scenarios', () => {
             return;
         }
 
-        let dkgInstance: FrostDkg | null = null;
+        let dkgInstance: FrostDkgEd25519 | null = null;
         try {
-            dkgInstance = new FrostDkg();
+            dkgInstance = new FrostDkgEd25519();
             dkgInstance.init_dkg(1, 3, 2);
             (manager as any).frostDkg = dkgInstance;
             (manager as any).participantIndex = 1;
@@ -215,9 +215,12 @@ describe('WebRTCManager FROST Signing Error Scenarios', () => {
             transaction_data: 'test',
             threshold: 2,
             participants: ['a', 'b', 'c'],
+            accepted_participants: ['a', 'b'],
             acceptances: new Map(),
             selected_signers: ['a', 'b'],
-            final_signature: null
+            step: 'commitment_phase',
+            initiator: 'a',
+            final_signature: undefined
         };
         manager['signingState'] = SigningState.CommitmentPhase;
 
@@ -234,8 +237,10 @@ describe('WebRTCManager FROST Signing Error Scenarios', () => {
 
         // Handle signing request with invalid format
         await (manager as any)._handleSigningRequest('a', {
-            webrtc_msg_type: 'SigningRequest',
-            // Missing required fields
+            signing_id: 'test',
+            transaction_data: 'test',
+            required_signers: 2
+            // Missing required fields for proper handling
         });
 
         // Should handle gracefully
@@ -265,9 +270,9 @@ describe('WebRTCManager FROST Signing Error Scenarios', () => {
 
         // Handle invalid signature share
         await (manager as any)._handleSignatureShare('b', {
-            webrtc_msg_type: 'SignatureShare',
             signing_id: 'test-sig',
-            signature_share: {
+            sender_identifier: 2,
+            share: {
                 signer_id: 'b',
                 share_data: 'invalid-share-data',
                 signing_id: 'test-sig'
@@ -327,8 +332,10 @@ describe('WebRTCManager Connection Error Scenarios', () => {
 
         // Handle message from peer not in session
         await (manager as any)._handleWebRTCMessage('unknown-peer', {
-            webrtc_msg_type: 'MeshReady',
-            peer_id: 'unknown-peer'
+            MeshReady: {
+                session_id: 'test-session',
+                device_id: 'unknown-peer'
+            }
         });
 
         // Should handle gracefully
@@ -374,9 +381,9 @@ describe('WebRTCManager DKG State Management Errors', () => {
         manager.sessionInfo = sessionInfo as any;
         (manager as any)._updateDkgState(DkgState.Round1InProgress);
 
-        let dkgInstance: FrostDkg | null = null;
+        let dkgInstance: FrostDkgEd25519 | null = null;
         try {
-            dkgInstance = new FrostDkg();
+            dkgInstance = new FrostDkgEd25519();
             dkgInstance.init_dkg(1, 3, 2);
             (manager as any).frostDkg = dkgInstance;
             (manager as any).participantIndex = 1;

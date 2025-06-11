@@ -1,8 +1,33 @@
 import { mainnet, sepolia } from 'viem/chains';
 import type { Chain } from '../types/network';
+import type { SupportedChain } from '../types/appstate';
 import { createPublicClient, http } from 'viem';
 
 type NetworkChangeCallback = (network: Chain | undefined) => void;
+type LegacyBlockchain = 'ethereum' | 'solana';
+
+/**
+ * Maps supported chains to their underlying blockchain infrastructure.
+ * This enables backward compatibility while supporting Layer 2 chains.
+ */
+const CHAIN_TO_BLOCKCHAIN: Record<SupportedChain, LegacyBlockchain> = {
+    // secp256k1-based chains -> use ethereum infrastructure
+    ethereum: 'ethereum',
+    polygon: 'ethereum',
+    arbitrum: 'ethereum',
+    optimism: 'ethereum',
+    base: 'ethereum',
+    // ed25519-based chains -> use solana infrastructure  
+    solana: 'solana',
+    sui: 'solana',
+};
+
+/**
+ * Helper function to get the blockchain type for a given chain.
+ */
+function getBlockchainForChain(chain: SupportedChain): LegacyBlockchain {
+    return CHAIN_TO_BLOCKCHAIN[chain];
+}
 
 class NetworkService {
     private static instance: NetworkService;
@@ -120,7 +145,7 @@ class NetworkService {
             return [
                 {
                     id: mainnet.id,
-                    name: mainnet.name,
+                    name: 'Mainnet',
                     network: 'mainnet',
                     nativeCurrency: {
                         name: mainnet.nativeCurrency.name,
@@ -329,7 +354,7 @@ class NetworkService {
         }
 
         // Convert our Chain to viem's Chain format
-        const viemChain = {
+        const viemChain: any = {
             id: currentNetwork.id,
             name: currentNetwork.name,
             network: currentNetwork.network,
@@ -349,6 +374,45 @@ class NetworkService {
             chain: viemChain,
             transport: http()
         });
+    }
+
+    // ===================================================================
+    // ENHANCED METHODS FOR MULTI-CHAIN SUPPORT
+    // These methods provide backward compatibility while supporting
+    // Layer 2 chains and the new SupportedChain type.
+    // ===================================================================
+
+    /**
+     * Get networks for a supported chain (with Layer 2 support).
+     * This method maps Layer 2 chains to their underlying blockchain.
+     */
+    public getNetworksForChain(chain: SupportedChain): Chain[] {
+        const blockchain = getBlockchainForChain(chain);
+        return this.networks[blockchain];
+    }
+
+    /**
+     * Get current network for a supported chain.
+     */
+    public getCurrentNetworkForChain(chain: SupportedChain): Chain | undefined {
+        const blockchain = getBlockchainForChain(chain);
+        return this.currentNetworks[blockchain];
+    }
+
+    /**
+     * Set current network for a supported chain.
+     */
+    public async setCurrentNetworkForChain(chain: SupportedChain, chainId: number): Promise<void> {
+        const blockchain = getBlockchainForChain(chain);
+        await this.setCurrentNetwork(blockchain, chainId);
+    }
+
+    /**
+     * Add network for a supported chain.
+     */
+    public async addNetworkForChain(chain: SupportedChain, network: Chain): Promise<void> {
+        const blockchain = getBlockchainForChain(chain);
+        await this.addNetwork(blockchain, network);
     }
 }
 

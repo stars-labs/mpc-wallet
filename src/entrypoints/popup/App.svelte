@@ -3,202 +3,282 @@
   // Removed single-party WASM functions - this is now an MPC-only wallet
   import { onMount, onDestroy } from "svelte";
   import { storage } from "#imports";
-  import type { MeshStatus, SessionInfo } from "../../types/appstate";
-  import { MeshStatusType, DkgState } from "../../types/appstate";
+  import type { AppState } from "../../types/appstate";
+  import { MeshStatusType } from "../../types/mesh";
+  import { DkgState } from "../../types/dkg";
+  import { INITIAL_APP_STATE } from "../../types/appstate";
   import Settings from "../../components/Settings.svelte";
 
-  // MPC wallet state variables
-  let chain: "ethereum" | "solana" = "ethereum";
-  
-  // UI state
-  let showSettings = false;
-
-  // DKG address state
-  let dkgAddress: string = "";
-  let dkgError: string = "";
-
-  // Connection state (synced from background)
-  let currentPeerId: string = "";
-  let peersList: string[] = [];
-  let wsConnected: boolean = false;
-  let wsError: string = "";
-
-  // Session and WebRTC state
-  let sessionInfo: SessionInfo | null = null;
-  let invites: SessionInfo[] = [];
-  let meshStatus: MeshStatus = { type: MeshStatusType.Incomplete };
-  let dkgState = DkgState.Idle;
-  let proposedSessionIdInput: string = "";
-
-  // Session configuration
-  let totalParticipants: number = 3;
-  let threshold: number = 2;
-
-  // Track WebRTC connections per peer
-  let peerConnections: Record<string, boolean> = {}; // peer_id -> connected status
-  let sessionAcceptanceStatus: Record<string, Record<string, boolean>> = {}; // session_id -> peer_id -> accepted
+  // Application state (consolidated from background) - the single source of truth
+  let appState: AppState = { ...INITIAL_APP_STATE };
 
   // Keep connection to background script
   let port: chrome.runtime.Port;
 
-  // Debug logging to console
-  $: console.log("[UI Debug] State update:", {
-    wsConnected,
-    currentPeerId,
-    peersList,
-    sessionInfo,
-    meshStatus,
-    dkgState,
-    peerConnections,
-    sessionAcceptanceStatus,
-  });
+  // Local storage for UI preferences persistence (not real-time connection state)
+  const UI_STATE_KEY = "mpc_wallet_ui_preferences";
+
+  // Save ONLY UI preferences to localStorage (not real-time connection states)
+  function saveUIState() {
+    const uiState = {
+      showSettings: appState.showSettings,
+      proposedSessionIdInput: appState.proposedSessionIdInput,
+      totalParticipants: appState.totalParticipants,
+      threshold: appState.threshold,
+      chain: appState.chain,
+      timestamp: Date.now(),
+    };
+    try {
+      localStorage.setItem(UI_STATE_KEY, JSON.stringify(uiState));
+      console.log("[UI] Saved UI preferences to localStorage:", uiState);
+    } catch (error) {
+      console.warn("[UI] Failed to save UI preferences:", error);
+    }
+  }
+
+  // Load ONLY UI preferences from localStorage (not real-time connection states)
+  function loadUIState(): Partial<AppState> {
+    try {
+      const stored = localStorage.getItem(UI_STATE_KEY);
+      if (stored) {
+        const uiState = JSON.parse(stored);
+        // Check if state is not too old (1 hour)
+        if (Date.now() - uiState.timestamp < 60 * 60 * 1000) {
+          console.log("[UI] Loaded UI preferences from localStorage:", uiState);
+          return {
+            showSettings: uiState.showSettings || false,
+            proposedSessionIdInput: uiState.proposedSessionIdInput || "",
+            totalParticipants: uiState.totalParticipants || 3,
+            threshold: uiState.threshold || 2,
+            chain: uiState.chain || "ethereum",
+          };
+        } else {
+          console.log("[UI] UI preferences expired, using defaults");
+          localStorage.removeItem(UI_STATE_KEY);
+        }
+      }
+    } catch (error) {
+      console.warn("[UI] Failed to load UI preferences:", error);
+      localStorage.removeItem(UI_STATE_KEY);
+    }
+    return {};
+  }
+
+  // Debug logging to console (throttled to prevent spam)
+  let lastDebugLog = "";
+  $: {
+    const debugInfo = JSON.stringify({
+      dkgState: appState.dkgState,
+      chainChanged: appState.chain,
+      sessionActive: !!appState.sessionInfo,
+      meshReady: appState.meshStatus?.type === MeshStatusType.Ready,
+    });
+
+    // Only log when significant state changes occur
+    if (debugInfo !== lastDebugLog) {
+      console.log("[UI Debug] Significant state change:", {
+        dkgState: appState.dkgState,
+        chain: appState.chain,
+        hasSession: !!appState.sessionInfo,
+        meshReady: appState.meshStatus?.type === MeshStatusType.Ready,
+      });
+      lastDebugLog = debugInfo;
+    }
+  }
 
   // Reactive computation for WebRTC connection status
-  $: webrtcConnected = sessionInfo && meshStatus?.type === MeshStatusType.Ready;
+  $: webrtcConnected =
+    appState.sessionInfo && appState.meshStatus?.type === MeshStatusType.Ready;
   $: webrtcConnecting =
-    sessionInfo && meshStatus?.type === MeshStatusType.PartiallyReady;
+    appState.sessionInfo &&
+    appState.meshStatus?.type === MeshStatusType.PartiallyReady;
 
-  // Add reactive statement to force UI updates when peerConnections change
+  // Add reactive statement to log WebRTC connection changes (throttled)
+  let lastWebRTCState = "";
   $: {
-    // This reactive block will trigger whenever peerConnections changes
-    console.log("[UI] PeerConnections updated:", peerConnections);
-    // Force a re-render by updating a dummy variable or just logging
-    if (Object.keys(peerConnections).length > 0) {
+    // Only log when WebRTC connection state actually changes
+    const webrtcState = JSON.stringify(appState.webrtcConnections);
+    if (webrtcState !== lastWebRTCState) {
       console.log(
-        "[UI] Active WebRTC connections:",
-        Object.entries(peerConnections).filter(([_, connected]) => connected),
+        "[UI] WebRTC Connections updated:",
+        appState.webrtcConnections,
       );
+      if (Object.keys(appState.webrtcConnections).length > 0) {
+        console.log(
+          "[UI] Active WebRTC connections:",
+          Object.entries(appState.webrtcConnections).filter(
+            ([_, connected]) => connected,
+          ),
+        );
+      }
+      lastWebRTCState = webrtcState;
     }
   }
 
   // Common handler for messages from the background script
   function handleBackgroundMessage(message: any) {
-    console.log("[UI] Background message received:", message);
+    console.log("[UI] Background message received - Type:", message.type, "Data:", message);
 
     switch (message.type) {
       case "initialState":
-        console.log("[UI] Processing initialState");
-        currentPeerId = message.peerId || "";
-        peersList = [...(message.connectedPeers || [])];
-        wsConnected = message.wsConnected || false;
-        sessionInfo = message.sessionInfo || null;
-        if (JSON.stringify(invites) !== JSON.stringify(message.invites || [])) {
-          invites = message.invites ? [...message.invites] : [];
-        }
-        meshStatus = message.meshStatus || { type: MeshStatusType.Incomplete };
-        dkgState = message.dkgState || DkgState.Idle;
+        console.log(
+          "[UI] Processing initialState - state restoration from background",
+        );
 
-        // Initialize WebRTC connection state from background
-        if (message.webrtcConnections) {
-          console.log(
-            "[UI] Initializing WebRTC connections from background:",
-            message.webrtcConnections,
-          );
-          peerConnections = { ...message.webrtcConnections };
-        } else {
-          console.log("[UI] No WebRTC connections in initial state");
-          peerConnections = {};
-        }
+        // Load persisted UI preferences from localStorage (ONLY UI state, not real-time)
+        const persistedUIState = loadUIState();
 
-        // Initialize session acceptance status from background
-        if (message.sessionAcceptanceStatus) {
-          console.log(
-            "[UI] Initializing session acceptance status from background:",
-            message.sessionAcceptanceStatus,
-          );
-          sessionAcceptanceStatus = { ...message.sessionAcceptanceStatus };
-        } else {
-          console.log("[UI] No session acceptance status in initial state");
-          sessionAcceptanceStatus = {};
-        }
+        // Preserve current UI-specific preferences that aren't managed by background
+        const currentUIState = {
+          showSettings: appState.showSettings,
+          proposedSessionIdInput: appState.proposedSessionIdInput,
+          totalParticipants: appState.totalParticipants,
+          threshold: appState.threshold,
+          ...persistedUIState, // Override with persisted preferences if available
+        };
 
-        // Initialize blockchain selection from background
-        if (message.blockchain) {
-          console.log(
-            "[UI] Initializing blockchain selection from background:",
-            message.blockchain,
-          );
-          chain = message.blockchain;
-        }
+        // Update the entire app state from background - real-time state comes from background
+        appState = {
+          // Real-time state from background (never from localStorage)
+          deviceId: message.deviceId || "",
+          connecteddevices: [...(message.connecteddevices || [])],
+          wsConnected: message.wsConnected || false,
+          sessionInfo: message.sessionInfo || null,
+          invites: message.invites ? [...message.invites] : [],
+          meshStatus: message.meshStatus || { type: MeshStatusType.Incomplete },
+          dkgState: message.dkgState || DkgState.Idle,
+          webrtcConnections: message.webrtcConnections || {},
+          curve:
+            message.curve ||
+            (message.blockchain === "ethereum" ? "secp256k1" : "ed25519"),
+          uiPreferences: message.uiPreferences || {
+            darkMode: false,
+            language: "en",
+            showAdvanced: false,
+          },
+          // UI preferences - preserve from current popup state or use localStorage
+          showSettings: currentUIState.showSettings,
+          chain: message.blockchain || currentUIState.chain || "ethereum",
+          proposedSessionIdInput: currentUIState.proposedSessionIdInput,
+          totalParticipants: currentUIState.totalParticipants,
+          threshold: currentUIState.threshold,
+          // Other state fields
+          dkgAddress: appState.dkgAddress || "",
+          dkgError: appState.dkgError || "",
+          sessionAcceptanceStatus:
+            message.sessionAcceptanceStatus ||
+            appState.sessionAcceptanceStatus ||
+            {},
+          wsError: message.wsError || appState.wsError || "",
+          isInitializing: message.isInitializing,
+          globalError: message.globalError,
+          setupComplete: message.setupComplete,
+        };        console.log("[UI] App state updated from initialState:", appState);
+        initialStateLoaded = true; // Enable reactive saving after state is loaded
+        
+        // Save the current UI preferences immediately after loading to ensure persistence
+        saveUIState();
+        
+        // NOTE: No need for fresh state update - all real-time state comes from background automatically
+        // WebSocket updates, device lists, etc. are pushed via port messages, not pulled via getState
         break;
 
       case "wsStatus":
         console.log("[UI] Processing wsStatus:", message);
-        wsConnected = message.connected || false;
+        appState.wsConnected = message.connected || false;
         if (!message.connected && message.reason) {
-          wsError = `WebSocket disconnected: ${message.reason}`;
+          appState.wsError = `WebSocket disconnected: ${message.reason}`;
         } else if (message.connected) {
-          wsError = "";
+          appState.wsError = "";
         }
+        // Trigger reactivity
+        appState = { ...appState };
         break;
 
       case "wsMessage":
         console.log("[UI] Processing wsMessage:", message);
         if (message.message) {
           console.log("[UI] Server message:", message.message);
-          if (message.message.type === "peers") {
-            peersList = [...(message.message.peers || [])];
+          if (message.message.type === "devices") {
+            appState.connecteddevices = [...(message.message.devices || [])];
+            appState = { ...appState };
           }
         }
         break;
 
       case "wsError":
         console.log("[UI] Processing wsError:", message);
-        wsError = message.error;
+        appState.wsError = message.error;
         console.error("[UI] WebSocket error:", message.error);
+        // Trigger reactivity
+        appState = { ...appState };
         break;
 
-      case "peerList":
-        console.log("[UI] Processing peerList:", message);
-        peersList = [...(message.peers || [])];
+      case "deviceList":
+        console.log("[UI] Processing deviceList:", message);
+        appState.connecteddevices = [...(message.devices || [])];
+        appState = { ...appState };
         break;
 
       case "sessionUpdate":
         console.log("[UI] Processing sessionUpdate:", message);
-        sessionInfo = message.sessionInfo || null;
-        invites = message.invites ? [...message.invites] : [];
-        console.log("[UI] Session update:", { sessionInfo, invites });
+        appState.sessionInfo = message.sessionInfo || null;
+        appState.invites = message.invites ? [...message.invites] : [];
+        console.log("[UI] Session update:", {
+          sessionInfo: appState.sessionInfo,
+          invites: appState.invites,
+        });
 
-        // Log accepted peers for debugging
-        if (sessionInfo && sessionInfo.accepted_peers) {
+        // Log accepted devices for debugging
+        if (appState.sessionInfo && appState.sessionInfo.accepted_devices) {
           console.log(
-            "[UI] Session accepted peers:",
-            sessionInfo.accepted_peers,
+            "[UI] Session accepted devices:",
+            appState.sessionInfo.accepted_devices,
           );
           // Filter out any null/undefined values that might have been added
-          sessionInfo.accepted_peers = sessionInfo.accepted_peers.filter(
-            (peer) => peer != null && peer !== undefined,
-          );
+          appState.sessionInfo.accepted_devices =
+            appState.sessionInfo.accepted_devices.filter(
+              (peer) => peer != null && peer !== undefined,
+            );
         }
+        // Trigger reactivity
+        appState = { ...appState };
         break;
 
       case "meshStatusUpdate":
         console.log("[UI] Processing meshStatusUpdate:", message);
-        meshStatus = message.status || { type: MeshStatusType.Incomplete };
-        console.log("[UI] Mesh status update:", meshStatus);
+        appState.meshStatus = message.status || {
+          type: MeshStatusType.Incomplete,
+        };
+        console.log("[UI] Mesh status update:", appState.meshStatus);
+        // Trigger reactivity
+        appState = { ...appState };
         break;
 
       case "webrtcConnectionUpdate":
         console.log("[UI] Processing webrtcConnectionUpdate:", message);
 
-        if (message.peerId && typeof message.connected === "boolean") {
+        if (message.deviceId && typeof message.connected === "boolean") {
           console.log(
             "[UI] Updating peer connection:",
-            message.peerId,
+            message.deviceId,
             "->",
             message.connected,
           );
 
-          // Force reactivity by creating a new object
-          peerConnections = {
-            ...peerConnections,
-            [message.peerId]: message.connected,
+          // Update WebRTC connections in app state
+          appState.webrtcConnections = {
+            ...appState.webrtcConnections,
+            [message.deviceId]: message.connected,
           };
 
-          console.log("[UI] Updated peerConnections:", peerConnections);
+          console.log(
+            "[UI] Updated webrtcConnections:",
+            appState.webrtcConnections,
+          );
 
-          // Trigger a reactive update explicitly
-          peerConnections = peerConnections;
+          // Trigger reactivity
+          appState = { ...appState };
         } else {
           console.warn("[UI] Invalid webrtcConnectionUpdate message:", message);
         }
@@ -206,8 +286,10 @@
 
       case "dkgStateUpdate":
         console.log("[UI] Processing dkgStateUpdate:", message);
-        dkgState = message.state || DkgState.Idle;
-        console.log("[UI] DKG state update:", dkgState);
+        appState.dkgState = message.state || DkgState.Idle;
+        console.log("[UI] DKG state update:", appState.dkgState);
+        // Trigger reactivity
+        appState = { ...appState };
         break;
 
       case "fromOffscreen":
@@ -224,9 +306,9 @@
 
       case "webrtcStatusUpdate":
         console.log("[UI] Processing webrtcStatusUpdate:", message);
-        if (message.peerId && message.status) {
+        if (message.deviceId && message.status) {
           console.log(
-            `[UI] WebRTC status for ${message.peerId}: ${message.status}`,
+            `[UI] WebRTC status for ${message.deviceId}: ${message.status}`,
           );
           // Update UI state based on WebRTC status if needed
         }
@@ -234,19 +316,30 @@
 
       case "dataChannelStatusUpdate":
         console.log("[UI] Processing dataChannelStatusUpdate:", message);
-        if (message.peerId && message.channelName && message.state) {
+        if (message.deviceId && message.channelName && message.state) {
           console.log(
-            `[UI] Data channel ${message.channelName} for ${message.peerId}: ${message.state}`,
+            `[UI] Data channel ${message.channelName} for ${message.deviceId}: ${message.state}`,
           );
         }
         break;
 
       case "peerConnectionStatusUpdate":
         console.log("[UI] Processing peerConnectionStatusUpdate:", message);
-        if (message.peerId && message.connectionState) {
+        if (message.deviceId && message.connectionState) {
           console.log(
-            `[UI] Peer connection for ${message.peerId}: ${message.connectionState}`,
+            `[UI] Peer connection for ${message.deviceId}: ${message.connectionState}`,
           );
+        }
+        break;
+
+      case "dkgAddressUpdate":
+        console.log("[UI] Processing dkgAddressUpdate:", message);
+        if (message.address && message.blockchain) {
+          console.log("[UI] DKG address automatically fetched:", message.address, "for", message.blockchain);
+          appState.dkgAddress = message.address;
+          appState.dkgError = "";
+          // Trigger reactivity
+          appState = { ...appState };
         }
         break;
 
@@ -255,56 +348,63 @@
     }
   }
 
-  // Removed ensurePrivateKey() - this is now an MPC-only wallet
-
-  // Request offscreen document (must be triggered by user gesture)
-  async function ensureOffscreenDocument() {
-    try {
-      chrome.runtime.sendMessage({ type: "createOffscreen" }, (response) => {
-        if (chrome.runtime.lastError) {
-          console.error(
-            "[UI] Offscreen creation error:",
-            chrome.runtime.lastError.message,
-          );
-        } else {
-          console.log("[UI] Offscreen response:", response);
-        }
-      });
-    } catch (e: any) {
-      console.error("[UI] Failed to request offscreen:", e);
-    }
-  }
+  // Removed ensurePrivateKey() and ensureOffscreenDocument() - this is now an MPC-only wallet
+  // Offscreen document management is handled entirely by the background script
 
   onMount(async () => {
     console.log("[UI] Component mounting");
+
+    // Set up state tracking before connecting port
+    let stateReceived = false;
+
+    // Initialize as false to prevent reactive statements from running
+    initialStateLoaded = false;
+
     port = chrome.runtime.connect({ name: "popup" });
-    port.onMessage.addListener(handleBackgroundMessage);
+    console.log("[UI] Port connected to background, waiting for initial state...");
+    
+    port.onMessage.addListener((message) => {
+      console.log("[UI] Port message received:", message.type, message);
+      // Track when initial state is received
+      if (message.type === "initialState" && !stateReceived) {
+        stateReceived = true;
+        console.log("[UI] Initial state received successfully from StateManager");
+      }
+      handleBackgroundMessage(message);
+    });
+
     port.onDisconnect.addListener(() => {
       console.error("[UI] Port disconnected from background");
-      wsConnected = false;
+      appState.wsConnected = false;
     });
 
-    // Request initial state - let handleBackgroundMessage process it
-    chrome.runtime.sendMessage({ type: "getState" }, (response) => {
-      if (chrome.runtime.lastError) {
-        console.error(
-          "[UI] Error on initial getState:",
-          chrome.runtime.lastError.message,
-        );
-        return;
-      }
-      if (response) {
-        console.log("[UI] Initial state response:", response);
-        // Process through the centralized handler to ensure reactivity
-        handleBackgroundMessage({
-          type: "initialState",
-          ...response,
+    console.log("[UI] Port connected, StateManager should automatically send state...");
+
+    // Add fallback in case automatic state is delayed (network issues, etc.)
+    setTimeout(() => {
+      if (!stateReceived) {
+        console.warn("[UI] Automatic state not received within 1 second, requesting manually as fallback");
+        chrome.runtime.sendMessage({ type: "getState" }, (response) => {
+          if (chrome.runtime.lastError) {
+            console.error("[UI] Fallback getState error:", chrome.runtime.lastError.message);
+            return;
+          }
+          if (response && !stateReceived) {
+            console.log("[UI] Fallback state response received:", response);
+            handleBackgroundMessage({
+              type: "initialState",
+              ...response,
+            });
+            stateReceived = true;
+          }
         });
+      } else {
+        console.log("[UI] State was received automatically, no fallback needed");
       }
-    });
+    }, 1000); // 1 second timeout
 
     // Removed ensurePrivateKey() call - this is now an MPC-only wallet
-    await ensureOffscreenDocument();
+    // Removed ensureOffscreenDocument() call - offscreen management is handled by background script
   });
 
   onDestroy(() => {
@@ -317,72 +417,72 @@
 
   // Removed single-party reactive statements - this is now an MPC-only wallet
 
-  // Reactive statement to auto-fetch DKG address when DKG completes
-  $: if (dkgState === DkgState.Complete && sessionInfo) {
-    console.log("[UI] DKG completed, auto-fetching DKG address");
-    fetchDkgAddress();
-  }
+  // REMOVED: All reactive business logic moved to background script
+  // The popup should ONLY contain pure UI reactive statements
+  // All blockchain selection, state management, etc. happens in background
+  // DKG address fetching is now handled automatically by StateManager
 
-  // Reactive statement to send blockchain selection changes to background
-  $: if (chain && port) {
-    console.log("[UI] Chain selection changed to:", chain);
-    chrome.runtime.sendMessage(
-      {
-        type: "setBlockchain",
-        blockchain: chain,
-      },
-      (response) => {
-        if (chrome.runtime.lastError) {
-          console.error(
-            "[UI] Error setting blockchain:",
-            chrome.runtime.lastError.message,
-          );
-        } else {
-          console.log("[UI] Blockchain selection saved to background:", chain);
-        }
-      },
-    );
-  }
+  // Reactive statements to save UI preferences to localStorage (UI-only)
+  // Only save after initial state has been loaded to prevent premature saves
+  let initialStateLoaded = false;
+  let lastSavedState = "";
 
-  // Removed fetchAddress() - this is now an MPC-only wallet
-
-  async function fetchDkgAddress() {
-    dkgError = "";
-    dkgAddress = "";
-
-    try {
-      const command =
-        chain === "ethereum" ? "getEthereumAddress" : "getSolanaAddress";
-
-      const response = await chrome.runtime.sendMessage({
-        type: command,
-        payload: {},
-      });
-
-      if (response && response.success) {
-        const addressKey =
-          chain === "ethereum" ? "ethereumAddress" : "solanaAddress";
-        dkgAddress = response.data[addressKey] || "";
-
-        if (!dkgAddress) {
-          dkgError = `No DKG ${chain} address available. Please complete DKG first.`;
-        } else {
-          // Keep the full Ethereum address including 0x prefix
-          // Previously was removing the prefix with: dkgAddress = dkgAddress.slice(2)
-        }
-      } else {
-        dkgError = response?.error || `Failed to get DKG ${chain} address`;
-      }
-    } catch (e: any) {
-      dkgError = `Error fetching DKG address: ${e.message || e}`;
+  // Throttled save function to prevent excessive localStorage writes (UI preferences only)
+  function throttledSaveUIState() {
+    const currentStateStr = JSON.stringify({
+      showSettings: appState.showSettings,
+      proposedSessionIdInput: appState.proposedSessionIdInput,
+      totalParticipants: appState.totalParticipants,
+      threshold: appState.threshold,
+      chain: appState.chain
+    });
+    
+    // Only save if UI preferences actually changed
+    if (currentStateStr !== lastSavedState) {
+      saveUIState();
+      lastSavedState = currentStateStr;
     }
   }
 
+  // Save showSettings changes
+  $: if (initialStateLoaded && typeof appState.showSettings !== "undefined") {
+    throttledSaveUIState();
+  }
+
+  // Save proposedSessionIdInput changes
+  $: if (
+    initialStateLoaded &&
+    typeof appState.proposedSessionIdInput !== "undefined"
+  ) {
+    throttledSaveUIState();
+  }
+
+  // Save totalParticipants changes
+  $: if (
+    initialStateLoaded &&
+    typeof appState.totalParticipants !== "undefined"
+  ) {
+    throttledSaveUIState();
+  }
+
+  // Save threshold changes
+  $: if (initialStateLoaded && typeof appState.threshold !== "undefined") {
+    throttledSaveUIState();
+  }
+
+  // Save chain changes (in addition to the blockchain message sending)
+  $: if (initialStateLoaded && typeof appState.chain !== "undefined") {
+    throttledSaveUIState();
+  }
+
+  // Removed fetchAddress() and fetchDkgAddress() - this is now an MPC-only wallet
+  // DKG address fetching is now handled automatically by StateManager when DKG completes
+
   // Removed signDemoMessage() - this is now an MPC-only wallet
 
-  function requestPeerList() {
+  function requestdeviceList() {
     console.log("[UI] Requesting peer list");
-    chrome.runtime.sendMessage({ type: "listPeers" }, (response) => {
+    chrome.runtime.sendMessage({ type: "listdevices" }, (response) => {
       if (chrome.runtime.lastError) {
         console.error(
           "[UI] Error requesting peer list:",
@@ -390,48 +490,53 @@
         );
         return;
       }
-      console.log("[UI] listPeers response:", response);
+      console.log("[UI] listdevices response:", response);
     });
   }
 
   function proposeSession() {
-    const availablePeers = peersList.filter((p) => p !== currentPeerId);
+    const availabledevices = appState.connecteddevices.filter(
+      (p) => p !== appState.deviceId,
+    );
 
-    if (availablePeers.length < totalParticipants - 1) {
+    if (availabledevices.length < appState.totalParticipants - 1) {
       console.error(
-        `Need at least ${totalParticipants - 1} other peers for a ${totalParticipants}-participant session`,
+        `Need at least ${appState.totalParticipants - 1} other devices for a ${appState.totalParticipants}-participant session`,
       );
       return;
     }
 
-    if (threshold > totalParticipants) {
+    if (appState.threshold > appState.totalParticipants) {
       console.error("Threshold cannot be greater than total participants");
       return;
     }
 
-    if (threshold < 1) {
+    if (appState.threshold < 1) {
       console.error("Threshold must be at least 1");
       return;
     }
 
-    const peersToInclude = availablePeers.slice(0, totalParticipants - 1);
-    const allParticipants = [currentPeerId, ...peersToInclude];
+    const devicesToInclude = availabledevices.slice(
+      0,
+      appState.totalParticipants - 1,
+    );
+    const allParticipants = [appState.deviceId, ...devicesToInclude];
 
     const sessionId =
-      proposedSessionIdInput.trim() ||
-      `wallet_${threshold}of${totalParticipants}_${Date.now()}`;
+      appState.proposedSessionIdInput.trim() ||
+      `wallet_${appState.threshold}of${appState.totalParticipants}_${Date.now()}`;
 
     chrome.runtime.sendMessage({
       type: "proposeSession",
       session_id: sessionId,
-      total: totalParticipants,
-      threshold: threshold,
+      total: appState.totalParticipants,
+      threshold: appState.threshold,
       participants: allParticipants,
     });
     console.log(
       "[UI] Proposing session:",
       sessionId,
-      `(${threshold}-of-${totalParticipants})`,
+      `(${appState.threshold}-of-${appState.totalParticipants})`,
       "with participants:",
       allParticipants,
     );
@@ -442,23 +547,23 @@
       type: "acceptSession",
       session_id: sessionId,
       accepted: true,
-      blockchain: chain, // Include blockchain selection
+      blockchain: appState.chain, // Include blockchain selection
     });
     console.log(
       "[UI] Accepting session invite:",
       sessionId,
       "with blockchain:",
-      chain,
+      appState.chain,
     );
   }
 
   // Add function to send direct message for testing
-  function sendDirectMessage(toPeerId: string) {
-    const testMessage = `Hello from ${currentPeerId} at ${new Date().toLocaleTimeString()}`;
+  function sendDirectMessage(todeviceId: string) {
+    const testMessage = `Hello from ${appState.deviceId} at ${new Date().toLocaleTimeString()}`;
     chrome.runtime.sendMessage(
       {
         type: "sendDirectMessage",
-        toPeerId: toPeerId,
+        todeviceId: todeviceId,
         message: testMessage,
       },
       (response) => {
@@ -477,7 +582,7 @@
     );
     console.log(
       "[UI] Sending direct message to:",
-      toPeerId,
+      todeviceId,
       "Message:",
       testMessage,
     );
@@ -485,22 +590,22 @@
 
   // Helper function to get WebRTC status for a peer
   function getWebRTCStatus(
-    peerId: string,
+    deviceId: string,
   ): "connected" | "connecting" | "disconnected" {
     console.log(
       "[UI] Getting WebRTC status for peer:",
-      peerId,
-      "from peerConnections:",
-      peerConnections,
+      deviceId,
+      "from webrtcConnections:",
+      appState.webrtcConnections,
     );
 
     // Check direct connection status first
-    if (peerConnections[peerId] === true) {
+    if (appState.webrtcConnections[deviceId] === true) {
       return "connected";
     } else if (
-      sessionInfo &&
-      sessionInfo.participants.includes(peerId) &&
-      meshStatus?.type === MeshStatusType.PartiallyReady
+      appState.sessionInfo &&
+      appState.sessionInfo.participants.includes(deviceId) &&
+      appState.meshStatus?.type === MeshStatusType.PartiallyReady
     ) {
       return "connecting";
     } else {
@@ -511,12 +616,12 @@
   // Helper function to get session acceptance status
   function getSessionAcceptanceStatus(
     sessionId: string,
-    peerId: string,
+    deviceId: string,
   ): boolean | undefined {
-    if (!sessionAcceptanceStatus[sessionId]) {
+    if (!appState.sessionAcceptanceStatus[sessionId]) {
       return undefined;
     }
-    return sessionAcceptanceStatus[sessionId][peerId];
+    return appState.sessionAcceptanceStatus[sessionId][deviceId];
   }
 </script>
 
@@ -524,46 +629,73 @@
   <div class="text-center mb-6 flex justify-between items-center">
     <img src={svelteLogo} class="logo svelte mb-2" alt="Svelte Logo" />
     <h1 class="text-3xl font-bold flex-grow text-center">MPC Wallet</h1>
-    <button 
+    <button
       class="bg-blue-500 hover:bg-blue-600 text-white p-2 rounded-full"
-      on:click={() => showSettings = !showSettings}
+      on:click={() => {
+        appState.showSettings = !appState.showSettings;
+        appState = { ...appState };
+      }}
+      aria-label="Settings"
       title="Settings"
     >
-      <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        class="h-6 w-6"
+        fill="none"
+        viewBox="0 0 24 24"
+        stroke="currentColor"
+      >
+        <path
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="2"
+          d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
+        />
+        <path
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="2"
+          d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+        />
       </svg>
     </button>
   </div>
 
-  {#if showSettings}
-    <Settings on:backToWallet={({detail}) => {
-      chain = detail.chain;
-      showSettings = false;
-    }} />
+  {#if appState.showSettings}
+    <Settings
+      on:backToWallet={({ detail }) => {
+        if (detail.chain === "ethereum" || detail.chain === "solana") {
+          appState.chain = detail.chain;
+        }
+        if (detail.curve === "secp256k1" || detail.curve === "ed25519") {
+          appState.curve = detail.curve;
+        }
+        appState.showSettings = false;
+        appState = { ...appState };
+      }}
+    />
   {:else}
     <!-- Wallet Status Banner -->
     <div class="mb-4 p-3 border rounded">
-      <div class="flex justify-between items-center mb-2">
+      <div class="mb-2">
         <div class="font-bold">Current Network:</div>
-        <span class="text-sm text-blue-600 cursor-pointer" on:click={() => showSettings = true}>
-          Configure Wallet
-        </span>
       </div>
 
       <div class="p-2 bg-blue-50 border border-blue-200 rounded mb-2">
         <p class="text-blue-700">
-          {chain === "ethereum" ? "Ethereum (secp256k1)" : "Solana (ed25519)"}
+          {appState.chain === "ethereum"
+            ? "Ethereum (secp256k1)"
+            : "Solana (ed25519)"}
         </p>
       </div>
 
-      {#if sessionInfo && dkgState === DkgState.Complete}
+      {#if appState.sessionInfo && appState.dkgState === DkgState.Complete}
         <div class="p-2 bg-green-50 border border-green-200 rounded">
           <p class="text-sm text-green-700">
-            ✓ DKG Complete - MPC addresses available for {chain}
+            ✓ DKG Complete - MPC addresses available for {appState.chain}
           </p>
         </div>
-      {:else if sessionInfo && dkgState !== DkgState.Idle}
+      {:else if appState.sessionInfo && appState.dkgState !== DkgState.Idle}
         <div class="p-2 bg-yellow-50 border border-yellow-200 rounded">
           <p class="text-sm text-yellow-700">
             🔄 DKG in progress - MPC addresses will be available when complete
@@ -574,24 +706,26 @@
   {/if}
 
   <!-- DKG Address Display (Moved from MPC Wallet Operations) -->
-  {#if dkgAddress}
+  {#if appState.dkgAddress}
     <div class="mb-4 p-3 border rounded">
       <h2 class="text-xl font-semibold mb-2">MPC Address</h2>
       <div>
-        <span class="block font-bold mb-1">{chain === "ethereum" ? "Ethereum" : "Solana"} Address:</span>
+        <span class="block font-bold mb-1"
+          >{appState.chain === "ethereum" ? "Ethereum" : "Solana"} Address:</span
+        >
         <code
           class="block bg-purple-50 border border-purple-200 p-2 rounded break-all"
-          >{dkgAddress}</code
+          >{appState.dkgAddress}</code
         >
         <p class="text-xs text-purple-600 mt-1">
-          ✓ Generated using {sessionInfo?.threshold}-of-{sessionInfo?.total} threshold
-          signature
+          ✓ Generated using {appState.sessionInfo?.threshold}-of-{appState
+            .sessionInfo?.total} threshold signature
         </p>
       </div>
-      
-      {#if dkgError}
+
+      {#if appState.dkgError}
         <div class="mt-2 p-2 bg-red-50 border border-red-200 rounded">
-          <span class="text-red-600 text-sm">{dkgError}</span>
+          <span class="text-red-600 text-sm">{appState.dkgError}</span>
         </div>
       {/if}
     </div>
@@ -605,35 +739,35 @@
       <div>
         <span class="block font-bold mb-1">Peer ID:</span>
         <code class="block bg-gray-100 p-2 rounded text-sm">
-          {currentPeerId || "Not connected"}
+          {appState.deviceId || "Not connected"}
         </code>
       </div>
       <div>
         <span class="block font-bold mb-1">WebSocket:</span>
         <span
-          class="inline-block px-2 py-1 rounded text-sm {wsConnected
+          class="inline-block px-2 py-1 rounded text-sm {appState.wsConnected
             ? 'bg-green-100 text-green-800'
             : 'bg-red-100 text-red-800'}"
         >
-          {wsConnected ? "Connected" : "Disconnected"}
+          {appState.wsConnected ? "Connected" : "Disconnected"}
         </span>
       </div>
     </div>
   </div>
 
-  <!-- Connected Peers with Individual WebRTC Status -->
+  <!-- Connected devices with Individual WebRTC Status -->
   <div class="mb-4 p-3 border rounded">
     <h2 class="text-xl font-semibold mb-3">
-      Connected Peers ({peersList.length})
+      Connected devices ({appState.connecteddevices.length})
     </h2>
 
-    {#if peersList && peersList.length > 0}
+    {#if appState.connecteddevices && appState.connecteddevices.length > 0}
       <ul class="space-y-2">
-        {#each peersList as peer}
+        {#each appState.connecteddevices as peer}
           <li class="flex items-center justify-between p-3 bg-gray-50 rounded">
             <div class="flex items-center gap-3">
               <code class="text-sm font-mono">{peer}</code>
-              {#if peer === currentPeerId}
+              {#if peer === appState.deviceId}
                 <span
                   class="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded"
                   >You</span
@@ -641,7 +775,7 @@
               {/if}
             </div>
 
-            {#if peer !== currentPeerId}
+            {#if peer !== appState.deviceId}
               <div class="flex items-center gap-2">
                 <span class="text-xs text-gray-500">WebRTC:</span>
                 {#if getWebRTCStatus(peer) === "connected"}
@@ -649,7 +783,7 @@
                     class="text-xs bg-green-100 text-green-800 px-2 py-1 rounded"
                     >Connected</span
                   >
-                  {#if sessionInfo && meshStatus?.type === MeshStatusType.Ready}
+                  {#if appState.sessionInfo && appState.meshStatus?.type === MeshStatusType.Ready}
                     <button
                       class="text-xs bg-blue-500 hover:bg-blue-700 text-white px-2 py-1 rounded"
                       on:click={() => sendDirectMessage(peer)}
@@ -674,7 +808,7 @@
         {/each}
       </ul>
     {:else}
-      <p class="text-gray-500 text-center py-4">No peers connected</p>
+      <p class="text-gray-500 text-center py-4">No devices connected</p>
     {/if}
   </div>
 
@@ -682,38 +816,41 @@
   <div class="mb-4 p-3 border rounded">
     <h2 class="text-xl font-semibold mb-3">MPC Session</h2>
 
-    {#if sessionInfo}
+    {#if appState.sessionInfo}
       <!-- Active Session -->
       <div class="bg-green-50 border border-green-200 rounded p-3 mb-3">
         <h3 class="font-bold text-green-800 mb-2">Active Session</h3>
         <div class="grid grid-cols-2 gap-2 text-sm">
-          <div><strong>ID:</strong> {sessionInfo.session_id}</div>
-          <div><strong>Proposer:</strong> {sessionInfo.proposer_id}</div>
+          <div><strong>ID:</strong> {appState.sessionInfo.session_id}</div>
+          <div>
+            <strong>Proposer:</strong>
+            {appState.sessionInfo.proposer_id}
+          </div>
           <div>
             <strong>Threshold:</strong>
-            {sessionInfo.threshold} of
-            {sessionInfo.total}
+            {appState.sessionInfo.threshold} of
+            {appState.sessionInfo.total}
           </div>
           <div>
             <strong>Mesh:</strong>
-            {MeshStatusType[meshStatus?.type] || "Unknown"}
+            {MeshStatusType[appState.meshStatus?.type] || "Unknown"}
           </div>
           <div>
             <strong>DKG:</strong>
-            {DkgState[dkgState] || "Unknown"}
+            {DkgState[appState.dkgState] || "Unknown"}
           </div>
         </div>
         <div class="mt-2">
           <span class="font-bold">Participants:</span>
           <div class="flex flex-wrap gap-1 mt-1">
-            {#each sessionInfo.participants as participant}
+            {#each appState.sessionInfo.participants as participant}
               <span
                 class="text-xs bg-gray-100 px-2 py-1 rounded {participant ===
-                currentPeerId
+                appState.deviceId
                   ? 'bg-blue-100'
                   : ''}"
               >
-                {participant}{participant === currentPeerId ? " (you)" : ""}
+                {participant}{participant === appState.deviceId ? " (you)" : ""}
               </span>
             {/each}
           </div>
@@ -721,7 +858,7 @@
         <div class="mt-2">
           <span class="font-bold">Accepted:</span>
           <div class="flex flex-wrap gap-1 mt-1">
-            {#each sessionInfo.accepted_peers || [] as accepted}
+            {#each appState.sessionInfo.accepted_devices || [] as accepted}
               <span
                 class="text-xs bg-green-100 text-green-800 px-2 py-1 rounded"
               >
@@ -731,10 +868,10 @@
           </div>
         </div>
       </div>
-    {:else if invites && invites.length > 0}
+    {:else if appState.invites && appState.invites.length > 0}
       <!-- Pending Invitations -->
       <div class="space-y-3">
-        {#each invites as invite}
+        {#each appState.invites as invite}
           <div class="bg-yellow-50 border border-yellow-200 rounded p-3">
             <h3 class="font-bold text-yellow-800 mb-2">Session Invitation</h3>
             <div class="grid grid-cols-2 gap-2 text-sm mb-3">
@@ -768,7 +905,7 @@
           <input
             id="session-id-input"
             type="text"
-            bind:value={proposedSessionIdInput}
+            bind:value={appState.proposedSessionIdInput}
             class="w-full border p-2 rounded"
             placeholder="Auto-generated if empty"
           />
@@ -782,9 +919,9 @@
             <input
               id="total-participants"
               type="number"
-              bind:value={totalParticipants}
+              bind:value={appState.totalParticipants}
               min="2"
-              max={peersList.length}
+              max={appState.connecteddevices.length}
               class="w-full border p-2 rounded"
             />
           </div>
@@ -795,9 +932,9 @@
             <input
               id="threshold-input"
               type="number"
-              bind:value={threshold}
+              bind:value={appState.threshold}
               min="1"
-              max={totalParticipants}
+              max={appState.totalParticipants}
               class="w-full border p-2 rounded"
             />
           </div>
@@ -806,23 +943,24 @@
         <button
           class="w-full bg-indigo-500 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded"
           on:click={proposeSession}
-          disabled={!wsConnected ||
-            peersList.filter((p) => p !== currentPeerId).length <
-              totalParticipants - 1 ||
-            threshold > totalParticipants ||
-            threshold < 1}
+          disabled={!appState.wsConnected ||
+            appState.connecteddevices.filter((p) => p !== appState.deviceId)
+              .length <
+              appState.totalParticipants - 1 ||
+            appState.threshold > appState.totalParticipants ||
+            appState.threshold < 1}
         >
-          Propose New Session ({threshold}-of-{totalParticipants})
+          Propose New Session ({appState.threshold}-of-{appState.totalParticipants})
         </button>
 
-        {#if peersList.filter((p) => p !== currentPeerId).length < totalParticipants - 1}
+        {#if appState.connecteddevices.filter((p) => p !== appState.deviceId).length < appState.totalParticipants - 1}
           <p class="text-sm text-gray-500 text-center">
-            Need at least {totalParticipants - 1} other peers for a {totalParticipants}-participant
+            Need at least {appState.totalParticipants - 1} other devices for a {appState.totalParticipants}-participant
             session
           </p>
-        {:else if threshold > totalParticipants || threshold < 1}
+        {:else if appState.threshold > appState.totalParticipants || appState.threshold < 1}
           <p class="text-sm text-red-500 text-center">
-            Invalid threshold: must be between 1 and {totalParticipants}
+            Invalid threshold: must be between 1 and {appState.totalParticipants}
           </p>
         {/if}
       </div>
@@ -830,13 +968,16 @@
   </div>
 
   <!-- WebSocket Error Display -->
-  {#if wsError}
+  {#if appState.wsError}
     <div class="mb-4 p-3 bg-red-50 border border-red-200 rounded">
       <div class="flex justify-between items-center">
-        <span class="text-red-600">{wsError}</span>
+        <span class="text-red-600">{appState.wsError}</span>
         <button
           class="text-sm bg-red-100 hover:bg-red-200 px-2 py-1 rounded"
-          on:click={() => (wsError = "")}
+          on:click={() => {
+            appState.wsError = "";
+            appState = { ...appState };
+          }}
         >
           ×
         </button>
@@ -851,7 +992,7 @@
     height: 600px;
     overflow: auto;
   }
-  
+
   /* Dark mode styles */
   :global(.dark) {
     color-scheme: dark;
@@ -861,66 +1002,66 @@
     background-color: #1a1a1a;
     color: #e5e5e5;
   }
-  
+
   :global(.dark .border) {
     border-color: #333333;
   }
-  
+
   :global(.dark .bg-gray-50) {
     background-color: #262626;
   }
-  
+
   :global(.dark .bg-gray-100) {
     background-color: #333333;
   }
-  
+
   :global(.dark .bg-green-50) {
     background-color: #064e3b;
     color: #a7f3d0;
   }
-  
+
   :global(.dark .bg-yellow-50) {
     background-color: #78350f;
     color: #fde68a;
   }
-  
+
   :global(.dark .bg-blue-50) {
     background-color: #082f49;
     color: #bae6fd;
   }
-  
+
   :global(.dark .text-green-700) {
     color: #a7f3d0;
   }
-  
+
   :global(.dark .text-yellow-700) {
     color: #fde68a;
   }
-  
+
   :global(.dark .text-blue-700) {
     color: #bae6fd;
   }
-  
+
   :global(.dark .text-blue-600) {
     color: #60a5fa;
   }
-  
+
   :global(.dark .bg-blue-500) {
     background-color: #2563eb;
   }
-  
+
   :global(.dark .bg-blue-600) {
     background-color: #1d4ed8;
   }
-  
+
   :global(.dark .border-green-200) {
     border-color: #065f46;
   }
-  
+
   :global(.dark .border-yellow-200) {
     border-color: #92400e;
   }
-  
+
   :global(.dark .border-blue-200) {
     border-color: #0c4a6e;
   }

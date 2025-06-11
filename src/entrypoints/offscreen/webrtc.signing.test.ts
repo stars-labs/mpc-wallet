@@ -9,7 +9,7 @@ import {
     createTestDkgInstances,
     cleanupDkgInstances
 } from './test-utils';
-import { FrostDkg } from '../../../pkg/mpc_wallet.js';
+import { FrostDkgEd25519 } from '../../../pkg/mpc_wallet.js';
 
 beforeAll(async () => {
     await initializeWasmIfNeeded();
@@ -51,7 +51,6 @@ describe('WebRTCManager FROST Signing Process', () => {
 
         // Simulate acceptance from peer 'b'
         await (manager as any)._handleSigningAcceptance('b', {
-            webrtc_msg_type: 'SigningAcceptance',
             signing_id: signingId,
             accepted: true
         });
@@ -106,16 +105,16 @@ describe('WebRTCManager FROST Signing Process', () => {
         (managerA as any).solanaAddress = 'shared-solana-address';
         (managerB as any).solanaAddress = 'shared-solana-address';
 
-        let frostDkgA: FrostDkg | null = null;
-        let frostDkgB: FrostDkg | null = null;
-        let frostDkgC: FrostDkg | null = null;
+        let frostDkgA: FrostDkgEd25519 | null = null;
+        let frostDkgB: FrostDkgEd25519 | null = null;
+        let frostDkgC: FrostDkgEd25519 | null = null;
 
         try {
             // Create and set up complete DKG instances
             const dkgInstances = await createTestDkgInstances(false);
-            frostDkgA = dkgInstances.frostDkgA as FrostDkg;
-            frostDkgB = dkgInstances.frostDkgB as FrostDkg;
-            frostDkgC = dkgInstances.frostDkgC as FrostDkg;
+            frostDkgA = dkgInstances.frostDkgA as FrostDkgEd25519;
+            frostDkgB = dkgInstances.frostDkgB as FrostDkgEd25519;
+            frostDkgC = dkgInstances.frostDkgC as FrostDkgEd25519;
 
             // Complete DKG process to enable signing
             const round1A = frostDkgA.generate_round1();
