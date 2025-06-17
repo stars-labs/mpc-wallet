@@ -32,7 +32,11 @@ export type WebRTCAppMessage =
   | { webrtc_msg_type: 'SignerSelection'; signing_id: string; selected_signers: string[] }
   | { webrtc_msg_type: 'SigningCommitment'; signing_id: string; sender_identifier: any; commitment: any } // FROST commitment
   | { webrtc_msg_type: 'SignatureShare'; signing_id: string; sender_identifier: any; share: any } // FROST signature share
-  | { webrtc_msg_type: 'AggregatedSignature'; signing_id: string; signature: string }; // Final signature as string
+  | { webrtc_msg_type: 'AggregatedSignature'; signing_id: string; signature: string } // Final signature as string
+
+  // DKG Package Request Messages (for handling missing packages)
+  | { webrtc_msg_type: 'DkgPackageRequest'; round: 1 | 2; requester: string } // Request a missing DKG package
+  | { webrtc_msg_type: 'DkgPackageResend'; round: 1 | 2; package: any }; // Response with requested package
 
 /**
  * Information about a WebRTC data channel connection.

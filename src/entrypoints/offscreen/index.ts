@@ -81,6 +81,7 @@ async function initializeModules(): Promise<void> {
         messageRouter.registerHandler('relayViaWs', handleRelayViaWs);
 
         // Add missing session management handlers
+        messageRouter.registerHandler('acceptSession', handleAcceptSession);
         messageRouter.registerHandler('sessionAccepted', handleSessionAccepted);
         messageRouter.registerHandler('sessionAllAccepted', handleSessionAllAccepted);
         messageRouter.registerHandler('sessionResponseUpdate', handleSessionResponseUpdate);
@@ -179,7 +180,8 @@ async function initializeWebRTCManager(deviceId: string): Promise<void> {
                 webrtcConnections[peerId] = connected;
                 sendToBackground({
                     type: 'webrtcConnectionUpdate',
-                    payload: { deviceId: peerId, connected }
+                    deviceId: peerId,
+                    connected
                 });
             };
 
@@ -350,6 +352,29 @@ async function handleJoinSession(messageType: string, payload: any): Promise<any
 }
 
 /**
+ * Handle accept session request
+ */
+async function handleAcceptSession(messageType: string, payload: any): Promise<any> {
+    try {
+        if (!webRTCManager) {
+            throw new Error("WebRTC manager not initialized");
+        }
+
+        console.log("🔧 [Handler] Accepting session:", payload);
+        
+        // The accept session logic is handled by the background script
+        // The offscreen just needs to acknowledge and wait for sessionAccepted message
+        return { success: true };
+    } catch (error) {
+        console.error("❌ [Handler] Error handling acceptSession:", error);
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : String(error)
+        };
+    }
+}
+
+/**
  * Handle DKG start request
  */
 async function handleStartDkg(messageType: string, payload: any): Promise<any> {
@@ -475,6 +500,12 @@ async function handleSessionAccepted(messageType: string, payload: any): Promise
 
         // Update session info and initiate peer connections
         if (payload.sessionInfo && payload.currentdeviceId) {
+            // Set blockchain selection if provided
+            if (payload.blockchain && webRTCManager.setBlockchain) {
+                console.log("🔧 [Handler] Setting blockchain to:", payload.blockchain);
+                await webRTCManager.setBlockchain(payload.blockchain);
+            }
+            
             if (webRTCManager.updateSessionInfo) {
                 webRTCManager.updateSessionInfo(payload.sessionInfo);
             }
@@ -509,6 +540,12 @@ async function handleSessionAllAccepted(messageType: string, payload: any): Prom
         }
 
         console.log("🔧 [Handler] Handling sessionAllAccepted:", payload);
+
+        // Set blockchain selection if provided
+        if (payload.blockchain && webRTCManager.setBlockchain) {
+            console.log("🔧 [Handler] Setting blockchain to:", payload.blockchain);
+            await webRTCManager.setBlockchain(payload.blockchain);
+        }
 
         if (payload.sessionInfo && webRTCManager.updateSessionInfo) {
             webRTCManager.updateSessionInfo(payload.sessionInfo);
