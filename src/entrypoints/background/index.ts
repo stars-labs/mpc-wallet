@@ -25,7 +25,7 @@ import WalletController from "../../services/walletController";
 import { WebSocketClient } from "./websocket";
 
 // Import modular components
-import { SessionPersistenceManager, SessionManager } from './sessionManager';
+import { SessionManager } from './sessionManager';
 import { RpcHandler, UIRequestHandler } from './rpcHandler';
 import { OffscreenManager } from './offscreenManager';
 import { WebSocketManager } from './webSocketManager';
@@ -108,7 +108,8 @@ function initializeComponents(): void {
         stateManager.getState(),
         wsClient,
         (message) => stateManager.broadcastToPopupPorts(message),
-        (message, description) => offscreenManager.sendToOffscreen(message, description)
+        (message, description) => offscreenManager.sendToOffscreen(message, description),
+        stateManager
     );
 
     // Initialize WebSocket manager (needs app state, session manager, broadcast function, send to offscreen function, and state manager)
@@ -207,8 +208,17 @@ function setupMessageHandlers(): void {
                     console.log("🎯 [Background] Handling OFFSCREEN_READY signal");
                     offscreenManager.handleOffscreenReady();
 
-                    // Check if we need to restore session state
-                    await handleSessionRestoration();
+                    // Send init data when offscreen becomes ready
+                    const currentState = stateManager.getState();
+                    if (currentState.deviceId) {
+                        console.log("🔄 [Background] Sending init data to offscreen");
+                        const initResult = await offscreenManager.sendInitData(currentState.deviceId);
+                        if (initResult.success) {
+                            console.log("✅ [Background] Successfully sent init data to offscreen");
+                        } else {
+                            console.warn("❌ [Background] Failed to send init data to offscreen:", initResult.error);
+                        }
+                    }
 
                     console.log("✅ [Background] OffscreenReady handled successfully");
                     sendResponse({ success: true });
@@ -235,14 +245,6 @@ function setupMessageHandlers(): void {
                     return;
                 }
 
-                // Handle session restoration requests
-                if (message.type === "requestSessionRestore") {
-                    console.log("🔄 [Background] Handling requestSessionRestore from offscreen");
-                    const result = await handleSessionRestore();
-                    console.log("✅ [Background] SessionRestore request completed:", result);
-                    sendResponse(result);
-                    return;
-                }
 
                 // Handle init requests
                 if (message.type === "requestInit") {
@@ -283,85 +285,6 @@ function setupMessageHandlers(): void {
 // SESSION RESTORATION
 // ===================================================================
 
-/**
- * Handle session restoration on offscreen ready
- */
-async function handleSessionRestoration(): Promise<void> {
-    const currentState = stateManager.getState();
-
-    // Always send init data when offscreen becomes ready
-    if (currentState.deviceId) {
-        console.log("🔄 [Background] Sending init data to offscreen");
-        const initResult = await offscreenManager.sendInitData(currentState.deviceId);
-
-        if (initResult.success) {
-            console.log("✅ [Background] Successfully sent init data to offscreen");
-        } else {
-            console.warn("❌ [Background] Failed to send init data to offscreen:", initResult.error);
-        }
-    }
-
-    // If we have an active session, restore it to offscreen
-    if (currentState.sessionInfo && currentState.sessionInfo.status === "accepted") {
-        console.log("🔄 [Background] Restoring active session to offscreen");
-
-        const restoreResult = await offscreenManager.sendToOffscreen({
-            type: "sessionAccepted",
-            sessionInfo: currentState.sessionInfo,
-            currentdeviceId: currentState.deviceId,
-            blockchain: stateManager.getBlockchain() || "solana"
-        }, "sessionRestore");
-
-        if (restoreResult.success) {
-            console.log("✅ [Background] Successfully restored session to offscreen");
-        } else {
-            console.warn("❌ [Background] Failed to restore session to offscreen:", restoreResult.error);
-        }
-    }
-}
-
-/**
- * Handle session restore requests from offscreen
- */
-async function handleSessionRestore(): Promise<{ success: boolean; sessionInfo?: SessionInfo | null; error?: string }> {
-    try {
-        const persistedState = await SessionPersistenceManager.loadSessionState();
-
-        if (persistedState && persistedState.sessionInfo && persistedState.sessionInfo.status === "accepted") {
-            console.log("🔄 [Background] Restoring persisted session:", persistedState.sessionInfo.session_id);
-
-            // Restore session state to state manager
-            stateManager.updateState({
-                sessionInfo: persistedState.sessionInfo,
-                dkgState: persistedState.dkgState,
-                meshStatus: persistedState.meshStatus
-            });
-
-            // Send the sessionAccepted message to restore the session
-            const restoreResult = await offscreenManager.sendToOffscreen({
-                type: "sessionAccepted",
-                sessionInfo: persistedState.sessionInfo,
-                currentdeviceId: stateManager.getState().deviceId,
-                blockchain: stateManager.getBlockchain() || "solana"
-            }, "sessionRestore");
-
-            if (restoreResult.success) {
-                console.log("✅ [Background] Successfully restored session to offscreen");
-                return { success: true, sessionInfo: persistedState.sessionInfo };
-            } else {
-                console.warn("❌ [Background] Failed to restore session to offscreen:", restoreResult.error);
-                return { success: false, error: restoreResult.error };
-            }
-        } else {
-            console.log("ℹ️ [Background] No valid session to restore");
-            await SessionPersistenceManager.clearSessionState();
-            return { success: true, sessionInfo: null };
-        }
-    } catch (error) {
-        console.error("[Background] Error during session restore:", error);
-        return { success: false, error: (error as Error).message };
-    }
-}
 
 // ===================================================================
 // INITIALIZATION AND CLEANUP
@@ -414,20 +337,11 @@ export default defineBackground(() => {
     // Initialize WebSocket connection
     initializeWebSocket();
 
-    // Clear any stale session state on extension startup
-    (async () => {
-        console.log("🧹 [Background] Extension starting up - clearing any stale session state");
-        await SessionPersistenceManager.clearSessionState();
-        console.log("✅ [Background] Extension ready with clean session state");
-    })();
+    // Start with fresh session state on extension startup
+    console.log("🔄 [Background] Extension starting up - sessions are ephemeral, starting fresh");
+    console.log("✅ [Background] Extension ready");
 
-    // Clean up session state when extension shuts down
-    if (chrome.runtime.onSuspend) {
-        chrome.runtime.onSuspend.addListener(async () => {
-            console.log("💤 [Background] Extension suspending - clearing session state");
-            await SessionPersistenceManager.clearSessionState();
-        });
-    }
+    // No need to clean up session state on shutdown since we don't persist it
 
     console.log("🎉 [Background] Background script initialized successfully");
 });

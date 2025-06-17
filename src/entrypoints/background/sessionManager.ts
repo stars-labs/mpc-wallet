@@ -17,68 +17,7 @@ import { WebSocketClient } from "./websocket";
 import { validateSessionProposal, validateSessionAcceptance } from "../../types/messages";
 import type { BackgroundToPopupMessage, OffscreenMessage } from "../../types/messages";
 
-/**
- * Manages session persistence across extension lifecycle
- */
-export class SessionPersistenceManager {
-    private static readonly STORAGE_KEY = 'mpc_wallet_session_state';
-    private static readonly MAX_AGE_MS = 30 * 60 * 1000; // 30 minutes
-
-    static async saveSessionState(sessionInfo: SessionInfo | null, dkgState: DkgState, meshStatus: MeshStatus) {
-        try {
-            const sessionState = {
-                sessionInfo,
-                dkgState,
-                meshStatus,
-                timestamp: Date.now()
-            };
-
-            await chrome.storage.local.set({ [this.STORAGE_KEY]: sessionState });
-            console.log("[SessionManager] Session state saved to storage");
-        } catch (error) {
-            console.error("[SessionManager] Failed to save session state:", error);
-        }
-    }
-
-    static async loadSessionState(): Promise<{ sessionInfo: SessionInfo | null; dkgState: DkgState; meshStatus: MeshStatus } | null> {
-        try {
-            const result = await chrome.storage.local.get(this.STORAGE_KEY);
-            const sessionState = result[this.STORAGE_KEY];
-
-            if (!sessionState) {
-                console.log("[SessionManager] No session state found in storage");
-                return null;
-            }
-
-            // Check if the session state is still valid (not expired)
-            const age = Date.now() - sessionState.timestamp;
-            if (age > this.MAX_AGE_MS) {
-                console.log("[SessionManager] Session state expired, clearing it");
-                await this.clearSessionState();
-                return null;
-            }
-
-            console.log("[SessionManager] Loaded session state from storage");
-            return {
-                sessionInfo: sessionState.sessionInfo,
-                dkgState: sessionState.dkgState,
-                meshStatus: sessionState.meshStatus
-            };
-        } catch (error) {
-            console.error("[SessionManager] Failed to load session state:", error);
-            return null;
-        }
-    }
-
-    static async clearSessionState() {
-        try {
-            await chrome.storage.local.remove(this.STORAGE_KEY);
-            console.log("[SessionManager] Cleared session state from storage");
-        } catch (error) {
-            console.error("[SessionManager] Failed to clear session state:", error);
-        }
-    }
-}
+// Session persistence removed - sessions are ephemeral for security
 
 /**
  * Handles MPC session lifecycle and coordination
@@ -88,17 +27,28 @@ export class SessionManager {
     private wsClient: WebSocketClient | null;
     private broadcastToPopup: (message: BackgroundToPopupMessage) => void;
     private sendToOffscreen: (message: OffscreenMessage, description: string) => Promise<{ success: boolean; error?: string }>;
+    private stateManager: any; // StateManager reference
 
     constructor(
         appState: AppState,
         wsClient: WebSocketClient | null,
         broadcastToPopup: (message: BackgroundToPopupMessage) => void,
-        sendToOffscreen: (message: OffscreenMessage, description: string) => Promise<{ success: boolean; error?: string }>
+        sendToOffscreen: (message: OffscreenMessage, description: string) => Promise<{ success: boolean; error?: string }>,
+        stateManager?: any
     ) {
         this.appState = appState;
         this.wsClient = wsClient;
         this.broadcastToPopup = broadcastToPopup;
         this.sendToOffscreen = sendToOffscreen;
+        this.stateManager = stateManager;
+    }
+
+    /**
+     * Update the WebSocket client reference (used when WebSocket reconnects)
+     */
+    updateWebSocketClient(wsClient: WebSocketClient | null): void {
+        this.wsClient = wsClient;
+        console.log("[SessionManager] WebSocket client reference updated");
     }
 
     /**
@@ -116,7 +66,7 @@ export class SessionManager {
     /**
      * Handle incoming session proposals
      */
-    handleSessionProposal(fromPeerId: string, proposalData: any) {
+    async handleSessionProposal(fromPeerId: string, proposalData: any) {
         console.log("[SessionManager] Processing session proposal from:", fromPeerId);
         console.log("[SessionManager] Proposal data:", {
             session_id: proposalData?.session_id,
@@ -144,35 +94,71 @@ export class SessionManager {
 
         console.log("[SessionManager] Session proposal validated:", sessionInfo);
 
+        // Get current device ID from StateManager if available
+        const currentDeviceId = this.stateManager ? this.stateManager.getState().deviceId : this.appState.deviceId;
+        
+        console.log("[SessionManager] Checking inclusion - currentDeviceId:", currentDeviceId, "participants:", sessionInfo.participants);
+        
         // Check if this peer is included in the session
-        if (sessionInfo.participants.includes(this.appState.deviceId)) {
+        if (sessionInfo.participants.includes(currentDeviceId)) {
             console.log("[SessionManager] This peer is included in session proposal");
 
+            // Get current invites from StateManager
+            const currentState = this.stateManager ? this.stateManager.getState() : this.appState;
+            const invites = [...currentState.invites];
+            
             // Check for existing invite
-            const existingInviteIndex = this.appState.invites.findIndex(inv =>
+            const existingInviteIndex = invites.findIndex(inv =>
                 inv.session_id === sessionInfo.session_id
             );
 
             if (existingInviteIndex !== -1) {
                 console.log("[SessionManager] Updating existing session invite");
-                this.appState.invites[existingInviteIndex] = sessionInfo;
+                invites[existingInviteIndex] = sessionInfo;
             } else {
                 console.log("[SessionManager] Adding new session invite");
-                this.appState.invites.push(sessionInfo);
+                invites.push(sessionInfo);
+            }
+            
+            // Update local state
+            this.appState.invites = invites;
+            
+            // Update StateManager with new invites
+            if (this.stateManager) {
+                this.stateManager.updateStateProperty('invites', invites);
+                // Also update the local appState to sync
+                this.appState = this.stateManager.getState();
             }
 
             // If this peer is the proposer, automatically accept and set up WebRTC
-            if (fromPeerId === this.appState.deviceId) {
+            if (fromPeerId === currentDeviceId) {
                 console.log("[SessionManager] This peer is the proposer, auto-accepting and setting up WebRTC");
 
-                this.appState.sessionInfo = { ...sessionInfo, status: "accepted" };
-                this.appState.invites = this.appState.invites.filter(inv => inv.session_id !== sessionInfo.session_id);
+                const acceptedSessionInfo = { ...sessionInfo, status: "accepted" as const };
+                const updatedInvites = invites.filter(inv => inv.session_id !== sessionInfo.session_id);
+                
+                // Update local state
+                this.appState.sessionInfo = acceptedSessionInfo;
+                this.appState.invites = updatedInvites;
+                
+                // Update StateManager with session changes
+                if (this.stateManager) {
+                    this.stateManager.updateState({
+                        sessionInfo: acceptedSessionInfo,
+                        invites: updatedInvites
+                    });
+                    // Sync local state
+                    this.appState = this.stateManager.getState();
+                }
+
+                // No persistence - sessions are ephemeral
 
                 // Forward to offscreen for WebRTC setup
                 this.sendToOffscreen({
                     type: "sessionAccepted",
                     sessionInfo: this.appState.sessionInfo,
-                    currentdeviceId: this.appState.deviceId
+                    currentdeviceId: this.appState.deviceId,
+                    blockchain: this.appState.blockchain || "solana"
                 }, "proposerWebRTCSetup");
             }
 
@@ -195,8 +181,13 @@ export class SessionManager {
     handleSessionResponse(fromPeerId: string, responseData: any) {
         console.log("[SessionManager] Processing session response from:", fromPeerId);
 
-        if (!validateSessionAcceptance(responseData)) {
+        // Validate WebSocket session response data
+        if (!responseData || 
+            typeof responseData.session_id !== 'string' || 
+            typeof responseData.accepted !== 'boolean' ||
+            responseData.websocket_msg_type !== 'SessionResponse') {
             console.error("[SessionManager] Invalid session response data:", responseData);
+            console.error("[SessionManager] Expected: session_id (string), accepted (boolean), websocket_msg_type='SessionResponse'");
             return;
         }
 
@@ -222,35 +213,38 @@ export class SessionManager {
                     session.accepted_devices.includes(participantId)
                 );
 
+                // Update the sessionInfo in appState if this is the active session
+                if (this.appState.sessionInfo && this.appState.sessionInfo.session_id === session_id) {
+                    this.appState.sessionInfo = { ...session };
+                    if (this.stateManager) {
+                        this.stateManager.updateStateProperty('sessionInfo', this.appState.sessionInfo);
+                    }
+                }
+                
                 if (allAccepted) {
                     console.log("[SessionManager] All participants have accepted the session! Notifying offscreen for mesh readiness.");
 
                     // Send updated session info to offscreen to trigger mesh readiness check
-                    // Only send if sessionInfo is available
-                    if (this.appState.sessionInfo) {
-                        const sessionAllAcceptedMessage: OffscreenMessage = {
-                            type: "sessionAllAccepted",
-                            sessionInfo: this.appState.sessionInfo,
-                            currentdeviceId: this.appState.deviceId,
-                            blockchain: this.appState.blockchain || "solana" // Use stored blockchain or default to solana
-                        };
+                    // Use the updated session object, not the potentially stale appState.sessionInfo
+                    const sessionAllAcceptedMessage: OffscreenMessage = {
+                        type: "sessionAllAccepted",
+                        sessionInfo: session,
+                        currentdeviceId: this.stateManager ? this.stateManager.getState().deviceId : this.appState.deviceId,
+                        blockchain: this.appState.blockchain || "solana" // Use stored blockchain or default to solana
+                    };
 
-                        this.sendToOffscreen(sessionAllAcceptedMessage, "sessionAllAccepted");
-                    }
+                    this.sendToOffscreen(sessionAllAcceptedMessage, "sessionAllAccepted");
                 } else {
                     console.log(`[SessionManager] Not all participants accepted yet.`);
 
                     // Still send update to offscreen for tracking
-                    // Only send if sessionInfo is available
-                    if (this.appState.sessionInfo) {
-                        const sessionResponseUpdateMessage: OffscreenMessage = {
-                            type: "sessionResponseUpdate",
-                            sessionInfo: this.appState.sessionInfo,
-                            currentdeviceId: this.appState.deviceId
-                        };
+                    const sessionResponseUpdateMessage: OffscreenMessage = {
+                        type: "sessionResponseUpdate",
+                        sessionInfo: session,
+                        currentdeviceId: this.stateManager ? this.stateManager.getState().deviceId : this.appState.deviceId
+                    };
 
-                        this.sendToOffscreen(sessionResponseUpdateMessage, "sessionResponseUpdate");
-                    }
+                    this.sendToOffscreen(sessionResponseUpdateMessage, "sessionResponseUpdate");
                 }
             }
 
@@ -273,31 +267,50 @@ export class SessionManager {
     async acceptSession(sessionId: string, blockchain: "ethereum" | "solana" = "solana"): Promise<{ success: boolean; error?: string }> {
         console.log(`[SessionManager] Accepting session: ${sessionId} with blockchain: ${blockchain}`);
 
-        const sessionIndex = this.appState.invites.findIndex(inv => inv.session_id === sessionId);
+        // Get current state from StateManager
+        const currentState = this.stateManager ? this.stateManager.getState() : this.appState;
+        const invites = [...currentState.invites];
+        
+        const sessionIndex = invites.findIndex(inv => inv.session_id === sessionId);
 
         if (sessionIndex === -1) {
+            console.error(`[SessionManager] Session ${sessionId} not found in invites:`, invites);
             return { success: false, error: "Session not found in invites" };
         }
 
-        const session = this.appState.invites[sessionIndex];
+        const session = invites[sessionIndex];
+        console.log(`[SessionManager] Found session to accept:`, session);
 
         // Store blockchain selection
         this.appState.blockchain = blockchain;
 
-        // Move session to active and update status
-        this.appState.sessionInfo = { ...session, status: "accepted" };
-        this.appState.invites.splice(sessionIndex, 1);
-
-        // Persist session state
-        try {
-            await SessionPersistenceManager.saveSessionState(
-                this.appState.sessionInfo,
-                this.appState.dkgState,
-                this.appState.meshStatus
-            );
-        } catch (error) {
-            console.warn("[SessionManager] Failed to persist session state:", error);
+        // Get current device ID
+        const currentDeviceId = this.stateManager ? this.stateManager.getState().deviceId : this.appState.deviceId;
+        
+        // Move session to active and update status, adding current device to accepted_devices
+        const newSessionInfo = { 
+            ...session, 
+            status: "accepted" as const,
+            accepted_devices: [...new Set([...session.accepted_devices, currentDeviceId])] // Add current device and dedupe
+        };
+        invites.splice(sessionIndex, 1);
+        
+        // Update local state
+        this.appState.sessionInfo = newSessionInfo;
+        this.appState.invites = invites;
+        
+        // Update StateManager with session changes
+        if (this.stateManager) {
+            this.stateManager.updateState({
+                sessionInfo: newSessionInfo,
+                invites: invites,
+                blockchain: blockchain
+            });
+            // Sync local state with StateManager
+            this.appState = this.stateManager.getState();
         }
+
+        // No persistence - sessions are ephemeral
 
         // Send acceptance message to other participants
         const acceptanceData = {
@@ -308,7 +321,8 @@ export class SessionManager {
 
         if (this.wsClient?.getReadyState() === WebSocket.OPEN) {
             // Send to all other participants
-            const otherParticipants = session.participants.filter(p => p !== this.appState.deviceId);
+            const currentDeviceId = this.stateManager ? this.stateManager.getState().deviceId : this.appState.deviceId;
+            const otherParticipants = newSessionInfo.participants.filter(p => p !== currentDeviceId);
 
             try {
                 await Promise.all(otherParticipants.map(async (peerId) => {
@@ -325,16 +339,19 @@ export class SessionManager {
                 // Forward session info to offscreen for WebRTC setup
                 console.log("[SessionManager] Forwarding session info to offscreen for WebRTC setup with blockchain:", blockchain);
 
-                if (this.appState.sessionInfo) {
-                    await this.sendToOffscreen({
-                        type: "sessionAccepted",
-                        sessionInfo: this.appState.sessionInfo,
-                        currentdeviceId: this.appState.deviceId,
-                        blockchain: blockchain
-                    }, "sessionAccepted");
-                } else {
-                    console.error("[SessionManager] Cannot forward session info: sessionInfo is null");
-                }
+                await this.sendToOffscreen({
+                    type: "sessionAccepted",
+                    sessionInfo: newSessionInfo,
+                    currentdeviceId: this.stateManager ? this.stateManager.getState().deviceId : this.appState.deviceId,
+                    blockchain: blockchain
+                }, "sessionAccepted");
+                
+                // Broadcast session update to popup to ensure UI updates
+                this.broadcastToPopup({
+                    type: "sessionUpdate",
+                    sessionInfo: newSessionInfo,
+                    invites: invites
+                } as any);
 
                 return { success: true };
             } catch (error) {
@@ -352,18 +369,27 @@ export class SessionManager {
         sessionId: string,
         totalParticipants: number,
         threshold: number,
-        participants: string[]
+        participants: string[],
+        blockchain: "ethereum" | "solana" = "solana"
     ): Promise<{ success: boolean; error?: string }> {
-        console.log(`[SessionManager] Proposing session: ${sessionId}`);
+        console.log(`[SessionManager] Proposing session: ${sessionId} with blockchain: ${blockchain}`);
 
         if (!this.wsClient || this.wsClient.getReadyState() !== WebSocket.OPEN) {
             return { success: false, error: "WebSocket not connected" };
         }
 
+        const currentDeviceId = this.stateManager ? this.stateManager.getState().deviceId : this.appState.deviceId;
+        
+        // Store blockchain selection
+        this.appState.blockchain = blockchain;
+        if (this.stateManager) {
+            this.stateManager.updateState({ blockchain });
+        }
+        
         const proposalData = {
             websocket_msg_type: "SessionProposal",
             session_id: sessionId,
-            proposer_id: this.appState.deviceId,
+            proposer_id: currentDeviceId,
             participants: participants,
             threshold: threshold,
             total: totalParticipants
@@ -371,7 +397,7 @@ export class SessionManager {
 
         try {
             // Send proposal to all other participants
-            const otherParticipants = participants.filter(p => p !== this.appState.deviceId);
+            const otherParticipants = participants.filter(p => p !== currentDeviceId);
 
             await Promise.all(otherParticipants.map(async (peerId) => {
                 try {
@@ -383,7 +409,7 @@ export class SessionManager {
             }));
 
             // Handle our own proposal (auto-accept for proposer)
-            this.handleSessionProposal(this.appState.deviceId, proposalData);
+            await this.handleSessionProposal(currentDeviceId, proposalData);
 
             return { success: true };
         } catch (error) {

@@ -148,10 +148,8 @@ export class PopupMessageHandler {
                     await this.handleRequestInitMessage(sendResponse);
                     break;
 
-                case "requestSessionRestore":
-                    console.log("🔄 [PopupMessageHandler] REQUEST_SESSION_RESTORE: Restoring session state");
-                    await this.handleSessionRestoreRequest(sendResponse);
-                    break;
+                // Session restore removed - sessions are ephemeral for security
+                // case "requestSessionRestore": removed
 
                 case MESSAGE_TYPES.PROPOSE_SESSION:
                     console.log("🔐 [PopupMessageHandler] PROPOSE_SESSION: Creating new MPC session");
@@ -347,8 +345,7 @@ export class PopupMessageHandler {
             };
         }
 
-        if (messageType === 'LIST_DEVICES' || messageType === 'requestInit' ||
-            messageType === 'requestSessionRestore') {
+        if (messageType === 'LIST_DEVICES' || messageType === 'requestInit') {
             return {
                 category: 'ui_request',
                 categoryInfo: {
@@ -416,25 +413,20 @@ export class PopupMessageHandler {
         sendResponse(result);
     }
 
-    private async handleSessionRestoreRequest(sendResponse: (response: any) => void): Promise<void> {
-        console.log("[PopupMessageHandler] Session restore request received");
-        sendResponse({
-            success: true,
-            sessionInfo: this.stateManager.getSessionInfo(),
-            dkgState: this.stateManager.getDkgState(),
-            meshStatus: this.stateManager.getMeshStatus()
-        });
-    }
+    // Session restore removed - sessions are ephemeral for security
 
     private async handleProposeSessionRequest(message: any, sendResponse: (response: any) => void): Promise<void> {
         if ('session_id' in message && 'total' in message && 'threshold' in message && 'participants' in message) {
             console.log("[PopupMessageHandler] Proposing session:", message.session_id);
+            
+            const blockchain = message.blockchain || "solana";
 
             const result = await this.sessionManager.proposeSession(
                 message.session_id,
                 message.total,
                 message.threshold,
-                message.participants
+                message.participants,
+                blockchain
             );
 
             sendResponse(result);
@@ -446,6 +438,12 @@ export class PopupMessageHandler {
     private async handleAcceptSessionRequest(message: any, sendResponse: (response: any) => void): Promise<void> {
         if ('session_id' in message && 'accepted' in message) {
             console.log("[PopupMessageHandler] Session acceptance:", message.session_id, message.accepted);
+            
+            // Log current state for debugging
+            const currentInvites = this.stateManager.getInvites();
+            const currentSessionInfo = this.stateManager.getSessionInfo();
+            console.log("[PopupMessageHandler] Current invites:", currentInvites);
+            console.log("[PopupMessageHandler] Current sessionInfo:", currentSessionInfo);
 
             if (message.accepted) {
                 const blockchain = message.blockchain || "solana";

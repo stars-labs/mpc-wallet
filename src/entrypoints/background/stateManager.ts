@@ -100,16 +100,12 @@ export class StateManager {
      */
     private async persistState(): Promise<void> {
         try {
-            // Only persist important state, not transient connection states
+            // Only persist UI preferences and device info, NOT session data
             const stateToPersist = {
                 deviceId: this.appState.deviceId,
                 chain: this.appState.chain,
                 curve: this.appState.curve,
-                dkgAddress: this.appState.dkgAddress,
-                dkgState: this.appState.dkgState,
-                sessionInfo: this.appState.sessionInfo,
-                threshold: this.appState.threshold,
-                totalParticipants: this.appState.totalParticipants,
+                // Don't persist: sessionInfo, invites, dkgState, dkgAddress, threshold, totalParticipants
                 // Don't persist: wsConnected, meshStatus, webrtcConnections, connecteddevices
             };
 
@@ -150,6 +146,18 @@ export class StateManager {
         this.appState[key] = value;
         // Persist state changes
         this.persistState();
+        
+        // Broadcast the specific update based on the property
+        if (key === 'invites' || key === 'sessionInfo') {
+            this.broadcastToPopupPorts({
+                type: "sessionUpdate",
+                sessionInfo: this.appState.sessionInfo,
+                invites: this.appState.invites
+            } as any);
+        } else {
+            // For other properties, broadcast the full state
+            this.broadcastCurrentState();
+        }
     }
 
     /**
@@ -176,19 +184,34 @@ export class StateManager {
      */
     updateConnectedDevices(devices: string[]): void {
         console.log(`[StateManager] Updating connected devices:`, devices);
+        
+        // Validate device ID exists before filtering
+        if (!this.appState.deviceId) {
+            console.warn("[StateManager] No device ID set, cannot filter connected devices properly");
+            return;
+        }
+        
         // Exclude current device from connected devices list
-        this.appState.connecteddevices = devices.filter(deviceId => deviceId !== this.appState.deviceId);
-
-        console.log(`[StateManager] Updated connected devices:`, this.appState.connecteddevices);
-
-        // Broadcast device list update
-        this.broadcastToPopupPorts({
-            type: "deviceList",
-            devices: this.appState.connecteddevices
-        });
-
-        // Persist the devices update
-        this.persistState();
+        const filteredDevices = devices.filter(deviceId => deviceId !== this.appState.deviceId);
+        
+        // Only update if the list has actually changed
+        const devicesChanged = JSON.stringify(filteredDevices) !== JSON.stringify(this.appState.connecteddevices);
+        
+        if (devicesChanged) {
+            this.appState.connecteddevices = filteredDevices;
+            console.log(`[StateManager] Connected devices changed:`, this.appState.connecteddevices);
+            
+            // Broadcast device list update
+            this.broadcastToPopupPorts({
+                type: "deviceList",
+                devices: this.appState.connecteddevices
+            });
+            
+            // Persist the devices update
+            this.persistState();
+        } else {
+            console.log(`[StateManager] Connected devices unchanged:`, this.appState.connecteddevices);
+        }
     }
 
     /**
@@ -307,6 +330,8 @@ export class StateManager {
                 console.log("[StateManager] Received mesh status update from offscreen:", payload);
                 this.appState.meshStatus = payload.status || { type: MeshStatusType.Incomplete };
 
+                // No persistence - sessions are ephemeral
+
                 // Broadcast mesh status update directly to popup
                 this.broadcastToPopupPorts({
                     type: "meshStatusUpdate",
@@ -317,6 +342,8 @@ export class StateManager {
             case "dkgStateUpdate":
                 console.log("[StateManager] Received DKG state update from offscreen:", payload);
                 this.appState.dkgState = payload.state || DkgState.Idle;
+
+                // No persistence - sessions are ephemeral
 
                 // Auto-fetch DKG address when DKG completes (business logic moved from popup)
                 if (this.appState.dkgState === DkgState.Complete && this.appState.sessionInfo) {

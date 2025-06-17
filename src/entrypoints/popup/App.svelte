@@ -14,6 +14,9 @@
 
     // Keep connection to background script
     let port: chrome.runtime.Port;
+    
+    // UI state flags
+    let acceptingSession = false; // Prevent multiple session accept clicks
 
     // Local storage for UI preferences persistence (not real-time connection state)
     const UI_STATE_KEY = "mpc_wallet_ui_preferences";
@@ -221,12 +224,8 @@
                 console.log("[UI] Processing wsMessage:", message);
                 if (message.message) {
                     console.log("[UI] Server message:", message.message);
-                    if (message.message.type === "devices") {
-                        appState.connecteddevices = [
-                            ...(message.message.devices || []),
-                        ];
-                        appState = { ...appState };
-                    }
+                    // Device list updates are handled via "deviceList" messages
+                    // No need to handle them here
                 }
                 break;
 
@@ -240,7 +239,13 @@
 
             case "deviceList":
                 console.log("[UI] Processing deviceList:", message);
-                appState.connecteddevices = [...(message.devices || [])];
+                // Only update if we have a valid devices array
+                if (Array.isArray(message.devices)) {
+                    appState.connecteddevices = [...message.devices];
+                    console.log("[UI] Updated connected devices:", appState.connecteddevices);
+                } else {
+                    console.warn("[UI] Invalid device list received:", message.devices);
+                }
                 appState = { ...appState };
                 break;
 
@@ -608,6 +613,7 @@
             total: appState.totalParticipants,
             threshold: appState.threshold,
             participants: allParticipants,
+            blockchain: appState.chain, // Include blockchain selection
         });
         console.log(
             "[UI] Proposing session:",
@@ -619,11 +625,41 @@
     }
 
     function acceptInvite(sessionId: string) {
+        // Prevent multiple clicks
+        if (acceptingSession) {
+            console.warn("[UI] Already processing a session acceptance");
+            return;
+        }
+        
+        // Check if invite still exists before accepting
+        const invite = appState.invites.find(inv => inv.session_id === sessionId);
+        if (!invite) {
+            console.warn("[UI] Session invite not found:", sessionId);
+            return;
+        }
+        
+        // Check if we already have an active session
+        if (appState.sessionInfo && appState.sessionInfo.session_id === sessionId) {
+            console.warn("[UI] Session already accepted:", sessionId);
+            return;
+        }
+        
+        // Set flag to prevent multiple clicks
+        acceptingSession = true;
+        
         chrome.runtime.sendMessage({
             type: "acceptSession",
             session_id: sessionId,
             accepted: true,
             blockchain: appState.chain, // Include blockchain selection
+        }, (response) => {
+            acceptingSession = false; // Reset flag
+            console.log("[UI] Accept session response:", response);
+            if (!response || !response.success) {
+                console.error("[UI] Failed to accept session:", response?.error || "Unknown error");
+                // Restore the invite if acceptance failed
+                appState.invites = [...appState.invites, invite];
+            }
         });
         console.log(
             "[UI] Accepting session invite:",
@@ -631,6 +667,21 @@
             "with blockchain:",
             appState.chain,
         );
+        
+        // Optimistically update UI to show processing state
+        appState.invites = appState.invites.filter(inv => inv.session_id !== sessionId);
+    }
+
+    function rejectInvite(sessionId: string) {
+        // Remove the invite from local state
+        appState.invites = appState.invites.filter(inv => inv.session_id !== sessionId);
+        console.log("[UI] Rejected session invite:", sessionId);
+        
+        // Optionally send rejection to background (for future implementation)
+        chrome.runtime.sendMessage({
+            type: "rejectSession",
+            session_id: sessionId
+        });
     }
 
     // Add function to send direct message for testing
@@ -906,92 +957,198 @@
 
         {#if appState.sessionInfo}
             <!-- Active Session -->
-            <div class="bg-green-50 border border-green-200 rounded p-3 mb-3">
-                <h3 class="font-bold text-green-800 mb-2">Active Session</h3>
-                <div class="grid grid-cols-2 gap-2 text-sm">
-                    <div>
-                        <strong>ID:</strong>
-                        {appState.sessionInfo.session_id}
-                    </div>
-                    <div>
-                        <strong>Proposer:</strong>
-                        {appState.sessionInfo.proposer_id}
-                    </div>
-                    <div>
-                        <strong>Threshold:</strong>
-                        {appState.sessionInfo.threshold} of
-                        {appState.sessionInfo.total}
-                    </div>
-                    <div>
-                        <strong>Mesh:</strong>
-                        {MeshStatusType[appState.meshStatus?.type] || "Unknown"}
-                    </div>
-                    <div>
-                        <strong>DKG:</strong>
-                        {DkgState[appState.dkgState] || "Unknown"}
+            <div class="bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-green-300 rounded-lg p-4 shadow-md">
+                <div class="flex items-center justify-between mb-3">
+                    <h3 class="text-lg font-bold text-green-800 flex items-center">
+                        <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                        </svg>
+                        Active Session
+                    </h3>
+                    <div class="flex items-center space-x-2">
+                        {#if appState.meshStatus?.type === MeshStatusType.Ready}
+                            <span class="text-xs bg-green-100 text-green-800 px-2 py-1 rounded-full font-semibold">
+                                Mesh Ready
+                            </span>
+                        {:else if appState.meshStatus?.type === MeshStatusType.PartiallyReady}
+                            <span class="text-xs bg-yellow-100 text-yellow-800 px-2 py-1 rounded-full font-semibold animate-pulse">
+                                Connecting...
+                            </span>
+                        {:else}
+                            <span class="text-xs bg-red-100 text-red-800 px-2 py-1 rounded-full font-semibold">
+                                Not Ready
+                            </span>
+                        {/if}
                     </div>
                 </div>
-                <div class="mt-2">
-                    <span class="font-bold">Participants:</span>
-                    <div class="flex flex-wrap gap-1 mt-1">
+                
+                <div class="bg-white bg-opacity-70 rounded p-3 mb-3">
+                    <div class="grid grid-cols-2 gap-3 text-sm">
+                        <div>
+                            <span class="text-gray-600">Session ID:</span>
+                            <p class="font-mono text-xs bg-gray-100 px-2 py-1 rounded mt-1 truncate">
+                                {appState.sessionInfo.session_id}
+                            </p>
+                        </div>
+                        <div>
+                            <span class="text-gray-600">Threshold:</span>
+                            <p class="font-bold text-green-700 text-lg">
+                                {appState.sessionInfo.threshold} of {appState.sessionInfo.total}
+                            </p>
+                        </div>
+                        <div>
+                            <span class="text-gray-600">DKG Status:</span>
+                            <p class="font-semibold {appState.dkgState === DkgState.Complete ? 'text-green-700' : appState.dkgState === DkgState.Failed ? 'text-red-700' : 'text-yellow-700'}">
+                                {DkgState[appState.dkgState] || "Unknown"}
+                            </p>
+                        </div>
+                        <div>
+                            <span class="text-gray-600">Proposer:</span>
+                            <p class="font-mono text-xs truncate {appState.sessionInfo.proposer_id === appState.deviceId ? 'text-blue-700 font-semibold' : ''}">
+                                {appState.sessionInfo.proposer_id}{appState.sessionInfo.proposer_id === appState.deviceId ? ' (you)' : ''}
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="mb-3">
+                    <div class="flex justify-between items-center mb-2">
+                        <span class="text-sm font-semibold text-gray-700">Participants:</span>
+                        <span class="text-xs text-gray-500">
+                            {appState.sessionInfo.accepted_devices?.length || 0}/{appState.sessionInfo.participants.length} accepted
+                        </span>
+                    </div>
+                    <div class="space-y-1">
                         {#each appState.sessionInfo.participants as participant}
-                            <span
-                                class="text-xs bg-gray-100 px-2 py-1 rounded {participant ===
-                                appState.deviceId
-                                    ? 'bg-blue-100'
-                                    : ''}"
-                            >
-                                {participant}{participant === appState.deviceId
-                                    ? " (you)"
-                                    : ""}
-                            </span>
+                            {@const isAccepted = appState.sessionInfo.accepted_devices?.includes(participant)}
+                            {@const isConnected = appState.webrtcConnections[participant]}
+                            <div class="flex items-center justify-between p-2 rounded {participant === appState.deviceId ? 'bg-blue-50' : 'bg-gray-50'}">
+                                <span class="text-sm font-mono {participant === appState.deviceId ? 'text-blue-700 font-semibold' : ''}">
+                                    {participant}{participant === appState.deviceId ? ' (you)' : ''}
+                                </span>
+                                <div class="flex items-center space-x-2">
+                                    {#if isAccepted}
+                                        <span class="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded">
+                                            Accepted
+                                        </span>
+                                    {:else}
+                                        <span class="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded">
+                                            Pending
+                                        </span>
+                                    {/if}
+                                    {#if participant !== appState.deviceId}
+                                        {#if isConnected}
+                                            <span class="w-2 h-2 bg-green-500 rounded-full" title="Connected"></span>
+                                        {:else}
+                                            <span class="w-2 h-2 bg-gray-300 rounded-full" title="Not connected"></span>
+                                        {/if}
+                                    {/if}
+                                </div>
+                            </div>
                         {/each}
                     </div>
                 </div>
-                <div class="mt-2">
-                    <span class="font-bold">Accepted:</span>
-                    <div class="flex flex-wrap gap-1 mt-1">
-                        {#each appState.sessionInfo.accepted_devices || [] as accepted}
-                            <span
-                                class="text-xs bg-green-100 text-green-800 px-2 py-1 rounded"
-                            >
-                                {accepted}
-                            </span>
-                        {/each}
+
+                {#if appState.meshStatus?.type === MeshStatusType.Ready && appState.dkgState === DkgState.Idle}
+                    <div class="border-t border-green-200 pt-3">
+                        <p class="text-sm text-gray-600 mb-2">
+                            All participants are connected. Ready to start the Distributed Key Generation process.
+                        </p>
+                        <button class="w-full bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white font-bold py-2 px-4 rounded-lg shadow-md">
+                            Start DKG Process
+                        </button>
                     </div>
-                </div>
+                {:else if appState.dkgState === DkgState.Complete}
+                    <div class="border-t border-green-200 pt-3">
+                        <p class="text-sm text-green-700 font-semibold">
+                            ✅ DKG Complete - Ready for threshold signatures
+                        </p>
+                    </div>
+                {/if}
             </div>
         {:else if appState.invites && appState.invites.length > 0}
             <!-- Pending Invitations -->
             <div class="space-y-3">
                 {#each appState.invites as invite}
-                    <div
-                        class="bg-yellow-50 border border-yellow-200 rounded p-3"
-                    >
-                        <h3 class="font-bold text-yellow-800 mb-2">
-                            Session Invitation
-                        </h3>
-                        <div class="grid grid-cols-2 gap-2 text-sm mb-3">
-                            <div><strong>ID:</strong> {invite.session_id}</div>
-                            <div>
-                                <strong>From:</strong>
-                                {invite.proposer_id}
-                            </div>
-                            <div>
-                                <strong>Type:</strong>
-                                {invite.threshold} of {invite.total}
-                            </div>
-                            <div>
-                                <strong>Participants:</strong>
-                                {invite.participants?.length || 0}
+                    <div class="bg-gradient-to-r from-yellow-50 to-orange-50 border-2 border-yellow-300 rounded-lg p-4 shadow-lg">
+                        <div class="flex items-center justify-between mb-3">
+                            <h3 class="text-lg font-bold text-yellow-900 flex items-center">
+                                <svg class="w-5 h-5 mr-2 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"></path>
+                                </svg>
+                                New Session Invitation
+                            </h3>
+                            <span class="text-xs text-gray-500">
+                                {new Date().toLocaleTimeString()}
+                            </span>
+                        </div>
+                        
+                        <div class="bg-white bg-opacity-70 rounded p-3 mb-3">
+                            <div class="text-sm space-y-2">
+                                <div class="flex justify-between">
+                                    <span class="font-semibold text-gray-600">Session ID:</span>
+                                    <span class="font-mono text-xs bg-gray-100 px-2 py-1 rounded">{invite.session_id}</span>
+                                </div>
+                                <div class="flex justify-between">
+                                    <span class="font-semibold text-gray-600">Proposer:</span>
+                                    <span class="font-mono text-xs {invite.proposer_id === appState.deviceId ? 'bg-blue-100 text-blue-800' : 'bg-gray-100'} px-2 py-1 rounded">
+                                        {invite.proposer_id}{invite.proposer_id === appState.deviceId ? ' (you)' : ''}
+                                    </span>
+                                </div>
+                                <div class="flex justify-between">
+                                    <span class="font-semibold text-gray-600">Threshold:</span>
+                                    <span class="font-bold text-orange-600">{invite.threshold} of {invite.total}</span>
+                                </div>
                             </div>
                         </div>
-                        <button
-                            class="w-full bg-green-500 hover:bg-green-700 text-white font-bold py-2 px-4 rounded"
-                            on:click={() => acceptInvite(invite.session_id)}
-                        >
-                            Accept Invitation
-                        </button>
+
+                        <div class="mb-3">
+                            <p class="text-sm font-semibold text-gray-700 mb-2">Participants ({invite.participants?.length || 0}):</p>
+                            <div class="flex flex-wrap gap-1">
+                                {#each invite.participants || [] as participant}
+                                    <span class="text-xs px-2 py-1 rounded-full {participant === appState.deviceId ? 'bg-blue-100 text-blue-800 font-semibold' : 'bg-gray-100 text-gray-700'}">
+                                        {participant}{participant === appState.deviceId ? ' (you)' : ''}
+                                    </span>
+                                {/each}
+                            </div>
+                        </div>
+
+                        <div class="border-t border-yellow-200 pt-3">
+                            <p class="text-sm text-gray-600 mb-3">
+                                You have been invited to join a {invite.threshold}-of-{invite.total} threshold signature session. 
+                                This will allow any {invite.threshold} participants to create valid signatures together.
+                            </p>
+                            
+                            <div class="flex gap-2">
+                                <button
+                                    class="flex-1 bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transform transition hover:scale-105 flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
+                                    on:click={() => acceptInvite(invite.session_id)}
+                                    disabled={acceptingSession}
+                                >
+                                    {#if acceptingSession}
+                                        <svg class="animate-spin h-5 w-5 mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                        </svg>
+                                        Processing...
+                                    {:else}
+                                        <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                                        </svg>
+                                        Accept & Join
+                                    {/if}
+                                </button>
+                                <button
+                                    class="flex-1 bg-gray-300 hover:bg-gray-400 text-gray-700 font-bold py-2 px-4 rounded-lg shadow-md transform transition hover:scale-105"
+                                    on:click={() => rejectInvite(invite.session_id)}
+                                >
+                                    <svg class="w-5 h-5 mr-2 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                                    </svg>
+                                    Decline
+                                </button>
+                            </div>
+                        </div>
                     </div>
                 {/each}
             </div>

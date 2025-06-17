@@ -47,6 +47,14 @@ export class WebSocketManager {
     }
 
     /**
+     * Update the session manager reference (used when session is restored)
+     */
+    updateSessionManager(sessionManager: SessionManager): void {
+        this.sessionManager = sessionManager;
+        console.log("[WebSocketManager] Session manager reference updated");
+    }
+
+    /**
      * Initialize WebSocket connection with URL and device ID
      */
     async initialize(url: string, deviceId: string): Promise<void> {
@@ -126,6 +134,11 @@ export class WebSocketManager {
             console.log("[WebSocketManager] Broadcasting full state update:", stateUpdate);
             this.broadcastToPopup(stateUpdate as any);
 
+            // Update SessionManager's WebSocket client reference
+            if (this.sessionManager) {
+                this.sessionManager.updateWebSocketClient(this.wsClient);
+            }
+
             // Register with server
             console.log("[WebSocketManager] Registering with server as peer:", this.appState.deviceId);
             try {
@@ -135,16 +148,25 @@ export class WebSocketManager {
                 console.error("[WebSocketManager] Error during registration:", regError);
             }
 
-            // Request initial peer list with delay to ensure registration is processed
-            setTimeout(() => {
-                console.log("[WebSocketManager] Requesting initial peer list from server");
+            // Request initial peer list with delay and retry logic
+            let retryCount = 0;
+            const maxRetries = 3;
+            const requestDeviceList = () => {
+                console.log(`[WebSocketManager] Requesting peer list from server (attempt ${retryCount + 1}/${maxRetries})`);
                 if (this.wsClient && this.wsClient.getReadyState() === WebSocket.OPEN) {
                     this.wsClient.listdevices();
-                    console.log("[WebSocketManager] Initial peer list request sent successfully");
+                    console.log("[WebSocketManager] Peer list request sent successfully");
+                } else if (retryCount < maxRetries - 1) {
+                    retryCount++;
+                    console.warn("[WebSocketManager] WebSocket not ready, retrying in 1 second...");
+                    setTimeout(requestDeviceList, 1000);
                 } else {
-                    console.warn("[WebSocketManager] WebSocket not ready for peer list request");
+                    console.error("[WebSocketManager] Failed to request peer list after all retries");
                 }
-            }, 1000); // 1 second delay
+            };
+            
+            // Initial delay to ensure registration is processed
+            setTimeout(requestDeviceList, 1500); // 1.5 second initial delay
         });
 
         // Handle connection close
@@ -244,23 +266,17 @@ export class WebSocketManager {
 
         // Use StateManager to update and persist connected devices
         if (this.stateManager) {
+            // StateManager will handle filtering, persistence, and broadcasting
             this.stateManager.updateConnectedDevices(deviceList);
         } else {
+            // Fallback if no StateManager (shouldn't happen in normal operation)
             this.appState.connecteddevices = connectedDevices;
+            // Only broadcast device list update, not full state
+            this.broadcastToPopup({ type: "deviceList", devices: connectedDevices });
         }
 
         console.log(`[WebSocketManager] Updated peer list from server (${messageType}):`, deviceList);
         console.log(`[WebSocketManager] Connected devices (excluding self):`, connectedDevices);
-
-        // Broadcast peer list update (excluding self)
-        this.broadcastToPopup({ type: "deviceList", devices: connectedDevices });
-
-        // Also broadcast updated state
-        const deviceListState: InitialStateMessage = {
-            type: "initialState",
-            ...this.appState
-        };
-        this.broadcastToPopup(deviceListState as any);
     }
 
     /**
@@ -295,7 +311,9 @@ export class WebSocketManager {
             case "SessionProposal":
                 console.log("[WebSocketManager] Session proposal received:", data);
                 // Handle session proposal
-                this.sessionManager.handleSessionProposal(msg.from, data);
+                this.sessionManager.handleSessionProposal(msg.from, data).catch(error => {
+                    console.error("[WebSocketManager] Error handling session proposal:", error);
+                });
                 break;
 
             case "SessionResponse":
