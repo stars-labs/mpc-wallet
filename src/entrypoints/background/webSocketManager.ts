@@ -65,7 +65,7 @@ export class WebSocketManager {
 
         } catch (error) {
             console.error("[WebSocketManager] Failed to initialize WebSocket:", error);
-            
+
             // Use StateManager to update and persist WebSocket status
             if (this.stateManager) {
                 this.stateManager.updateWebSocketStatus(false, error instanceof Error ? error.message : "Unknown error");
@@ -106,7 +106,7 @@ export class WebSocketManager {
         // Handle connection open
         this.wsClient.onOpen(() => {
             console.log("[WebSocketManager] WebSocket onOpen event triggered - connection established");
-            
+
             // Use StateManager to update and persist WebSocket status
             if (this.stateManager) {
                 this.stateManager.updateWebSocketStatus(true);
@@ -150,7 +150,7 @@ export class WebSocketManager {
         // Handle connection close
         this.wsClient.onClose((event) => {
             console.log("[WebSocketManager] WebSocket onClose event triggered, event:", event);
-            
+
             // Use StateManager to update and persist WebSocket status
             if (this.stateManager) {
                 this.stateManager.updateWebSocketStatus(false, `Connection closed: ${event.code} ${event.reason}`);
@@ -173,7 +173,7 @@ export class WebSocketManager {
         // Handle connection errors
         this.wsClient.onError((error) => {
             console.error("[WebSocketManager] WebSocket onError event triggered, error:", error);
-            
+
             // Use StateManager to update and persist WebSocket status
             if (this.stateManager) {
                 this.stateManager.updateWebSocketStatus(false, error.toString());
@@ -238,17 +238,17 @@ export class WebSocketManager {
     private handleDeviceListMessage(msg: ServerMsg & { type: "devices" | "DEVICES" }, messageType: string): void {
         const deviceList = msg.devices || [];
         this.devices = deviceList;
-        
+
         // Exclude current peer from connected devices list
         const connectedDevices = deviceList.filter((deviceId: string) => deviceId !== this.appState.deviceId);
-        
+
         // Use StateManager to update and persist connected devices
         if (this.stateManager) {
             this.stateManager.updateConnectedDevices(deviceList);
         } else {
             this.appState.connecteddevices = connectedDevices;
         }
-        
+
         console.log(`[WebSocketManager] Updated peer list from server (${messageType}):`, deviceList);
         console.log(`[WebSocketManager] Connected devices (excluding self):`, connectedDevices);
 

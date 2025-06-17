@@ -104,6 +104,7 @@ export type OffscreenToBackgroundMessage = BaseMessage & (
     | { type: 'dkgStateUpdate'; state: DkgState }
     | { type: 'relayViaWs'; to: string; data: any }
     | { type: 'webrtcMessage'; fromdeviceId: string; message: any }
+    | { type: 'log'; payload: { message: string; source: string } }
 );
 
 // Add the missing InitialStateMessage type

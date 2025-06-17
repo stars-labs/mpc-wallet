@@ -164,9 +164,10 @@ function setupPopupConnections(): void {
 function setupMessageHandlers(): void {
     chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) => {
         // Enhanced logging for message routing with RPC detection
-        const senderType = sender.tab ? 'content-script' : (sender.url?.includes('popup') ? 'popup' : (sender.url?.includes('offscreen') ? 'offscreen' : 'unknown'));
+        const isOffscreenSender = sender.url?.includes('offscreen') || sender.url?.includes('offscreen.html');
+        const senderType = sender.tab ? 'content-script' : (sender.url?.includes('popup') ? 'popup' : (isOffscreenSender ? 'offscreen' : 'unknown'));
         const tabInfo = sender.tab ? `tab-${sender.tab.id}` : 'no-tab';
-        
+
         console.log("┌─────────────────────────────────────────────────────────────────");
         console.log(`│ [Background Router] 📨 Message Received`);
         console.log(`│ Type: ${(message as any)?.type || 'unknown'}`);
@@ -186,12 +187,12 @@ function setupMessageHandlers(): void {
         (async () => {
             const startTime = Date.now();
             const messageType = (message as any).type;
-            
+
             // Detect if this is an RPC message for special logging
             const isRpc = isRpcMessage(message as PopupToBackgroundMessage);
             const rpcMethod = isRpc ? (message as any).payload?.method : null;
             const rpcId = isRpc ? (message as any).payload?.id : null;
-            
+
             try {
                 if (isRpc) {
                     console.log(`🔄 [Background Router] Processing RPC ${rpcMethod} (ID: ${rpcId})...`);
@@ -199,19 +200,7 @@ function setupMessageHandlers(): void {
                     console.log(`🔄 [Background Router] Processing ${messageType} message...`);
                 }
 
-                // Route messages to appropriate handlers
-                if (message.type === "fromOffscreen") {
-                    console.log("📤 [Background] Routing to OffscreenMessageHandler");
-                    if ('payload' in message) {
-                        await offscreenMessageHandler.handleOffscreenMessage(message.payload as OffscreenToBackgroundMessage);
-                        console.log("✅ [Background] OffscreenMessage handled successfully");
-                        sendResponse({ success: true });
-                    } else {
-                        console.warn("❌ [Background] FromOffscreen message missing payload");
-                        sendResponse({ success: false, error: "FromOffscreen message missing payload" });
-                    }
-                    return;
-                }
+                // Handle specific offscreen message types FIRST (before generic routing)
 
                 // Handle offscreen ready signal
                 if (message.type === MESSAGE_TYPES.OFFSCREEN_READY) {
@@ -222,6 +211,26 @@ function setupMessageHandlers(): void {
                     await handleSessionRestoration();
 
                     console.log("✅ [Background] OffscreenReady handled successfully");
+                    sendResponse({ success: true });
+                    return;
+                }
+
+                // Route messages to appropriate handlers based on sender and message type
+                if (message.type === "fromOffscreen" || senderType === 'offscreen' ||
+                    (message.type === 'log' && isOffscreenSender)) {
+                    console.log("📤 [Background] Routing to OffscreenMessageHandler");
+
+                    let payload: OffscreenToBackgroundMessage;
+                    if (message.type === "fromOffscreen" && 'payload' in message) {
+                        // Wrapped message format
+                        payload = message.payload as OffscreenToBackgroundMessage;
+                    } else {
+                        // Direct message format from offscreen - convert safely
+                        payload = message as unknown as OffscreenToBackgroundMessage;
+                    }
+
+                    await offscreenMessageHandler.handleOffscreenMessage(payload);
+                    console.log("✅ [Background] OffscreenMessage handled successfully");
                     sendResponse({ success: true });
                     return;
                 }
@@ -284,7 +293,7 @@ async function handleSessionRestoration(): Promise<void> {
     if (currentState.deviceId) {
         console.log("🔄 [Background] Sending init data to offscreen");
         const initResult = await offscreenManager.sendInitData(currentState.deviceId);
-        
+
         if (initResult.success) {
             console.log("✅ [Background] Successfully sent init data to offscreen");
         } else {
@@ -300,7 +309,7 @@ async function handleSessionRestoration(): Promise<void> {
             type: "sessionAccepted",
             sessionInfo: currentState.sessionInfo,
             currentdeviceId: currentState.deviceId,
-            blockchain: currentState.blockchain || "solana"
+            blockchain: stateManager.getBlockchain() || "solana"
         }, "sessionRestore");
 
         if (restoreResult.success) {
@@ -333,7 +342,7 @@ async function handleSessionRestore(): Promise<{ success: boolean; sessionInfo?:
                 type: "sessionAccepted",
                 sessionInfo: persistedState.sessionInfo,
                 currentdeviceId: stateManager.getState().deviceId,
-                blockchain: stateManager.getState().blockchain || "solana"
+                blockchain: stateManager.getBlockchain() || "solana"
             }, "sessionRestore");
 
             if (restoreResult.success) {

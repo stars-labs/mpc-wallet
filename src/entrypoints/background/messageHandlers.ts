@@ -581,6 +581,10 @@ export class OffscreenMessageHandler {
                 await this.handleRelayViaWebSocket(payload);
                 break;
 
+            case "log":
+                this.handleLogMessage(payload);
+                break;
+
             default:
                 // Forward to state manager for state updates
                 this.stateManager.handleOffscreenStateUpdate(payload);
@@ -589,14 +593,54 @@ export class OffscreenMessageHandler {
     }
 
     private async handleRelayViaWebSocket(payload: any): Promise<void> {
-        if ('to' in payload && 'data' in payload && this.webSocketManager.isReady()) {
+        // Handle nested payload structure - the actual data is in payload.payload
+        const relayData = payload.payload || payload;
+
+        // Enhanced debugging for WebSocket relay issues
+        const hasTo = 'to' in relayData;
+        const hasData = 'data' in relayData;
+        const wsReady = this.webSocketManager.isReady();
+        const wsState = this.webSocketManager.getConnectionStatus();
+
+        console.log("[OffscreenMessageHandler] WebSocket relay check:", {
+            hasTo,
+            hasData,
+            wsReady,
+            wsState,
+            originalPayloadKeys: Object.keys(payload),
+            relayDataKeys: Object.keys(relayData),
+            relayData: relayData
+        });
+
+        if (hasTo && hasData && wsReady) {
             try {
-                await this.webSocketManager.relayMessage(payload.to as string, payload.data);
+                console.log("[OffscreenMessageHandler] Attempting to relay WebSocket message:", {
+                    to: relayData.to,
+                    dataType: relayData.data?.websocket_msg_type,
+                    data: relayData.data
+                });
+                await this.webSocketManager.relayMessage(relayData.to as string, relayData.data);
+                console.log("[OffscreenMessageHandler] WebSocket relay successful");
             } catch (error) {
                 console.error("[OffscreenMessageHandler] Error relaying via WebSocket:", error);
             }
         } else {
-            console.warn("[OffscreenMessageHandler] Cannot relay message, WebSocket not connected or invalid payload");
+            const issues = [];
+            if (!hasTo) issues.push("missing 'to' property");
+            if (!hasData) issues.push("missing 'data' property");
+            if (!wsReady) issues.push(`WebSocket not ready (state: ${wsState.readyState})`);
+
+            console.warn("[OffscreenMessageHandler] Cannot relay message:", issues.join(", "));
+            console.warn("[OffscreenMessageHandler] Full payload structure:", JSON.stringify(payload, null, 2));
+        }
+    }
+
+    private handleLogMessage(payload: any): void {
+        if ('payload' in payload && payload.payload && payload.payload.message) {
+            const source = payload.payload.source || 'offscreen';
+            console.log(`📄 [OffscreenMessageHandler] LOG from ${source}: ${payload.payload.message}`);
+        } else {
+            console.log("[OffscreenMessageHandler] LOG:", payload);
         }
     }
 }

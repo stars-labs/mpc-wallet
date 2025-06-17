@@ -35,6 +35,7 @@ export class StateManager {
             ...INITIAL_APP_STATE,
             ...initialState
         };
+        console.log("[StateManager] Constructor - starting async state loading...");
         // Load persisted state asynchronously
         this.loadPersistedState();
     }
@@ -43,12 +44,13 @@ export class StateManager {
      * Load persisted state asynchronously from Chrome storage
      */
     private async loadPersistedState(): Promise<void> {
+        console.log("[StateManager] Loading persisted state from Chrome storage...");
         try {
             const result = await chrome.storage.local.get(StateManager.STATE_STORAGE_KEY);
             if (result[StateManager.STATE_STORAGE_KEY]) {
                 const persistedState = result[StateManager.STATE_STORAGE_KEY];
                 console.log("[StateManager] Loading persisted state:", persistedState);
-                
+
                 // Merge persisted state with current state, preserving important runtime values
                 this.appState = {
                     ...this.appState,
@@ -66,6 +68,7 @@ export class StateManager {
             console.warn("[StateManager] Failed to load persisted state:", error);
         } finally {
             // Mark state as loaded and process any pending popup connections
+            console.log("[StateManager] State loading complete, processing pending popup connections...");
             this.isStateLoaded = true;
             this.processPendingPopupPorts();
         }
@@ -76,10 +79,20 @@ export class StateManager {
      */
     private processPendingPopupPorts(): void {
         console.log(`[StateManager] Processing ${this.pendingPopupPorts.length} pending popup ports`);
-        this.pendingPopupPorts.forEach(port => {
-            this.addPopupPortInternal(port);
+
+        // Process each pending port
+        this.pendingPopupPorts.forEach((port, index) => {
+            try {
+                console.log(`[StateManager] Processing pending popup port ${index + 1}/${this.pendingPopupPorts.length}`);
+                this.addPopupPortInternal(port);
+            } catch (error) {
+                console.error(`[StateManager] Error processing pending popup port ${index + 1}:`, error);
+            }
         });
+
+        // Clear the pending ports array
         this.pendingPopupPorts = [];
+        console.log("[StateManager] All pending popup ports processed");
     }
 
     /**
@@ -150,10 +163,10 @@ export class StateManager {
         } else {
             this.appState.wsError = "";
         }
-        
+
         // Broadcast status update
         this.broadcastToPopupPorts({ type: "wsStatus", connected });
-        
+
         // Persist the WebSocket status update
         this.persistState();
     }
@@ -165,7 +178,7 @@ export class StateManager {
         console.log(`[StateManager] Updating connected devices:`, devices);
         // Exclude current device from connected devices list
         this.appState.connecteddevices = devices.filter(deviceId => deviceId !== this.appState.deviceId);
-        
+
         console.log(`[StateManager] Updated connected devices:`, this.appState.connecteddevices);
 
         // Broadcast device list update
@@ -182,12 +195,21 @@ export class StateManager {
      * Add a popup port connection
      */
     addPopupPort(port: chrome.runtime.Port): void {
-        console.log("[StateManager] Adding popup port, state loaded:", this.isStateLoaded);
-        
+        console.log("[StateManager] Adding popup port, state loaded:", this.isStateLoaded, "pending ports:", this.pendingPopupPorts.length);
+
         if (!this.isStateLoaded) {
             // State not loaded yet, queue the port for later
             console.log("[StateManager] State not loaded yet, queuing popup port");
             this.pendingPopupPorts.push(port);
+
+            // Set up disconnect handler for queued ports to prevent memory leaks
+            port.onDisconnect.addListener(() => {
+                console.log("[StateManager] Queued popup port disconnected, removing from pending list");
+                const index = this.pendingPopupPorts.indexOf(port);
+                if (index > -1) {
+                    this.pendingPopupPorts.splice(index, 1);
+                }
+            });
             return;
         }
 
@@ -456,9 +478,9 @@ export class StateManager {
         try {
             const blockchain = this.getBlockchain();
             const command = blockchain === "ethereum" ? "getEthereumAddress" : "getSolanaAddress";
-            
+
             console.log("[StateManager] Auto-fetching DKG address for blockchain:", blockchain);
-            
+
             // Send message to offscreen document to get DKG address
             const response = await chrome.runtime.sendMessage({
                 type: command,
@@ -471,11 +493,11 @@ export class StateManager {
 
                 if (dkgAddress) {
                     console.log("[StateManager] Successfully fetched DKG address:", dkgAddress);
-                    
+
                     // Update app state
                     this.appState.dkgAddress = dkgAddress;
                     this.appState.dkgError = "";
-                    
+
                     // Broadcast DKG address update to popup
                     this.broadcastToPopupPorts({
                         type: "dkgAddressUpdate",

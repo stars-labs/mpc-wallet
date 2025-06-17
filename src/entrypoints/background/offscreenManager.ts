@@ -152,11 +152,19 @@ export class OffscreenManager {
     async handleInitRequest(): Promise<{ success: boolean; message?: string; error?: string }> {
         console.log("🔧 [OffscreenManager] Processing init request from offscreen");
 
+        // Enhanced debugging for device ID state
+        console.log("🔍 [OffscreenManager] Current appState reference:", this.appState);
+        console.log("🔍 [OffscreenManager] AppState deviceId:", this.appState.deviceId);
+        console.log("🔍 [OffscreenManager] AppState type:", typeof this.appState);
+        console.log("🔍 [OffscreenManager] AppState keys:", Object.keys(this.appState));
+
         if (!this.appState.deviceId) {
             console.warn("⚠️ [OffscreenManager] Init request failed: no device ID");
+            console.warn("⚠️ [OffscreenManager] Complete state object:", JSON.stringify(this.appState, null, 2));
             return { success: false, error: "No device ID available" };
         }
 
+        console.log("✅ [OffscreenManager] Device ID found, proceeding with initialization");
         const result = await this.sendInitData(this.appState.deviceId);
         return result.success
             ? { success: true, message: "Init data sent" }

@@ -44,6 +44,10 @@ bun run build:wasm
 # Start development server with hot reloading
 bun run dev
 
+# Run development for specific browsers
+bun run dev:firefox
+bun run dev:edge
+
 # Clean build artifacts
 bun run clean
 ```
@@ -52,10 +56,16 @@ bun run clean
 
 ```bash
 # Run all tests
-bun run test
+bun test
 
-# Run WebRTC tests specifically
-bun run test:webrtc
+# Run specific test suites
+bun run test:services    # Test service layer
+bun run test:webrtc      # Test WebRTC simple tests
+bun run test:webrtc:all  # Run all WebRTC tests
+bun run test:dkg         # Test DKG functionality
+
+# Run a single test file
+bun test path/to/test.ts
 ```
 
 ### Production Build
@@ -63,14 +73,38 @@ bun run test:webrtc
 ```bash
 # Build for production
 bun run build
+
+# Build for specific browsers
+bun run build:firefox
+bun run build:edge
+
+# Create extension ZIP
+bun run zip
+```
+
+### Type Checking
+
+```bash
+# Run Svelte type checking
+bun run check
 ```
 
 ## Development Workflow
 
 1. Start the development server: `bun run dev`
-2. Load the extension into Chrome/Edge from the `extension/` directory
+2. Load the extension into Chrome/Edge from the `dist/` directory
 3. Monitor logs using the browser's developer console
 4. For changes to the Rust code, rebuild WebAssembly: `bun run build:wasm`
+
+## Message Flow Architecture
+
+```
+Popup → Background → Offscreen → WebRTC Peers
+  ↑         ↓           ↓
+  └─────────┴───────────┴──── WebSocket Server
+```
+
+All messages are routed through the background service worker, which acts as the central coordinator. The message types are defined in `src/types/messages.ts` and follow a strict pattern-based routing system.
 
 ## Troubleshooting
 
@@ -78,15 +112,20 @@ bun run build
 
 - **WXT Dev Server Issues**: Sometimes the WXT dev server doesn't properly reload after changes. Try stopping and restarting the server.
   
-- **Offscreen Document Problems**: If functionality depending on the offscreen document isn't working, check browser console for errors and ensure the document is loaded.
+- **Offscreen Document Problems**: If functionality depending on the offscreen document isn't working, check browser console for errors and ensure the document is loaded. Use the "Create Offscreen" button in the popup for debugging.
   
-- **WebSocket Connection Errors**: These can occur if the signaling server is not running. Check connection status in the background service worker logs.
+- **WebSocket Connection Errors**: These can occur if the signaling server (`wss://auto-life.tech`) is not reachable. Check connection status in the background service worker logs.
+
+- **"Receiving end does not exist" errors**: Usually indicates the offscreen document hasn't been created yet or has crashed.
 
 ### Debugging Tips
 
-- Use the browser's developer tools to debug different extension contexts
-- Background service worker logs can be viewed in the browser's extension management page
+- Use the browser's developer tools to debug different extension contexts:
+  - Background: chrome://extensions → Service Worker "Inspect"
+  - Popup: Right-click popup → Inspect
+  - Offscreen: Check background console for offscreen logs
 - For WebAssembly debugging, use `console.log` calls from the JavaScript side
+- Enable verbose logging by checking console output in all contexts
 
 ## Technology Stack
 
@@ -96,3 +135,5 @@ bun run build
 - **Cryptography**: FROST threshold signatures (implemented in Rust)
 - **P2P Communication**: WebRTC
 - **Signaling**: WebSocket
+- **Blockchain Libraries**: viem (Ethereum)
+- **Testing**: Bun test runner
