@@ -1,4 +1,6 @@
 import { Account } from '../types/account';
+import { getKeystoreService } from './keystoreService';
+import type { NewAccountSession } from '../types/keystore';
 
 type AccountChangeCallback = (account: Account | null) => void;
 
@@ -192,10 +194,14 @@ class AccountService {
                 const account: Account = {
                     id: `mpc-${Date.now()}`,
                     address,
-                    name: 'MPC Wallet',
+                    name: 'Account 1',
                     balance: '0',
                     blockchain: 'ethereum',
-                    created: Date.now()
+                    created: Date.now(),
+                    metadata: {
+                        derivationPath: "m/44'/60'/0'/0/0", // Standard Ethereum derivation path
+                        source: 'dkg'
+                    }
                 };
                 await this.addAccount(account);
                 return account;
@@ -205,6 +211,152 @@ class AccountService {
         }
 
         return null;
+    }
+
+    /**
+     * Generate a new account by initiating a new DKG session
+     * Each account requires its own DKG session since FROST doesn't support HD derivation
+     */
+    public async generateNewAccount(name?: string, blockchain: 'ethereum' | 'solana' = 'ethereum'): Promise<NewAccountSession> {
+        try {
+            const existingAccountsCount = this.getAccountsByBlockchain(blockchain).length;
+            
+            // Create a new account session that will trigger DKG
+            const sessionId = `account_${blockchain}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+            
+            const newSession: NewAccountSession = {
+                sessionId,
+                name: name || `Account ${existingAccountsCount + 1}`,
+                blockchain,
+                threshold: 2, // Default threshold
+                totalParticipants: 3, // Default participants
+                participants: [], // Will be filled when session is proposed
+                status: 'proposing',
+                createdAt: Date.now()
+            };
+            
+            // Store the pending session
+            await this.storePendingSession(newSession);
+            
+            // The actual DKG will be initiated through the normal session proposal flow
+            // This just creates the intent to create a new account
+            console.log('[AccountService] Created new account session:', sessionId);
+            
+            return newSession;
+        } catch (error) {
+            console.error('Failed to create new account session:', error);
+            throw error;
+        }
+    }
+    
+    /**
+     * Complete account creation after DKG finishes
+     */
+    public async completeAccountCreation(
+        sessionId: string, 
+        address: string,
+        keyShareData: any
+    ): Promise<Account | null> {
+        try {
+            const pendingSession = await this.getPendingSession(sessionId);
+            if (!pendingSession) {
+                throw new Error('Pending session not found');
+            }
+            
+            const account: Account = {
+                id: `mpc-${sessionId}`,
+                address,
+                name: pendingSession.name,
+                balance: '0',
+                blockchain: pendingSession.blockchain,
+                created: Date.now(),
+                metadata: {
+                    sessionId,
+                    source: 'dkg',
+                    threshold: pendingSession.threshold,
+                    totalParticipants: pendingSession.totalParticipants
+                }
+            };
+            
+            // Save key share to keystore
+            const keystore = getKeystoreService();
+            if (!keystore.isLocked()) {
+                await keystore.addWallet(account.id, keyShareData, {
+                    id: account.id,
+                    name: account.name,
+                    blockchain: account.blockchain,
+                    address: account.address,
+                    sessionId: sessionId,
+                    isActive: true,
+                    hasBackup: false
+                });
+            }
+            
+            // Add account
+            await this.addAccount(account);
+            
+            // Remove pending session
+            await this.removePendingSession(sessionId);
+            
+            return account;
+        } catch (error) {
+            console.error('Failed to complete account creation:', error);
+            return null;
+        }
+    }
+    
+    private async storePendingSession(session: NewAccountSession): Promise<void> {
+        try {
+            if (typeof chrome !== 'undefined' && chrome.storage) {
+                const key = `pending_session_${session.sessionId}`;
+                await chrome.storage.local.set({ [key]: session });
+            }
+        } catch (error) {
+            console.error('Failed to store pending session:', error);
+        }
+    }
+    
+    private async getPendingSession(sessionId: string): Promise<NewAccountSession | null> {
+        try {
+            if (typeof chrome !== 'undefined' && chrome.storage) {
+                const key = `pending_session_${sessionId}`;
+                const result = await chrome.storage.local.get(key);
+                return result[key] || null;
+            }
+            return null;
+        } catch (error) {
+            console.error('Failed to get pending session:', error);
+            return null;
+        }
+    }
+    
+    private async removePendingSession(sessionId: string): Promise<void> {
+        try {
+            if (typeof chrome !== 'undefined' && chrome.storage) {
+                const key = `pending_session_${sessionId}`;
+                await chrome.storage.local.remove(key);
+            }
+        } catch (error) {
+            console.error('Failed to remove pending session:', error);
+        }
+    }
+
+    private async getSolanaAddressFromDKG(): Promise<string | null> {
+        try {
+            // Send message to offscreen document to get Solana address
+            const response = await chrome.runtime.sendMessage({
+                type: "getSolanaAddress"
+            });
+
+            if (response && response.success && response.data && response.data.solanaAddress) {
+                return response.data.solanaAddress;
+            }
+
+            return null;
+        } catch (error) {
+            console.error('Error getting Solana address from DKG:', error);
+            return null;
+        }
     }
 
     private async getAddressFromDKG(): Promise<string | null> {

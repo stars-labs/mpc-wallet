@@ -8,6 +8,7 @@
     import { DkgState } from "../../types/dkg";
     import { INITIAL_APP_STATE } from "../../types/appstate";
     import Settings from "../../components/Settings.svelte";
+    import AccountManager from "../../components/AccountManager.svelte";
 
     // Application state (consolidated from background) - the single source of truth
     let appState: AppState = { ...INITIAL_APP_STATE };
@@ -752,6 +753,42 @@
         }
         return appState.sessionAcceptanceStatus[sessionId][deviceId];
     }
+
+    // Test MPC signing function
+    function testMPCSigning() {
+        console.log("[UI] Testing MPC signing");
+        
+        // Generate a test signing ID and transaction data
+        const signingId = `test_signing_${Date.now()}`;
+        const testTransactionData = appState.chain === "ethereum" 
+            ? "0x" + "00".repeat(32) // Ethereum test transaction hash
+            : "test_solana_transaction_" + Date.now(); // Solana test data
+        
+        // Use the threshold from the current session
+        const requiredSigners = appState.sessionInfo?.threshold || 2;
+        
+        chrome.runtime.sendMessage({
+            type: "requestSigning",
+            signingId: signingId,
+            transactionData: testTransactionData,
+            requiredSigners: requiredSigners
+        }, (response) => {
+            if (chrome.runtime.lastError) {
+                console.error("[UI] Error requesting signing:", chrome.runtime.lastError.message);
+                return;
+            }
+            console.log("[UI] Signing request response:", response);
+            if (!response.success) {
+                console.error(`Failed to initiate signing: ${response.error}`);
+            }
+        });
+        
+        console.log("[UI] Sent signing request:", {
+            signingId,
+            transactionData: testTransactionData,
+            requiredSigners
+        });
+    }
 </script>
 
 <main class="p-4 max-w-2xl mx-auto">
@@ -838,30 +875,13 @@
         </div>
     {/if}
 
-    <!-- DKG Address Display (Moved from MPC Wallet Operations) -->
-    {#if appState.dkgAddress}
-        <div class="mb-4 p-3 border rounded">
-            <h2 class="text-xl font-semibold mb-2">MPC Address</h2>
-            <div>
-                <span class="block font-bold mb-1"
-                    >{appState.chain === "ethereum" ? "Ethereum" : "Solana"} Address:</span
-                >
-                <code
-                    class="block bg-purple-50 border border-purple-200 p-2 rounded break-all"
-                    >{appState.dkgAddress}</code
-                >
-                <p class="text-xs text-purple-600 mt-1">
-                    ✓ Generated using {appState.sessionInfo
-                        ?.threshold}-of-{appState.sessionInfo?.total} threshold signature
-                </p>
-            </div>
-
-            {#if appState.dkgError}
-                <div class="mt-2 p-2 bg-red-50 border border-red-200 rounded">
-                    <span class="text-red-600 text-sm">{appState.dkgError}</span
-                    >
-                </div>
-            {/if}
+    <!-- Account Manager - Multi-account support -->
+    {#if appState.dkgState === DkgState.Complete}
+        <div class="mb-4">
+            <AccountManager 
+                currentAccount={null}
+                blockchain={appState.chain}
+            />
         </div>
     {/if}
 
@@ -1060,9 +1080,15 @@
                     </div>
                 {:else if appState.dkgState === DkgState.Complete}
                     <div class="border-t border-green-200 pt-3">
-                        <p class="text-sm text-green-700 font-semibold">
+                        <p class="text-sm text-green-700 font-semibold mb-2">
                             ✅ DKG Complete - Ready for threshold signatures
                         </p>
+                        <button
+                            class="w-full bg-gradient-to-r from-purple-500 to-purple-600 hover:from-purple-600 hover:to-purple-700 text-white font-bold py-2 px-4 rounded-lg shadow-md"
+                            on:click={testMPCSigning}
+                        >
+                            Test MPC Signing
+                        </button>
                     </div>
                 {/if}
             </div>

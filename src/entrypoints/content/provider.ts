@@ -41,57 +41,9 @@ export class ContentProvider {
                 const request = data.payload as JsonRpcRequest;
                 console.log(`[Content Script] Processing request: ${request.method}`, request);
                 
-                // Handle eth_requestAccounts and eth_accounts specially for quick response
-                if (request.method === 'eth_requestAccounts' || request.method === 'eth_accounts') {
-                    console.log(`[Content Script] Fast-tracking ${request.method} request`);
-                    
-                    // Quickly respond with MPC address from storage if available
-                    chrome.storage.local.get(['mpc_ethereum_address'], (result) => {
-                        try {
-                            if (result && result.mpc_ethereum_address) {
-                                console.log('[Content Script] Using saved MPC Ethereum address:', result.mpc_ethereum_address);
-                                // Store address in sessionStorage for direct access by injected script
-                                try {
-                                    if (window.sessionStorage) {
-                                        window.sessionStorage.setItem('starlab_wallet_accounts', JSON.stringify([result.mpc_ethereum_address]));
-                                    }
-                                } catch (err) {
-                                    console.log('[Content Script] Unable to update sessionStorage:', err);
-                                }
-                                
-                                this.sendToPage({
-                                    type: 'WALLET_RESPONSE',
-                                    payload: {
-                                        id: request.id,
-                                        jsonrpc: '2.0',
-                                        result: [result.mpc_ethereum_address]
-                                    }
-                                });
-                            } else {
-                                // Still forward to background for processing
-                                console.log('[Content Script] No saved address, forwarding to background');
-                                this.forwardToBackground(request);
-                            }
-                        } catch (err) {
-                            console.error('[Content Script] Error in storage callback:', err);
-                            // Send error to page
-                            this.sendToPage({
-                                type: 'WALLET_RESPONSE',
-                                payload: {
-                                    id: request.id,
-                                    jsonrpc: '2.0',
-                                    error: {
-                                        code: -32603,
-                                        message: 'Internal error: ' + err.message
-                                    }
-                                }
-                            });
-                        }
-                    });
-                } else {
-                    // 转发到 background script
-                    this.forwardToBackground(request);
-                }
+                // Always forward to background for proper permission handling
+                // The background script will check permissions and return appropriate accounts
+                this.forwardToBackground(request);
             }
         } catch (err) {
             console.error('[Content Script] Error handling page message:', err);
@@ -148,6 +100,7 @@ export class ContentProvider {
             type: 'FORWARD_REQUEST',
             // The payload is what matters - must have jsonrpc, id, method fields
             payload: request,
+            origin: window.location.origin,
             timestamp: Date.now()
         };
 

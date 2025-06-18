@@ -13,6 +13,7 @@
 import { DkgState } from "../../types/dkg";
 import type { WebRTCAppMessage } from "../../types/webrtc";
 import type { SessionInfo } from "../../types/session";
+import type { KeyShareData } from "../../types/keystore";
 
 export { DkgState };
 
@@ -23,6 +24,7 @@ export interface DkgManagerCallbacks {
     onLog: (message: string) => void;
     onDkgStateUpdate: (state: DkgState) => void;
     onSendMessage: (toPeerId: string, message: WebRTCAppMessage) => void;
+    onDkgComplete?: (state: DkgState, keyShareData: KeyShareData) => void;
 }
 
 /**
@@ -434,6 +436,9 @@ export class DkgManager {
             this._log(`Group Public Key: ${this.groupPublicKey}`);
             this._log(`Solana Address: ${this.solanaAddress}`);
             this._log(`Ethereum Address: ${this.ethereumAddress}`);
+            
+            // Save key share data for persistence
+            this._saveKeyShare(finalData);
 
             this._updateDkgState(DkgState.Complete);
         } catch (error) {
@@ -540,5 +545,53 @@ export class DkgManager {
      */
     private _log(message: string): void {
         this.callbacks.onLog(`[DkgManager:${this.localPeerId}] ${message}`);
+    }
+    
+    /**
+     * Save key share data to keystore
+     */
+    private async _saveKeyShare(finalData: any): Promise<void> {
+        try {
+            if (!this.sessionInfo) {
+                throw new Error("No session info available");
+            }
+            
+            // Prepare key share data
+            const keyShareData: KeyShareData = {
+                // Core FROST key material
+                keyPackage: finalData.key_package || '', // Serialized from WASM
+                publicKeyPackage: finalData.public_key_package || '',
+                groupPublicKey: finalData.group_public_key,
+                
+                // Session information
+                sessionId: this.sessionInfo.session_id,
+                deviceId: this.localPeerId,
+                participantIndex: this.participantIndex!,
+                
+                // Threshold configuration
+                threshold: this.sessionInfo.threshold,
+                totalParticipants: this.sessionInfo.total,
+                participants: [...this.sessionInfo.participants],
+                
+                // Blockchain specific
+                curve: this.currentBlockchain === 'ethereum' ? 'secp256k1' : 'ed25519',
+                ethereumAddress: this.ethereumAddress,
+                solanaAddress: this.solanaAddress,
+                
+                // Metadata
+                createdAt: Date.now()
+            };
+            
+            // Send to background for storage
+            this.callbacks.onLog(`[DkgManager] Sending key share for storage`);
+            
+            // Use a callback or send message to background
+            if (this.callbacks.onDkgComplete) {
+                this.callbacks.onDkgComplete(this.dkgState, keyShareData);
+            }
+            
+        } catch (error) {
+            this._log(`Failed to save key share: ${error}`);
+        }
     }
 }

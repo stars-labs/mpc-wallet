@@ -20,6 +20,7 @@ import { OffscreenManager } from "./offscreenManager";
 import { WebSocketManager } from "./webSocketManager";
 import { SessionManager } from "./sessionManager";
 import { RpcHandler, UIRequestHandler } from "./rpcHandler";
+import AccountService from "../../services/accountService";
 
 /**
  * Handles messages from popup interface
@@ -184,6 +185,11 @@ export class PopupMessageHandler {
                 case "getSolanaAddress":
                     console.log("🏠 [PopupMessageHandler] GET_SOLANA_ADDRESS: Requesting Solana address");
                     await this.handleGetSolanaAddressRequest(sendResponse);
+                    break;
+
+                case MESSAGE_TYPES.REQUEST_SIGNING:
+                    console.log("✍️ [PopupMessageHandler] REQUEST_SIGNING: Initiating MPC signing");
+                    await this.handleRequestSigningMessage(message, sendResponse);
                     break;
 
                 default:
@@ -352,6 +358,19 @@ export class PopupMessageHandler {
                     name: 'UI Request',
                     icon: '🖼️',
                     color: '\x1b[96m' // bright cyan
+                }
+            };
+        }
+
+        if (messageType.includes('sign') || messageType.includes('Sign') ||
+            messageType.includes('SIGN') || messageType === 'REQUEST_SIGNING' ||
+            messageType === 'ACCEPT_SIGNING') {
+            return {
+                category: 'signing',
+                categoryInfo: {
+                    name: 'Signing Operations',
+                    icon: '✍️',
+                    color: '\x1b[95m' // bright magenta
                 }
             };
         }
@@ -539,6 +558,11 @@ export class PopupMessageHandler {
 
     private async handleRpcMessage(message: any, sendResponse: (response: any) => void): Promise<void> {
         try {
+            // Set origin if provided (from content script)
+            if (message.origin) {
+                this.rpcHandler.setOrigin(message.origin);
+            }
+            
             const result = await this.rpcHandler.handleRpcRequest(message.payload);
             sendResponse({ success: true, result });
         } catch (error) {
@@ -550,6 +574,28 @@ export class PopupMessageHandler {
     private async handleUIRequestMessage(message: any, sendResponse: (response: any) => void): Promise<void> {
         const result = await this.uiRequestHandler.handleUIRequest(message.payload);
         sendResponse(result);
+    }
+
+    private async handleRequestSigningMessage(message: any, sendResponse: (response: any) => void): Promise<void> {
+        console.log("[PopupMessageHandler] Received requestSigning:", message);
+
+        if ('signingId' in message && 'transactionData' in message && 'requiredSigners' in message) {
+            // Forward signing request to offscreen document
+            const result = await this.offscreenManager.sendToOffscreen({
+                type: "requestSigning",
+                signingId: message.signingId,
+                transactionData: message.transactionData,
+                requiredSigners: message.requiredSigners
+            }, "requestSigning");
+
+            if (result.success) {
+                sendResponse({ success: true, message: "Signing request sent to offscreen" });
+            } else {
+                sendResponse({ success: false, error: `Failed to send signing request: ${result.error}` });
+            }
+        } else {
+            sendResponse({ success: false, error: "Invalid signing request format" });
+        }
     }
 }
 
@@ -581,6 +627,18 @@ export class OffscreenMessageHandler {
 
             case "log":
                 this.handleLogMessage(payload);
+                break;
+
+            case "signingComplete":
+                this.handleSigningComplete(payload);
+                break;
+
+            case "signingError":
+                this.handleSigningError(payload);
+                break;
+
+            case "dkg_complete":
+                this.handleDkgComplete(payload);
                 break;
 
             default:
@@ -639,6 +697,56 @@ export class OffscreenMessageHandler {
             console.log(`📄 [OffscreenMessageHandler] LOG from ${source}: ${payload.payload.message}`);
         } else {
             console.log("[OffscreenMessageHandler] LOG:", payload);
+        }
+    }
+
+    private handleSigningComplete(payload: any): void {
+        console.log("[OffscreenMessageHandler] Signing complete:", payload);
+        if (payload.signingId && payload.signature) {
+            // Forward to popup/content scripts if needed
+            chrome.runtime.sendMessage({
+                type: MESSAGE_TYPES.SIGNING_COMPLETE,
+                signingId: payload.signingId,
+                signature: payload.signature
+            });
+        }
+    }
+
+    private handleSigningError(payload: any): void {
+        console.error("[OffscreenMessageHandler] Signing error:", payload);
+        if (payload.signingId && payload.error) {
+            // Forward to popup/content scripts if needed
+            chrome.runtime.sendMessage({
+                type: MESSAGE_TYPES.SIGNING_ERROR,
+                signingId: payload.signingId,
+                error: payload.error
+            });
+        }
+    }
+
+    private async handleDkgComplete(payload: any): void {
+        console.log("[OffscreenMessageHandler] DKG complete:", payload);
+        
+        if (payload.payload && payload.payload.keyShareData) {
+            const keyShareData = payload.payload.keyShareData;
+            const sessionId = keyShareData.sessionId;
+            
+            // Get the appropriate address based on blockchain
+            const address = keyShareData.curve === 'secp256k1' 
+                ? keyShareData.ethereumAddress 
+                : keyShareData.solanaAddress;
+            
+            if (address && sessionId) {
+                // Complete account creation
+                const accountService = AccountService.getInstance();
+                await accountService.completeAccountCreation(
+                    sessionId,
+                    address,
+                    keyShareData
+                );
+                
+                console.log("[OffscreenMessageHandler] Account created for session:", sessionId);
+            }
         }
     }
 }

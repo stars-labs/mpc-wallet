@@ -62,6 +62,10 @@ export type PopupToBackgroundMessage = BaseMessage & (
     // session management
     | { type: 'proposeSession'; session_id: string; total: number; threshold: number; participants: string[] }
     | { type: 'acceptSession'; session_id: string; accepted: boolean; blockchain?: "ethereum" | "solana" }
+    
+    // MPC signing operations
+    | { type: 'requestSigning'; signingId: string; transactionData: string; requiredSigners: number }
+    | { type: 'acceptSigning'; signingId: string; accepted: boolean }
 
     // Management operations
     | { type: 'createOffscreen' }
@@ -91,6 +95,7 @@ export type BackgroundToOffscreenMessage = BaseMessage & (
     | { type: 'getDkgStatus' }
     | { type: 'getGroupPublicKey' }
     | { type: 'setBlockchain'; blockchain: "ethereum" | "solana" }
+    | { type: 'requestSigning'; signingId: string; transactionData: string; requiredSigners: number }
 );
 
 // --- Offscreen to Background Message Types (Offscreen sends to Background) ---
@@ -105,6 +110,8 @@ export type OffscreenToBackgroundMessage = BaseMessage & (
     | { type: 'relayViaWs'; to: string; data: any }
     | { type: 'webrtcMessage'; fromdeviceId: string; message: any }
     | { type: 'log'; payload: { message: string; source: string } }
+    | { type: 'signingComplete'; signingId: string; signature: string }
+    | { type: 'signingError'; signingId: string; error: string }
 );
 
 // Add the missing InitialStateMessage type
@@ -246,6 +253,10 @@ export const MESSAGE_TYPES = {
     GET_ETHEREUM_ADDRESS: "getEthereumAddress",
     GET_SOLANA_ADDRESS: "getSolanaAddress",
     SET_BLOCKCHAIN: "setBlockchain",
+    REQUEST_SIGNING: "requestSigning",
+    ACCEPT_SIGNING: "acceptSigning",
+    SIGNING_COMPLETE: "signingComplete",
+    SIGNING_ERROR: "signingError",
     // Legacy support
     ACCOUNT_MANAGEMENT: "ACCOUNT_MANAGEMENT",
     NETWORK_MANAGEMENT: "NETWORK_MANAGEMENT",

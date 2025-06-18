@@ -137,8 +137,10 @@ export class WebRTCManager {
     /**
      * Request threshold signing
      */
-    async requestSigning(transactionData: any): Promise<void> {
-        this._log("Requesting threshold signing");
+    async requestSigning(signingId: string, transactionData: string, requiredSigners: number): Promise<void> {
+        this._log(`Requesting threshold signing: ${signingId}`);
+        // For now, we'll use the existing requestSigning method which generates its own ID
+        // In the future, we might want to update signingManager to accept external IDs
         await this.signingManager.requestSigning(transactionData, this.sessionInfo);
         this._updateCallbacks();
     }

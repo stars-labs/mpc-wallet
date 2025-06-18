@@ -12,6 +12,7 @@ import AccountService from '../../services/accountService';
 import NetworkService from '../../services/networkService';
 import WalletClientService from '../../services/walletClient';
 import WalletController from "../../services/walletController";
+import { getPermissionService } from '../../services/permissionService';
 import { toHex } from 'viem';
 import type { JsonRpcRequest } from "../../types/messages";
 
@@ -22,11 +23,20 @@ export class RpcHandler {
     private accountService: AccountService;
     private networkService: NetworkService;
     private walletClientService: WalletClientService;
+    private permissionService = getPermissionService();
+    private origin: string = '';
 
     constructor() {
         this.accountService = AccountService.getInstance();
         this.networkService = NetworkService.getInstance();
         this.walletClientService = WalletClientService.getInstance();
+    }
+
+    /**
+     * Set the origin of the request for permission checking
+     */
+    setOrigin(origin: string): void {
+        this.origin = origin;
     }
 
     /**
@@ -79,27 +89,58 @@ export class RpcHandler {
      * Handle eth_accounts and eth_requestAccounts
      */
     private async handleAccountsRequest(method: string): Promise<string[]> {
-        // Try to get current account
-        let currentAccount = this.accountService.getCurrentAccount();
-
-        // If no account exists and user requested accounts, try to create a default one
-        if (!currentAccount && method === 'eth_requestAccounts') {
-            console.log('[RpcHandler] No account selected, attempting to create default account');
-            currentAccount = await this.accountService.ensureDefaultAccount();
-        }
-
-        // If we still don't have an account, handle appropriately
-        if (!currentAccount) {
-            if (method === 'eth_requestAccounts') {
-                // For eth_requestAccounts, this is considered an error
-                throw new Error('No accounts available. Please create an account first.');
-            } else {
-                // For eth_accounts, returning an empty array is acceptable
-                return [];
+        // For eth_accounts, return already connected accounts
+        if (method === 'eth_accounts') {
+            // If no origin (e.g., from popup), return current account
+            if (!this.origin) {
+                const currentAccount = this.accountService.getCurrentAccount();
+                return currentAccount ? [currentAccount.address] : [];
             }
+            
+            const connectedAccounts = this.permissionService.getConnectedAccounts(this.origin);
+            console.log(`[RpcHandler] eth_accounts for ${this.origin}: ${connectedAccounts.length} connected`);
+            return connectedAccounts;
         }
 
-        return [currentAccount.address];
+        // For eth_requestAccounts, we need to prompt user for permission
+        if (method === 'eth_requestAccounts') {
+            // First ensure we have at least one account
+            await this.accountService.ensureInitialized();
+            let accounts = this.accountService.getAccountsByBlockchain('ethereum');
+            
+            if (accounts.length === 0) {
+                console.log('[RpcHandler] No accounts exist, creating default account');
+                const defaultAccount = await this.accountService.ensureDefaultAccount();
+                if (!defaultAccount) {
+                    throw new Error('Failed to create default account');
+                }
+                accounts = [defaultAccount];
+            }
+
+            // Check if we already have permissions
+            const connectedAccounts = this.permissionService.getConnectedAccounts(this.origin);
+            if (connectedAccounts.length > 0) {
+                console.log(`[RpcHandler] Returning existing connections for ${this.origin}`);
+                return connectedAccounts;
+            }
+
+            // For now, auto-connect all accounts (in production, show UI selector)
+            // TODO: Implement UI account selector
+            const accountAddresses = accounts.map(acc => acc.address);
+            const currentNetwork = this.networkService.getCurrentNetwork();
+            const chainId = currentNetwork ? toHex(currentNetwork.id) : '0x1';
+            
+            await this.permissionService.connectAccounts(
+                this.origin, 
+                accountAddresses,
+                chainId
+            );
+
+            console.log(`[RpcHandler] Connected ${accountAddresses.length} accounts to ${this.origin}`);
+            return accountAddresses;
+        }
+
+        return [];
     }
 
     /**

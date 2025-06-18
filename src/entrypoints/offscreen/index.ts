@@ -74,8 +74,8 @@ async function initializeModules(): Promise<void> {
         messageRouter.registerHandler('create_session', handleCreateSession);
         messageRouter.registerHandler('join_session', handleJoinSession);
         messageRouter.registerHandler('start_dkg', handleStartDkg);
-        messageRouter.registerHandler('request_signing', handleRequestSigning);
-        messageRouter.registerHandler('accept_signing', handleAcceptSigning);
+        messageRouter.registerHandler('requestSigning', handleRequestSigning);
+        messageRouter.registerHandler('acceptSigning', handleAcceptSigning);
         messageRouter.registerHandler('set_blockchain', handleSetBlockchain);
         messageRouter.registerHandler('get_addresses', handleGetAddresses);
         messageRouter.registerHandler('relayViaWs', handleRelayViaWs);
@@ -164,6 +164,14 @@ async function initializeWebRTCManager(deviceId: string): Promise<void> {
                 sendToBackground({
                     type: 'dkg_state_update',
                     payload: { state }
+                });
+            };
+
+            webRTCManager.onDkgComplete = (state: DkgState, keyShareData: any) => {
+                console.log("🔗 [WebRTC] DKG complete, sending key share for storage");
+                sendToBackground({
+                    type: 'dkg_complete',
+                    payload: { state, keyShareData }
                 });
             };
 
@@ -406,7 +414,18 @@ async function handleRequestSigning(messageType: string, payload: any): Promise<
         }
 
         console.log("🔧 [Handler] Requesting signing:", payload);
-        await webRTCManager.requestSigning(payload.transactionData);
+        
+        // Check if we have required parameters
+        if (!payload.signingId || !payload.transactionData || !payload.requiredSigners) {
+            throw new Error("Missing required signing parameters");
+        }
+
+        // Call WebRTC manager with proper parameters
+        await webRTCManager.requestSigning(
+            payload.signingId,
+            payload.transactionData,
+            payload.requiredSigners
+        );
 
         return { success: true };
     } catch (error) {

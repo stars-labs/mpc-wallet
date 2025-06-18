@@ -919,6 +919,13 @@ export class WebRTCManager {
     this._log(`Signing request broadcast to ${this.sessionInfo.participants.length - 1} peers`);
   }
 
+  // Add requestSigning method to match the expected interface
+  public async requestSigning(signingId: string, transactionData: string, requiredSigners: number): Promise<void> {
+    this._log(`Request signing called with ID: ${signingId}`);
+    // Call the existing initiateSigning method
+    this.initiateSigning(signingId, transactionData, requiredSigners);
+  }
+
   public handleWebRTCAppMessage(fromPeerId: string, message: WebRTCAppMessage): void {
     this._log(`Handling WebRTC app message from ${fromPeerId}: ${JSON.stringify(message)}`);
 
