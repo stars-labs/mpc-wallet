@@ -77,6 +77,10 @@ export class RpcHandler {
                     return await this.handleEstimateGasRequest(request.params as unknown[]);
 
                 default:
+                    // Forward read-only methods to RPC provider
+                    if (this.isReadOnlyMethod(request.method)) {
+                        return await this.forwardToRpcProvider(request);
+                    }
                     throw new Error(`Unsupported method: ${request.method}`);
             }
         } catch (error) {
@@ -281,5 +285,80 @@ export class UIRequestHandler {
         }
 
         return { success: false, error: `Method ${method} not found on WalletController` };
+    }
+
+    /**
+     * Check if a method is read-only and should be forwarded to RPC provider
+     */
+    private isReadOnlyMethod(method: string): boolean {
+        const readOnlyMethods = [
+            'eth_blockNumber',
+            'eth_getBlockByHash',
+            'eth_getBlockByNumber',
+            'eth_getTransactionByHash',
+            'eth_getTransactionReceipt',
+            'eth_getBlockTransactionCountByHash',
+            'eth_getBlockTransactionCountByNumber',
+            'eth_getUncleCountByBlockHash',
+            'eth_getUncleCountByBlockNumber',
+            'eth_getCode',
+            'eth_call',
+            'eth_getLogs',
+            'eth_getFilterChanges',
+            'eth_getFilterLogs',
+            'eth_newFilter',
+            'eth_newBlockFilter',
+            'eth_newPendingTransactionFilter',
+            'eth_uninstallFilter',
+            'eth_getStorageAt',
+            'eth_getProof',
+            'eth_feeHistory',
+            'eth_maxPriorityFeePerGas'
+        ];
+        
+        return readOnlyMethods.includes(method);
+    }
+
+    /**
+     * Forward RPC request to the network's RPC provider
+     */
+    private async forwardToRpcProvider(request: JsonRpcRequest): Promise<any> {
+        try {
+            const network = this.networkService.getCurrentNetwork();
+            if (!network || !network.rpcUrls?.default?.http?.[0]) {
+                throw new Error('No RPC URL available for current network');
+            }
+
+            const rpcUrl = network.rpcUrls.default.http[0];
+            console.log(`[RpcHandler] Forwarding ${request.method} to RPC provider: ${rpcUrl}`);
+
+            const response = await fetch(rpcUrl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    jsonrpc: '2.0',
+                    id: request.id || 1,
+                    method: request.method,
+                    params: request.params || []
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error(`RPC request failed with status ${response.status}`);
+            }
+
+            const result = await response.json();
+            
+            if (result.error) {
+                throw new Error(result.error.message || 'RPC request failed');
+            }
+
+            return result.result;
+        } catch (error) {
+            console.error(`[RpcHandler] Failed to forward to RPC provider:`, error);
+            throw error;
+        }
     }
 }

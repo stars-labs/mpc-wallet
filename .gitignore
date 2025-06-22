@@ -27,4 +27,5 @@ web-ext.config.ts
 *.ntvs*
 *.njsproj
 *.sln
-*.sw?
+*.sw
+coverage/
