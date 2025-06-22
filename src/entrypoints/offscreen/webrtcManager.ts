@@ -69,6 +69,22 @@ export class WebRTCManager {
         };
         this.webrtcConnection.onDataChannelOpen = (peerId: string) => {
             this._log(`Data channel opened with ${peerId}`);
+            // Check if peer is fully connected (both peer connection and data channel)
+            const isConnected = this.webrtcConnection.isPeerConnected(peerId);
+            this._log(`Peer ${peerId} connection status after data channel open: ${isConnected}`);
+            
+            // Always report as connected when data channel opens
+            this._log(`[DEBUG] Forcing connection update to true for ${peerId} on data channel open`);
+            this.meshManager.updateConnectionStatus(peerId, true);
+            this.onWebRTCConnectionUpdate(peerId, true);
+            this._updateCallbacks();
+        };
+        this.webrtcConnection.onDataChannelClose = (peerId: string) => {
+            this._log(`Data channel closed with ${peerId}`);
+            // When data channel closes, connection is definitely not active
+            this.meshManager.updateConnectionStatus(peerId, false);
+            this.onWebRTCConnectionUpdate(peerId, false);
+            this._updateCallbacks();
         };
 
         // Initialize DKG manager
@@ -285,10 +301,12 @@ export class WebRTCManager {
      * Handle connection state changes
      */
     private _handleConnectionStateChange(peerId: string, state: RTCPeerConnectionState): void {
-        const connected = state === 'connected';
         this._log(`Connection state changed: ${peerId} -> ${state}`);
-        this.meshManager.updateConnectionStatus(peerId, connected);
-        this.onWebRTCConnectionUpdate(peerId, connected);
+        // Check if peer is fully connected (both peer connection and data channel)
+        const isConnected = this.webrtcConnection.isPeerConnected(peerId);
+        this._log(`Peer ${peerId} overall connection status: ${isConnected}`);
+        this.meshManager.updateConnectionStatus(peerId, isConnected);
+        this.onWebRTCConnectionUpdate(peerId, isConnected);
         this._updateCallbacks();
     }
 

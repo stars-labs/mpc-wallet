@@ -242,12 +242,16 @@
                 console.log("[UI] Processing deviceList:", message);
                 // Only update if we have a valid devices array
                 if (Array.isArray(message.devices)) {
-                    appState.connecteddevices = [...message.devices];
-                    console.log("[UI] Updated connected devices:", appState.connecteddevices);
+                    const newConnectedDevices = [...message.devices];
+                    console.log("[UI] Updated connected devices:", newConnectedDevices);
+                    // Update the entire appState to ensure Svelte detects the change
+                    appState = {
+                        ...appState,
+                        connecteddevices: newConnectedDevices
+                    };
                 } else {
                     console.warn("[UI] Invalid device list received:", message.devices);
                 }
-                appState = { ...appState };
                 break;
 
             case "sessionUpdate":
@@ -280,12 +284,15 @@
 
             case "meshStatusUpdate":
                 console.log("[UI] Processing meshStatusUpdate:", message);
-                appState.meshStatus = message.status || {
+                const newMeshStatus = message.status || {
                     type: MeshStatusType.Incomplete,
                 };
-                console.log("[UI] Mesh status update:", appState.meshStatus);
-                // Trigger reactivity
-                appState = { ...appState };
+                console.log("[UI] Mesh status update:", newMeshStatus);
+                // Update the entire appState to ensure Svelte detects the change
+                appState = {
+                    ...appState,
+                    meshStatus: newMeshStatus
+                };
                 break;
 
             case "webrtcConnectionUpdate":
@@ -302,19 +309,22 @@
                         message.connected,
                     );
 
-                    // Update WebRTC connections in app state
-                    appState.webrtcConnections = {
+                    // Create a new webrtcConnections object to ensure reactivity
+                    const newWebrtcConnections = {
                         ...appState.webrtcConnections,
                         [message.deviceId]: message.connected,
+                    };
+
+                    // Update the entire appState to ensure Svelte detects the change
+                    appState = {
+                        ...appState,
+                        webrtcConnections: newWebrtcConnections
                     };
 
                     console.log(
                         "[UI] Updated webrtcConnections:",
                         appState.webrtcConnections,
                     );
-
-                    // Trigger reactivity
-                    appState = { ...appState };
                 } else {
                     console.warn(
                         "[UI] Invalid webrtcConnectionUpdate message:",
@@ -932,11 +942,14 @@
                         </div>
 
                         {#if peer !== appState.deviceId}
+                            {@const webrtcStatus = appState.webrtcConnections[peer]}
+                            {@const isInSession = appState.sessionInfo && appState.sessionInfo.participants.includes(peer)}
+                            {@const isConnecting = isInSession && appState.meshStatus?.type === MeshStatusType.PartiallyReady && webrtcStatus !== true}
                             <div class="flex items-center gap-2">
                                 <span class="text-xs text-gray-500"
                                     >WebRTC:</span
                                 >
-                                {#if getWebRTCStatus(peer) === "connected"}
+                                {#if webrtcStatus === true}
                                     <span
                                         class="text-xs bg-green-100 text-green-800 px-2 py-1 rounded"
                                         >Connected</span
@@ -950,7 +963,7 @@
                                             Test Message
                                         </button>
                                     {/if}
-                                {:else if getWebRTCStatus(peer) === "connecting"}
+                                {:else if isConnecting}
                                     <span
                                         class="text-xs bg-yellow-100 text-yellow-800 px-2 py-1 rounded"
                                         >Connecting</span

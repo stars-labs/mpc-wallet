@@ -32,6 +32,8 @@ export interface PeerConnectionState {
     connectionState: RTCPeerConnectionState;
     iceCandidatesReceived: number;
     isConnected: boolean;
+    isPeerConnectionConnected: boolean;
+    isDataChannelOpen: boolean;
 }
 
 /**
@@ -340,7 +342,9 @@ export class WebRTCConnectionManager {
             dataChannel: null,
             connectionState: connection.connectionState,
             iceCandidatesReceived: 0,
-            isConnected: false
+            isConnected: false,
+            isPeerConnectionConnected: false,
+            isDataChannelOpen: false
         });
     }
 
@@ -351,7 +355,9 @@ export class WebRTCConnectionManager {
         const connectionState = this.connectionStates.get(peerId);
         if (connectionState) {
             connectionState.connectionState = state;
-            connectionState.isConnected = state === 'connected';
+            connectionState.isPeerConnectionConnected = state === 'connected';
+            // Consider connected if EITHER peer connection is connected OR data channel is open
+            connectionState.isConnected = connectionState.isPeerConnectionConnected || connectionState.isDataChannelOpen;
         }
     }
 
@@ -361,8 +367,10 @@ export class WebRTCConnectionManager {
     private markChannelConnected(peerId: string, connected: boolean): void {
         const connectionState = this.connectionStates.get(peerId);
         if (connectionState) {
-            connectionState.isConnected = connected;
+            connectionState.isDataChannelOpen = connected;
             connectionState.dataChannel = this.dataChannels.get(peerId) || null;
+            // Consider connected if EITHER peer connection is connected OR data channel is open
+            connectionState.isConnected = connectionState.isPeerConnectionConnected || connectionState.isDataChannelOpen;
         }
     }
 
