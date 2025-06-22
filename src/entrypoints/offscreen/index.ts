@@ -616,10 +616,12 @@ async function handleGetEthereumAddress(messageType: string, payload: any): Prom
 
         console.log("🔧 [Handler] Getting Ethereum address");
         const addresses = webRTCManager.getAddresses();
+        console.log("🔧 [Handler] Available addresses:", addresses);
+        console.log("🔧 [Handler] Ethereum address:", addresses.ethereum);
 
         return {
             success: true,
-            data: { address: addresses.ethereum || null }
+            data: { ethereumAddress: addresses.ethereum || null }
         };
     } catch (error) {
         console.error("❌ [Handler] Error getting Ethereum address:", error);
@@ -644,7 +646,7 @@ async function handleGetSolanaAddress(messageType: string, payload: any): Promis
 
         return {
             success: true,
-            data: { address: addresses.solana || null }
+            data: { solanaAddress: addresses.solana || null }
         };
     } catch (error) {
         console.error("❌ [Handler] Error getting Solana address:", error);

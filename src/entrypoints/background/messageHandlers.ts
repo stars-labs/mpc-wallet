@@ -545,9 +545,25 @@ export class PopupMessageHandler {
                 }, () => {
                     console.log("[PopupMessageHandler] Stored Ethereum address in chrome.storage.local");
                 });
+                sendResponse(ethResult);
+            } else {
+                // If no address from offscreen, check if we have a stored address
+                chrome.storage.local.get(['mpc_ethereum_address'], (result) => {
+                    if (result && result.mpc_ethereum_address) {
+                        console.log("[PopupMessageHandler] Using stored Ethereum address:", result.mpc_ethereum_address);
+                        sendResponse({
+                            success: true,
+                            data: { ethereumAddress: result.mpc_ethereum_address }
+                        });
+                    } else {
+                        console.log("[PopupMessageHandler] No Ethereum address available (DKG not complete)");
+                        sendResponse({
+                            success: false,
+                            error: "No Ethereum address available. Please complete DKG setup first."
+                        });
+                    }
+                });
             }
-            
-            sendResponse(ethResult);
         } catch (error) {
             console.error("[PopupMessageHandler] Error getting Ethereum address:", error);
             sendResponse({ success: false, error: `Error getting Ethereum address: ${(error as Error).message}` });
