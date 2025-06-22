@@ -402,6 +402,17 @@
                     appState = { ...appState };
                 }
                 break;
+                
+            case "accountsUpdated":
+                console.log("[UI] Processing accountsUpdated:", message);
+                // Trigger account refresh in AccountManager component
+                // The AccountManager component will automatically refresh when AccountService notifies it
+                if (message.blockchain && message.accounts) {
+                    console.log(`[UI] Accounts updated for ${message.blockchain}:`, message.accounts);
+                    // Force a re-render by updating app state
+                    appState = { ...appState, accountsUpdated: Date.now() };
+                }
+                break;
 
             default:
                 console.log(
@@ -889,7 +900,6 @@
     {#if appState.dkgState === DkgState.Complete}
         <div class="mb-4">
             <AccountManager 
-                currentAccount={null}
                 blockchain={appState.chain}
             />
         </div>

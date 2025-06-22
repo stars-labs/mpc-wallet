@@ -1638,6 +1638,21 @@ export class WebRTCManager {
 
       this._updateDkgState(DkgState.Complete);
       this._log(`DKG completed successfully. Group public key: ${this.groupPublicKey}`);
+      
+      // Notify the background script about DKG completion
+      if (this.onDkgComplete) {
+        const keyShareData = {
+          groupPublicKey: this.groupPublicKey,
+          ethereumAddress: this.ethereumAddress,
+          solanaAddress: this.solanaAddress,
+          sessionId: this.sessionInfo?.session_id,
+          curve: this.currentBlockchain === 'ethereum' ? 'secp256k1' : 'ed25519',
+          threshold: this.sessionInfo?.threshold,
+          totalParticipants: this.sessionInfo?.participants.length,
+          participants: this.sessionInfo?.participants || []
+        };
+        this.onDkgComplete(DkgState.Complete, keyShareData);
+      }
     } catch (error) {
       this._log(`Error finalizing DKG: ${this._getErrorMessage(error)}`);
       this._updateDkgState(DkgState.Failed);
@@ -1680,6 +1695,36 @@ export class WebRTCManager {
         await this.initializeDkg(blockchain);
       }
     }
+  }
+
+  public getAddresses(): Record<string, string> {
+    const addresses: Record<string, string> = {};
+    
+    if (this.walletAddress) {
+      addresses.current = this.walletAddress;
+    }
+    
+    if (this.ethereumAddress) {
+      addresses.ethereum = this.ethereumAddress;
+    }
+    
+    if (this.solanaAddress) {
+      addresses.solana = this.solanaAddress;
+    }
+    
+    return addresses;
+  }
+
+  public getEthereumAddress(): string | null {
+    return this.ethereumAddress;
+  }
+
+  public getSolanaAddress(): string | null {
+    return this.solanaAddress;
+  }
+
+  public getCurrentAddress(): string | null {
+    return this.walletAddress;
   }
 
   public async checkAndTriggerDkg(blockchain: string): Promise<boolean> {

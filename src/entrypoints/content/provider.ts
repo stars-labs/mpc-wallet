@@ -96,10 +96,8 @@ export class ContentProvider {
         
         // Use a simplified message structure that our background handler will recognize
         const message = {
-            // Include type but don't rely on it
-            type: 'FORWARD_REQUEST',
             // The payload is what matters - must have jsonrpc, id, method fields
-            payload: request,
+            ...request,
             origin: window.location.origin,
             timestamp: Date.now()
         };
@@ -292,8 +290,8 @@ export class ContentProvider {
                                         // Forward original request to background as last resort
                                         console.log('[Content Script] Failed to get address, forwarding original request');
                                         const originalMessage = {
-                                            type: 'FORWARD_REQUEST',
-                                            payload: request,
+                                            ...request,
+                                            origin: window.location.origin,
                                             timestamp: Date.now()
                                         };
                                         chrome.runtime.sendMessage(originalMessage);
@@ -323,8 +321,8 @@ export class ContentProvider {
                 console.warn(`[Content Script] Method ${method} marked as locally handleable but not implemented`);
                 // Fall back to background
                 const message = {
-                    type: 'FORWARD_REQUEST',
-                    payload: request,
+                    ...request,
+                    origin: window.location.origin,
                     timestamp: Date.now()
                 };
                 chrome.runtime.sendMessage(message);

@@ -3,18 +3,21 @@
     import type { Account } from '../types/account';
     import AccountService from '../services/accountService';
     
-    export let currentAccount: Account | null = null;
     export let blockchain: 'ethereum' | 'solana' = 'ethereum';
     
+    let currentAccount: Account | null = null;
     let accounts: Account[] = [];
     let showAccountSelector = false;
     let showCreateAccount = false;
     let newAccountName = '';
     let accountService: AccountService;
     
-    onMount(() => {
+    onMount(async () => {
         accountService = AccountService.getInstance();
-        loadAccounts();
+        await loadAccounts();
+        
+        // Get current account from AccountService
+        currentAccount = accountService.getCurrentAccount();
         
         // Listen for account changes
         accountService.onAccountChange((account) => {

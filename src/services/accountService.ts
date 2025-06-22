@@ -259,24 +259,45 @@ class AccountService {
     ): Promise<Account | null> {
         try {
             const pendingSession = await this.getPendingSession(sessionId);
-            if (!pendingSession) {
-                throw new Error('Pending session not found');
-            }
             
-            const account: Account = {
-                id: `mpc-${sessionId}`,
-                address,
-                name: pendingSession.name,
-                balance: '0',
-                blockchain: pendingSession.blockchain,
-                created: Date.now(),
-                metadata: {
-                    sessionId,
-                    source: 'dkg',
-                    threshold: pendingSession.threshold,
-                    totalParticipants: pendingSession.totalParticipants
-                }
-            };
+            // If no pending session, create account directly from DKG data
+            let account: Account;
+            
+            if (pendingSession) {
+                account = {
+                    id: `mpc-${sessionId}`,
+                    address,
+                    name: pendingSession.name,
+                    balance: '0',
+                    blockchain: pendingSession.blockchain,
+                    created: Date.now(),
+                    metadata: {
+                        sessionId,
+                        source: 'dkg',
+                        threshold: pendingSession.threshold,
+                        totalParticipants: pendingSession.totalParticipants
+                    }
+                };
+            } else {
+                // Create account directly from DKG session
+                console.log('[AccountService] No pending session found, creating account from DKG data');
+                const existingAccountsCount = this.getAccountsByBlockchain(keyShareData.curve === 'secp256k1' ? 'ethereum' : 'solana').length;
+                
+                account = {
+                    id: `mpc-${sessionId}`,
+                    address,
+                    name: `Account ${existingAccountsCount + 1}`,
+                    balance: '0',
+                    blockchain: keyShareData.curve === 'secp256k1' ? 'ethereum' : 'solana',
+                    created: Date.now(),
+                    metadata: {
+                        sessionId,
+                        source: 'dkg',
+                        threshold: keyShareData.threshold || 2,
+                        totalParticipants: keyShareData.totalParticipants || 3
+                    }
+                };
+            }
             
             // Save key share to keystore
             const keystore = getKeystoreService();
@@ -295,8 +316,10 @@ class AccountService {
             // Add account
             await this.addAccount(account);
             
-            // Remove pending session
-            await this.removePendingSession(sessionId);
+            // Remove pending session if it exists
+            if (pendingSession) {
+                await this.removePendingSession(sessionId);
+            }
             
             return account;
         } catch (error) {

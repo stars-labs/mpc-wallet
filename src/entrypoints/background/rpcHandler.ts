@@ -254,38 +254,6 @@ export class RpcHandler {
         // For now, just delegate to handleRpcRequest
         return this.handleRpcRequest(request);
     }
-}
-
-/**
- * Handles UI requests from the popup interface
- */
-export class UIRequestHandler {
-    private walletController: WalletController;
-
-    constructor() {
-        this.walletController = WalletController.getInstance();
-    }
-
-    /**
-     * Handle UI requests from popup
-     */
-    async handleUIRequest(request: { method: string; params: unknown[] }): Promise<{ success: boolean; data?: unknown; error?: string }> {
-        const { method, params } = request;
-
-        console.log(`[UIRequestHandler] Processing UI request: ${method}`);
-
-        if (typeof this.walletController[method as keyof WalletController] === 'function') {
-            try {
-                const result = await (this.walletController[method as keyof WalletController] as (...args: unknown[]) => unknown)(...params);
-                return { success: true, data: result };
-            } catch (error) {
-                console.error(`[UIRequestHandler] UI request failed: ${method}`, error);
-                return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
-            }
-        }
-
-        return { success: false, error: `Method ${method} not found on WalletController` };
-    }
 
     /**
      * Check if a method is read-only and should be forwarded to RPC provider
@@ -360,5 +328,37 @@ export class UIRequestHandler {
             console.error(`[RpcHandler] Failed to forward to RPC provider:`, error);
             throw error;
         }
+    }
+}
+
+/**
+ * Handles UI requests from the popup interface
+ */
+export class UIRequestHandler {
+    private walletController: WalletController;
+
+    constructor() {
+        this.walletController = WalletController.getInstance();
+    }
+
+    /**
+     * Handle UI requests from popup
+     */
+    async handleUIRequest(request: { method: string; params: unknown[] }): Promise<{ success: boolean; data?: unknown; error?: string }> {
+        const { method, params } = request;
+
+        console.log(`[UIRequestHandler] Processing UI request: ${method}`);
+
+        if (typeof this.walletController[method as keyof WalletController] === 'function') {
+            try {
+                const result = await (this.walletController[method as keyof WalletController] as (...args: unknown[]) => unknown)(...params);
+                return { success: true, data: result };
+            } catch (error) {
+                console.error(`[UIRequestHandler] UI request failed: ${method}`, error);
+                return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+            }
+        }
+
+        return { success: false, error: `Method ${method} not found on WalletController` };
     }
 }

@@ -772,16 +772,43 @@ export class OffscreenMessageHandler {
                 ? keyShareData.ethereumAddress 
                 : keyShareData.solanaAddress;
             
+            // Store addresses in chrome.storage.local for immediate access
+            if (keyShareData.ethereumAddress) {
+                chrome.storage.local.set({ 
+                    'mpc_ethereum_address': keyShareData.ethereumAddress 
+                }, () => {
+                    console.log("[OffscreenMessageHandler] Stored Ethereum address in chrome.storage.local:", keyShareData.ethereumAddress);
+                });
+            }
+            
+            if (keyShareData.solanaAddress) {
+                chrome.storage.local.set({ 
+                    'mpc_solana_address': keyShareData.solanaAddress 
+                }, () => {
+                    console.log("[OffscreenMessageHandler] Stored Solana address in chrome.storage.local:", keyShareData.solanaAddress);
+                });
+            }
+            
             if (address && sessionId) {
                 // Complete account creation
                 const accountService = AccountService.getInstance();
-                await accountService.completeAccountCreation(
+                const newAccount = await accountService.completeAccountCreation(
                     sessionId,
                     address,
                     keyShareData
                 );
                 
                 console.log("[OffscreenMessageHandler] Account created for session:", sessionId);
+                
+                // Notify popup to refresh accounts
+                if (newAccount) {
+                    const stateManager = StateManager.getInstance();
+                    stateManager.broadcastToPopupPorts({
+                        type: 'accountsUpdated',
+                        blockchain: newAccount.blockchain,
+                        accounts: accountService.getAccountsByBlockchain(newAccount.blockchain)
+                    });
+                }
             }
         }
     }
