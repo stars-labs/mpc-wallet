@@ -537,6 +537,16 @@ export class PopupMessageHandler {
             const ethResult = await this.offscreenManager.sendToOffscreen({
                 type: "getEthereumAddress"
             }, "getEthereumAddress");
+            
+            // Store address in chrome.storage.local for content script access
+            if (ethResult.success && ethResult.data?.ethereumAddress) {
+                chrome.storage.local.set({ 
+                    'mpc_ethereum_address': ethResult.data.ethereumAddress 
+                }, () => {
+                    console.log("[PopupMessageHandler] Stored Ethereum address in chrome.storage.local");
+                });
+            }
+            
             sendResponse(ethResult);
         } catch (error) {
             console.error("[PopupMessageHandler] Error getting Ethereum address:", error);
@@ -549,6 +559,16 @@ export class PopupMessageHandler {
             const solResult = await this.offscreenManager.sendToOffscreen({
                 type: "getSolanaAddress"
             }, "getSolanaAddress");
+            
+            // Store address in chrome.storage.local for content script access
+            if (solResult.success && solResult.data?.solanaAddress) {
+                chrome.storage.local.set({ 
+                    'mpc_solana_address': solResult.data.solanaAddress 
+                }, () => {
+                    console.log("[PopupMessageHandler] Stored Solana address in chrome.storage.local");
+                });
+            }
+            
             sendResponse(solResult);
         } catch (error) {
             console.error("[PopupMessageHandler] Error getting Solana address:", error);

@@ -525,6 +525,21 @@ export class StateManager {
                     this.appState.dkgAddress = dkgAddress;
                     this.appState.dkgError = "";
 
+                    // Store address in chrome.storage.local for content script access
+                    if (blockchain === "ethereum") {
+                        chrome.storage.local.set({ 
+                            'mpc_ethereum_address': dkgAddress 
+                        }, () => {
+                            console.log("[StateManager] Stored Ethereum address in chrome.storage.local");
+                        });
+                    } else if (blockchain === "solana") {
+                        chrome.storage.local.set({ 
+                            'mpc_solana_address': dkgAddress 
+                        }, () => {
+                            console.log("[StateManager] Stored Solana address in chrome.storage.local");
+                        });
+                    }
+
                     // Broadcast DKG address update to popup
                     this.broadcastToPopupPorts({
                         type: "dkgAddressUpdate",
