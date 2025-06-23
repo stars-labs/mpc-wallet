@@ -2375,6 +2375,9 @@ export class WebRTCManager {
       this.signingShares.set(this.localPeerId, signatureShareHex);
       this._log(`Stored own signature share and sent to ${this.signingInfo.selected_signers.length - 1} peers`);
 
+      // Try to aggregate after adding our own share
+      this._tryAggregateSignature();
+
     } catch (error) {
       this._log(`Error generating FROST signature share: ${this._getErrorMessage(error)}`);
       this._updateSigningState(SigningState.Failed, this.signingInfo);
@@ -2399,14 +2402,12 @@ export class WebRTCManager {
       const messageHex = this.signingInfo.transaction_data;
       this._log(`Aggregating signature for message: ${messageHex}`);
       
-      const aggregatedResult = this.frostDkg.aggregate_signature(messageHex);
+      const signatureHex = this.frostDkg.aggregate_signature(messageHex);
       
-      if (!aggregatedResult || !aggregatedResult.signature) {
+      if (!signatureHex) {
         this._log(`Error: Invalid aggregation result from FROST`);
         return;
       }
-
-      const signatureHex = aggregatedResult.signature;
       this._log(`Successfully aggregated signature: ${signatureHex}`);
 
       // Broadcast aggregated signature
