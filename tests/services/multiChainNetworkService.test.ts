@@ -1,12 +1,12 @@
-import { describe, it, expect, beforeEach, afterEach, mock } from 'bun:test';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { MultiChainNetworkService } from '../../src/services/multiChainNetworkService';
 import { ChainInfo, DEFAULT_CHAINS, getChainById } from '../../src/config/chains';
 
 // Mock chrome.storage API
 const mockStorage = {
   local: {
-    get: mock(() => Promise.resolve({})),
-    set: mock(() => Promise.resolve()),
+    get: vi.fn(() => Promise.resolve({})),
+    set: vi.fn(() => Promise.resolve()),
   }
 };
 

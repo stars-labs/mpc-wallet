@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import WalletController from '../../src/services/walletController';
 import AccountService from '../../src/services/accountService';
 import NetworkService from '../../src/services/networkService';

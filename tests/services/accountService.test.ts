@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import AccountService from '../../src/services/accountService';
 import { Account } from '../../src/types/account';
 

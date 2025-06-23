@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'bun:test';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { MultiChainNetworkService } from '../../src/services/multiChainNetworkService';
 import type { ChainInfo } from '../../src/config/chains';
 import { getChainById } from '../../src/config/chains';

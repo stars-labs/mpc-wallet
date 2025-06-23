@@ -1,73 +1,51 @@
-# Test Directory Structure
+# Test Structure
 
-This directory contains all unit tests for the MPC Wallet Chrome Extension.
+This directory contains all tests for the MPC Wallet browser extension.
 
-## Structure
+## Organization
 
 ```
 tests/
-├── services/                    # Service layer tests
-│   ├── accountService.test.ts   # Account management tests
-│   ├── networkService.test.ts   # Network/blockchain tests
-│   ├── walletClient.test.ts     # Wallet client tests
-│   └── walletController.test.ts # Wallet controller tests
-└── entrypoints/
-    └── offscreen/               # Offscreen WebRTC and DKG tests
-        ├── webrtc.test.ts           # Main WebRTC functionality tests
-        ├── webrtc.dkg.test.ts       # Distributed Key Generation tests
-        ├── webrtc.errors.test.ts    # Error handling tests
-        ├── webrtc.mesh.test.ts      # Mesh networking tests
-        ├── webrtc.signing.test.ts   # FROST signing tests
-        ├── webrtc.simple.test.ts    # Basic WebRTC tests
-        ├── webrtc.setblockchain.test.ts # Blockchain switching tests
-        └── webrtc.environment.test.ts   # Environment-specific tests
+├── components/        # UI component tests
+├── config/           # Configuration tests
+├── entrypoints/      # Extension entrypoint tests
+│   ├── background/   # Background service worker tests
+│   └── offscreen/    # Offscreen document tests (WebRTC, FROST)
+├── integration/      # Integration tests
+├── services/         # Service layer tests
+└── setup.ts         # Test setup and utilities
 ```
 
 ## Running Tests
 
-### All Tests
 ```bash
-npm run test
-# or
-npm run test:all
+# Run all tests
+npm test
+
+# Run tests in watch mode
+npm run test:watch
+
+# Run specific test suites
+npm run test:unit        # Components, config, services
+npm run test:integration # Integration tests
+npm run test:webrtc     # WebRTC tests (uses Bun)
+
+# Run with coverage
+npm run test:coverage
+
+# Open test UI
+npm run test:ui
 ```
 
-### Service Tests Only
-```bash
-npm run test:services
-```
+## Test Runners
 
-### WebRTC Tests Only
-```bash
-npm run test:webrtc:all  # All WebRTC tests
-npm run test:webrtc      # Simple WebRTC tests only
-npm run test:dkg         # DKG-specific tests
-npm run test:webrtc:errors # Error handling tests
-```
+- **Vitest**: Used for most tests (components, services, integration)
+- **Bun**: Used for WebRTC tests due to WASM requirements
 
-## Test Structure
+## Writing Tests
 
-Each test file follows this pattern:
-- Import test framework and dependencies
-- Import the module under test from `../../src/...`
-- Set up test data and utilities
-- Organize tests using `describe` blocks for features
-- Use `it` blocks for individual test cases
-
-## Test Dependencies
-
-Tests are configured to:
-- Use Bun as the test runner
-- Have a 30-second timeout for complex operations
-- Initialize WASM modules for cryptographic operations
-- Use proper cleanup for resources
-
-## Coverage
-
-Test coverage excludes:
-- WASM bindings (`pkg/`)
-- Rust build artifacts (`target/`)
-- Test files themselves (`tests/`)
-- Node modules and other standard exclusions
-
-See `bun.test.config.ts` for complete coverage configuration.
+1. Place test files next to the code they test with `.test.ts` extension
+2. Use descriptive test names
+3. Follow the existing test patterns
+4. Mock external dependencies appropriately
+5. Ensure tests are deterministic and don't depend on external state

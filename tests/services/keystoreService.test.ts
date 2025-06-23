@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { KeystoreService } from './keystoreService';
+import { KeystoreService } from '../../src/services/keystoreService';
 import type { KeyShareData, WalletMetadata } from '../types/keystore';
 
 // Mock chrome.storage API

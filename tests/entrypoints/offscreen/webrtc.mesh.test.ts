@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll } from 'bun:test';
+import { describe, it, expect, beforeAll } from 'vitest';
 import { WebRTCManager, MeshStatusType } from '../../../src/entrypoints/offscreen/webrtc';
 import { initializeWasmIfNeeded, createTestSessionInfo, dummySend } from './test-utils';
 

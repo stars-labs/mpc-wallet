@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll } from 'bun:test';
+import { describe, it, expect, beforeAll } from 'vitest';
 import { DkgState, WebRTCManager, MeshStatusType } from '../../../src/entrypoints/offscreen/webrtc'; // Updated path
 import { Buffer } from 'buffer';
 import wasmInit, { FrostDkgEd25519, FrostDkgSecp256k1 } from '../../../pkg/mpc_wallet.js'; // Corrected import

@@ -2226,6 +2226,12 @@ export class WebRTCManager {
       this._log(`Cannot generate commitment: FROST DKG not initialized`);
       return;
     }
+    
+    // Clear any previous signing state
+    this.signingCommitments.clear();
+    this.signingShares.clear();
+    this.signingNonces = false;
+    this._log(`Cleared previous signing state`);
 
     try {
       // Check if FROST DKG is ready for signing
@@ -2323,7 +2329,17 @@ export class WebRTCManager {
         }
       });
 
-      // Add our own commitment - store the original hex for internal use
+      // Add our own commitment to WASM module (CRITICAL: must do this!)
+      try {
+        this._log(`Adding our own commitment to WASM with index ${ourIndex}`);
+        this.frostDkg.add_signing_commitment(ourIndex, commitmentsHex);
+        this._log(`Successfully added our own commitment to WASM`);
+      } catch (error) {
+        this._log(`ERROR: Failed to add own commitment to WASM: ${this._getErrorMessage(error)}`);
+        throw error;
+      }
+      
+      // Also store the commitment for tracking
       this.signingCommitments.set(this.localPeerId, commitmentsHex);
       this._log(`Stored own commitment and sent to ${this.signingInfo.selected_signers.length - 1} peers`);
 
@@ -2421,7 +2437,17 @@ export class WebRTCManager {
         }
       });
 
-      // Add our own share - store the raw hex for internal use
+      // Add our own share to WASM module (CRITICAL: must do this!)
+      try {
+        this._log(`Adding our own signature share to WASM with index ${ourIndex}`);
+        this.frostDkg.add_signature_share(ourIndex, signatureShareHex);
+        this._log(`Successfully added our own signature share to WASM`);
+      } catch (error) {
+        this._log(`ERROR: Failed to add own share to WASM: ${this._getErrorMessage(error)}`);
+        throw error;
+      }
+      
+      // Also store the share for tracking
       this.signingShares.set(this.localPeerId, signatureShareHex);
       this._log(`Stored own signature share and sent to ${this.signingInfo.selected_signers.length - 1} peers`);
 

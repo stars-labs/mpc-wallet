@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'bun:test';
+import { describe, it, expect } from 'vitest';
 import { DkgState, WebRTCManager, MeshStatusType } from '../../../src/entrypoints/offscreen/webrtc';
 
 // Dummy send function for WebRTCManager

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import NetworkService from '../../src/services/networkService';
 import { mainnet, sepolia } from 'viem/chains';
 import type { Chain } from '../../src/types/network';

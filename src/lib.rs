@@ -97,6 +97,8 @@ trait FrostCurve {
     type SigningPackage;
 
     fn identifier_from_u16(value: u16) -> Result<Self::Identifier, String>;
+    fn identifier_to_u16(identifier: &Self::Identifier) -> Result<u16, String>;
+    fn serialize_identifier(identifier: &Self::Identifier) -> Result<Vec<u8>, String>;
     fn dkg_part1(
         identifier: Self::Identifier,
         total: u16,
@@ -165,6 +167,22 @@ impl FrostCurve for Ed25519Curve {
 
     fn identifier_from_u16(value: u16) -> Result<Self::Identifier, String> {
         Ed25519Identifier::try_from(value).map_err(|e| e.to_string())
+    }
+
+    fn identifier_to_u16(identifier: &Self::Identifier) -> Result<u16, String> {
+        // Convert Identifier to u16 by serializing and extracting the value
+        let bytes = identifier.serialize();
+        if bytes.len() >= 2 {
+            // Extract u16 from the last 2 bytes (big-endian)
+            let value = u16::from_be_bytes([bytes[bytes.len() - 2], bytes[bytes.len() - 1]]);
+            Ok(value)
+        } else {
+            Err("Invalid identifier bytes".to_string())
+        }
+    }
+
+    fn serialize_identifier(identifier: &Self::Identifier) -> Result<Vec<u8>, String> {
+        Ok(identifier.serialize())
     }
 
     fn dkg_part1(
@@ -276,6 +294,22 @@ impl FrostCurve for Secp256k1Curve {
 
     fn identifier_from_u16(value: u16) -> Result<Self::Identifier, String> {
         Secp256k1Identifier::try_from(value).map_err(|e| e.to_string())
+    }
+
+    fn identifier_to_u16(identifier: &Self::Identifier) -> Result<u16, String> {
+        // Convert Identifier to u16 by serializing and extracting the value
+        let bytes = identifier.serialize();
+        if bytes.len() >= 2 {
+            // Extract u16 from the last 2 bytes (big-endian)
+            let value = u16::from_be_bytes([bytes[bytes.len() - 2], bytes[bytes.len() - 1]]);
+            Ok(value)
+        } else {
+            Err("Invalid identifier bytes".to_string())
+        }
+    }
+
+    fn serialize_identifier(identifier: &Self::Identifier) -> Result<Vec<u8>, String> {
+        Ok(identifier.serialize())
     }
 
     fn dkg_part1(
@@ -652,6 +686,13 @@ impl<C: FrostCurve> FrostDkgGeneric<C> {
     fn signing_commit(&mut self) -> Result<String, WasmError> {
         console_log!("🔍 signing_commit: key_package exists: {}", self.key_package.is_some());
         console_log!("🔍 signing_commit: identifier exists: {}", self.identifier.is_some());
+        console_log!("🔍 signing_commit: existing nonces: {}", self.signing_nonces.is_some());
+        
+        // Clear any existing signing state to ensure fresh nonces
+        self.signing_commitments.clear();
+        self.signature_shares.clear();
+        self.signing_nonces = None;
+        console_log!("🔍 signing_commit: cleared previous signing state");
         
         let key_package = self.key_package.as_ref().ok_or("DKG not completed")?;
         let mut rng = OsRng;
@@ -840,9 +881,44 @@ impl<C: FrostCurve> FrostDkgGeneric<C> {
         );
 
         // Aggregate signature
-        let signature =
-            C::aggregate_signature(&signing_package, &self.signature_shares, public_key_package)
-                .map_err(|e| format!("Failed to aggregate signature: {}", e))?;
+        let signature = match C::aggregate_signature(&signing_package, &self.signature_shares, public_key_package) {
+            Ok(sig) => sig,
+            Err(e) => {
+                console_log!("🔍 aggregate_signature: FROST error: {:?}", e);
+                console_log!("🔍 aggregate_signature: shares count: {}", self.signature_shares.len());
+                console_log!("🔍 aggregate_signature: commitments count: {}", self.signing_commitments.len());
+                
+                // Log detailed state for debugging
+                console_log!("🔍 aggregate_signature: DEBUG - Signing state details:");
+                if let Some(our_id) = self.identifier {
+                    console_log!("🔍 aggregate_signature: Our identifier u16: {:?}", C::identifier_to_u16(&our_id));
+                } else {
+                    console_log!("🔍 aggregate_signature: Our identifier is None");
+                }
+                
+                // Log identifiers in commitments
+                console_log!("🔍 aggregate_signature: Commitments from identifiers:");
+                for (id, _) in &self.signing_commitments {
+                    let id_bytes = C::serialize_identifier(&id).unwrap_or_else(|_| vec![0]);
+                    console_log!("  - Identifier: {} (u16: {:?})", hex::encode(&id_bytes), C::identifier_to_u16(&id));
+                }
+                
+                // Log identifiers in shares
+                console_log!("🔍 aggregate_signature: Shares from identifiers:");
+                for (id, _) in &self.signature_shares {
+                    let id_bytes = C::serialize_identifier(&id).unwrap_or_else(|_| vec![0]);
+                    console_log!("  - Identifier: {} (u16: {:?})", hex::encode(&id_bytes), C::identifier_to_u16(&id));
+                }
+                
+                // Try to determine which shares are invalid
+                console_log!("🔍 aggregate_signature: Checking share validity...");
+                for (id, share) in &self.signature_shares {
+                    console_log!("  - Checking share from identifier u16={:?}", C::identifier_to_u16(&id));
+                }
+                
+                return Err(format!("Failed to aggregate signature: {}", e).into());
+            }
+        };
 
         console_log!("🔍 aggregate_signature: signature aggregation successful");
 

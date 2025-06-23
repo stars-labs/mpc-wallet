@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { PermissionService } from './permissionService';
-import type { DAppPermission } from './permissionService';
+import { PermissionService } from '../../src/services/permissionService';
+import type { DAppPermission } from '../../src/services/permissionService';
 
 // Mock chrome.storage API
 const mockStorage = {

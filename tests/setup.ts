@@ -82,7 +82,6 @@ if (!global.crypto.subtle) {
         digest: vi.fn(),
         deriveBits: vi.fn(),
         deriveKey: vi.fn(),
-        generateKey: vi.fn(),
         wrapKey: vi.fn(),
         unwrapKey: vi.fn()
     } as any;
