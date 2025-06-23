@@ -1001,6 +1001,16 @@ export class WebRTCManager {
     });
 
     this._log(`Signing request broadcast to ${this.sessionInfo.participants.length - 1} peers`);
+    this._log(`DEBUG: Initial accepted_participants: [${this.signingInfo.accepted_participants.join(', ')}], threshold: ${threshold}`);
+    
+    // Initialize participant indices if not already done
+    if (this.participantIndices.size === 0 && this.sessionInfo) {
+      this._log(`DEBUG: Initializing participantIndices from sessionInfo`);
+      this.sessionInfo.participants.forEach((deviceId, index) => {
+        this.participantIndices.set(deviceId, index + 1);
+      });
+      this._log(`DEBUG: participantIndices initialized: ${Array.from(this.participantIndices.entries()).map(([id, idx]) => `${id}:${idx}`).join(', ')}`);
+    }
   }
 
   // Add requestSigning method to match the expected interface
@@ -1103,21 +1113,36 @@ export class WebRTCManager {
       return;
     }
 
+    this._log(`DEBUG: All accepted participants: [${this.signingInfo.accepted_participants.join(', ')}]`);
+    this._log(`DEBUG: Threshold: ${this.signingInfo.threshold}`);
+    this._log(`DEBUG: participantIndices map size: ${this.participantIndices.size}`);
+    this._log(`DEBUG: participantIndices entries: ${Array.from(this.participantIndices.entries()).map(([id, idx]) => `${id}:${idx}`).join(', ')}`);
+
     // Simple signer selection - use the first 'threshold' number of accepted participants
     const availableSigners = this.signingInfo.accepted_participants.slice(0, this.signingInfo.threshold);
     this.signingInfo.selected_signers = availableSigners;
     this.signingInfo.step = "signer_selection";
 
+    this._log(`DEBUG: availableSigners after slice: [${availableSigners.join(', ')}]`);
+
     // Convert selected signers (device IDs) to participant indices for the message
     const selectedSignerIdentifiers: string[] = [];
+    
+    if (this.participantIndices.size === 0) {
+      this._log(`ERROR: participantIndices is empty! Cannot convert device IDs to hex identifiers.`);
+      this._log(`ERROR: This will result in empty selected_signers array being sent.`);
+    }
+    
     for (const signer of availableSigners) {
       const index = this.participantIndices.get(signer);
       if (index !== undefined) {
         // Convert index to 64-character hex string (same format as CLI)
         const hexIdentifier = index.toString(16).padStart(64, '0');
         selectedSignerIdentifiers.push(hexIdentifier);
+        this._log(`DEBUG: Converted ${signer} (index ${index}) to ${hexIdentifier.substring(0, 8)}...`);
       } else {
         this._log(`Warning: Cannot find participant index for ${signer}`);
+        this._log(`Warning: participantIndices has ${this.participantIndices.size} entries: ${Array.from(this.participantIndices.keys()).join(', ')}`);
       }
     }
 
@@ -1958,11 +1983,16 @@ export class WebRTCManager {
     if (message.accepted && !this.signingInfo.accepted_participants.includes(fromPeerId)) {
       this.signingInfo.accepted_participants.push(fromPeerId);
       this._log(`${fromPeerId} accepted signing. Total acceptances: ${this.signingInfo.accepted_participants.length}`);
+      this._log(`DEBUG: accepted_participants = [${this.signingInfo.accepted_participants.join(', ')}]`);
+      this._log(`DEBUG: threshold = ${this.signingInfo.threshold}`);
+      this._log(`DEBUG: Need ${this.signingInfo.threshold - this.signingInfo.accepted_participants.length} more acceptances`);
 
       // Check if we have enough acceptances to proceed
       if (this.signingInfo.accepted_participants.length >= this.signingInfo.threshold) {
         this._log(`Sufficient acceptances received. Proceeding with signer selection.`);
         this._selectSignersAndProceed();
+      } else {
+        this._log(`Waiting for more acceptances: ${this.signingInfo.accepted_participants.length}/${this.signingInfo.threshold}`);
       }
     }
   }
