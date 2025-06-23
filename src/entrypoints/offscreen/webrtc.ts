@@ -2064,9 +2064,35 @@ export class WebRTCManager {
       
       this._log(`Received commitment from ${fromPeerId} with identifier ${senderHexId.substring(0, 8)}... (index ${senderIndex})`);
 
-      // Add the commitment to FROST DKG
-      const commitmentHex = message.commitment;
-      this._log(`Adding commitment from ${fromPeerId} (index ${senderIndex})`);
+      // Handle commitment data - CLI sends JSON object, we need hex
+      let commitmentHex: string;
+      if (typeof message.commitment === 'string') {
+        // Already hex encoded
+        commitmentHex = message.commitment;
+      } else if (typeof message.commitment === 'object') {
+        // CLI format: JSON object with hiding and binding points
+        // We need to serialize this to match what FROST expects
+        const commitment = message.commitment;
+        
+        // The FROST commitment includes hiding and binding nonce commitments
+        // For secp256k1, these are compressed points (33 bytes each)
+        // We need to combine them into a single hex string
+        if (commitment.hiding && commitment.binding) {
+          // Remove '0x' prefix if present and combine
+          const hiding = commitment.hiding.replace(/^0x/, '');
+          const binding = commitment.binding.replace(/^0x/, '');
+          
+          // FROST expects: hiding || binding
+          commitmentHex = hiding + binding;
+          this._log(`Converted CLI commitment format: hiding=${hiding.substring(0, 8)}..., binding=${binding.substring(0, 8)}...`);
+        } else {
+          throw new Error('Invalid commitment format from CLI');
+        }
+      } else {
+        throw new Error(`Unexpected commitment type: ${typeof message.commitment}`);
+      }
+      
+      this._log(`Adding commitment from ${fromPeerId} (index ${senderIndex}), hex length: ${commitmentHex.length}`);
       
       this.frostDkg.add_signing_commitment(senderIndex, commitmentHex);
       
@@ -2164,7 +2190,7 @@ export class WebRTCManager {
       
       // Parse the commitments for sending
       const commitmentsHex = commitmentResult.commitments;
-      this._log(`Generated FROST commitments (hex): ${commitmentsHex}`);
+      this._log(`Generated FROST commitments (hex): ${commitmentsHex}, length: ${commitmentsHex.length}`);
 
       // Get our participant index and convert to hex identifier
       const ourIndex = this.participantIndices.get(this.localPeerId);
@@ -2174,12 +2200,36 @@ export class WebRTCManager {
       }
       const ourHexIdentifier = ourIndex.toString(16).padStart(64, '0');
 
+      // Parse the commitment hex into hiding and binding components
+      // For secp256k1, commitments are two compressed points (33 bytes each = 66 hex chars each)
+      let commitmentObject;
+      if (commitmentsHex.length === 132) { // 66 * 2 = 132 hex characters
+        const hiding = commitmentsHex.substring(0, 66);
+        const binding = commitmentsHex.substring(66, 132);
+        
+        // Create CLI-compatible commitment object
+        commitmentObject = {
+          header: {
+            version: 0,
+            ciphersuite: "FROST-secp256k1-SHA256-v1"
+          },
+          hiding: hiding,
+          binding: binding
+        };
+        
+        this._log(`Parsed commitment - hiding: ${hiding.substring(0, 8)}..., binding: ${binding.substring(0, 8)}...`);
+      } else {
+        // Fallback: send raw hex if format is unexpected
+        this._log(`Warning: Unexpected commitment length ${commitmentsHex.length}, sending raw hex`);
+        commitmentObject = commitmentsHex;
+      }
+
       // Send commitment to all selected signers
       const message: WebRTCAppMessage = {
         webrtc_msg_type: 'SigningCommitment' as const,
         signing_id: this.signingInfo.signing_id,
         sender_identifier: ourHexIdentifier, // Use hex identifier
-        commitment: commitmentResult.commitments // Send the hex-encoded commitments
+        commitment: commitmentObject // Send CLI-compatible format
       };
 
       this.signingInfo.selected_signers.forEach(peerId => {
@@ -2188,8 +2238,8 @@ export class WebRTCManager {
         }
       });
 
-      // Add our own commitment
-      this.signingCommitments.set(this.localPeerId, commitmentResult.commitments);
+      // Add our own commitment - store the original hex for internal use
+      this.signingCommitments.set(this.localPeerId, commitmentsHex);
       this._log(`Stored own commitment and sent to ${this.signingInfo.selected_signers.length - 1} peers`);
 
     } catch (error) {
