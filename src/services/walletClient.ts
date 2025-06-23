@@ -33,6 +33,8 @@ class WalletClientService {
     }
 
     private initializeWalletClient(): WalletClient {
+        // MPC wallet doesn't use viem's wallet client for signing
+        // This is kept only for compatibility with the interface
         const currentNetwork = this.networkService.getCurrentNetwork() || mainnet;
         return createWalletClient({
             chain: currentNetwork,
@@ -70,39 +72,21 @@ class WalletClientService {
     }
 
     public async sendTransaction(transaction: any): Promise<string> {
-        const currentAccount = this.accountService.getCurrentAccount();
-        if (!currentAccount) {
-            throw new Error('No account selected');
-        }
-
-        return this.walletClient.sendTransaction({
-            ...transaction,
-            from: currentAccount.address as `0x${string}`
-        });
+        // MPC wallets don't support single-key transaction signing
+        // Transactions must be signed through the MPC protocol
+        throw new Error('Transaction signing must use MPC protocol. Please use the MPC signing flow.');
     }
 
     public async signMessage(message: string): Promise<string> {
-        const currentAccount = this.accountService.getCurrentAccount();
-        if (!currentAccount) {
-            throw new Error('No account selected');
-        }
-
-        return this.walletClient.signMessage({
-            account: currentAccount.address as `0x${string}`,
-            message
-        });
+        // MPC wallets don't support single-key message signing
+        // Messages must be signed through the MPC protocol
+        throw new Error('Message signing must use MPC protocol. Please use the MPC signing flow.');
     }
 
     public async signTypedData(typedData: any): Promise<string> {
-        const currentAccount = this.accountService.getCurrentAccount();
-        if (!currentAccount) {
-            throw new Error('No account selected');
-        }
-
-        return this.walletClient.signTypedData({
-            account: currentAccount.address as `0x${string}`,
-            ...typedData
-        });
+        // MPC wallets don't support single-key typed data signing
+        // Typed data must be signed through the MPC protocol
+        throw new Error('Typed data signing must use MPC protocol. Please use the MPC signing flow.');
     }
 
     public async getBalance(address?: string): Promise<string> {

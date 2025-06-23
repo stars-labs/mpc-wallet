@@ -82,10 +82,13 @@ export class SessionManager {
             return;
         }
 
+        // Sort participants to ensure consistent indexing across all peers
+        const sortedParticipants = [...(proposalData.participants || [])].sort();
+        
         const sessionInfo: SessionInfo = {
             session_id: proposalData.session_id,
             proposer_id: fromPeerId,
-            participants: proposalData.participants || [],
+            participants: sortedParticipants,
             threshold: proposalData.threshold,
             total: proposalData.total,
             accepted_devices: [fromPeerId], // Proposer automatically accepts
@@ -386,11 +389,14 @@ export class SessionManager {
             this.stateManager.updateState({ blockchain });
         }
         
+        // Sort participants to ensure consistent indexing across all peers
+        const sortedParticipants = [...participants].sort();
+        
         const proposalData = {
             websocket_msg_type: "SessionProposal",
             session_id: sessionId,
             proposer_id: currentDeviceId,
-            participants: participants,
+            participants: sortedParticipants,
             threshold: threshold,
             total: totalParticipants
         };

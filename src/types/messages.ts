@@ -66,6 +66,8 @@ export type PopupToBackgroundMessage = BaseMessage & (
     // MPC signing operations
     | { type: 'requestSigning'; signingId: string; transactionData: string; requiredSigners: number }
     | { type: 'acceptSigning'; signingId: string; accepted: boolean }
+    | { type: 'requestMessageSignature'; message: string; fromAddress: string; origin: string }
+    | { type: 'approveMessageSignature'; requestId: string; approved: boolean }
 
     // Management operations
     | { type: 'createOffscreen' }
@@ -96,6 +98,8 @@ export type BackgroundToOffscreenMessage = BaseMessage & (
     | { type: 'getGroupPublicKey' }
     | { type: 'setBlockchain'; blockchain: "ethereum" | "solana" }
     | { type: 'requestSigning'; signingId: string; transactionData: string; requiredSigners: number }
+    | { type: 'requestMessageSignature'; signingId: string; message: string; fromAddress: string }
+    | { type: 'requestTransactionSignature'; signingId: string; transactionData: string; fromAddress: string }
 );
 
 // --- Offscreen to Background Message Types (Offscreen sends to Background) ---
@@ -112,6 +116,8 @@ export type OffscreenToBackgroundMessage = BaseMessage & (
     | { type: 'log'; payload: { message: string; source: string } }
     | { type: 'signingComplete'; signingId: string; signature: string }
     | { type: 'signingError'; signingId: string; error: string }
+    | { type: 'messageSignatureComplete'; signingId: string; signature: string }
+    | { type: 'messageSignatureError'; signingId: string; error: string }
 );
 
 // Add the missing InitialStateMessage type
@@ -139,7 +145,11 @@ export type BackgroundToPopupMessage =
     | { type: "webrtcStatusUpdate"; deviceId: string; status: string } & BaseMessage
     | { type: "meshStatusUpdate"; status: MeshStatus } & BaseMessage
     | { type: "dkgStateUpdate"; state: DkgState } & BaseMessage
-    | { type: "fromOffscreen"; payload: any } & BaseMessage;
+    | { type: "fromOffscreen"; payload: any } & BaseMessage
+    | { type: "signatureRequest"; signingId: string; message: string; origin: string; fromAddress: string } & BaseMessage
+    | { type: "signatureComplete"; signingId: string; signature: string } & BaseMessage
+    | { type: "signatureError"; signingId: string; error: string } & BaseMessage
+    | { type: "transactionRequest"; signingId: string; transaction: any; origin: string; fromAddress: string } & BaseMessage;
 
 // --- Wrapper Message Types for Communication Direction ---
 export type BackgroundToOffscreenWrapper = {

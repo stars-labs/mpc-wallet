@@ -76,6 +76,8 @@ async function initializeModules(): Promise<void> {
         messageRouter.registerHandler('start_dkg', handleStartDkg);
         messageRouter.registerHandler('requestSigning', handleRequestSigning);
         messageRouter.registerHandler('acceptSigning', handleAcceptSigning);
+        messageRouter.registerHandler('requestMessageSignature', handleRequestMessageSignature);
+        messageRouter.registerHandler('requestTransactionSignature', handleRequestTransactionSignature);
         messageRouter.registerHandler('set_blockchain', handleSetBlockchain);
         messageRouter.registerHandler('get_addresses', handleGetAddresses);
         messageRouter.registerHandler('relayViaWs', handleRelayViaWs);
@@ -460,6 +462,94 @@ async function handleAcceptSigning(messageType: string, payload: any): Promise<a
 }
 
 /**
+ * Handle message signature request
+ */
+async function handleRequestMessageSignature(messageType: string, payload: any): Promise<any> {
+    try {
+        if (!webRTCManager) {
+            throw new Error("WebRTC manager not initialized");
+        }
+
+        console.log("✍️ [Handler] Message signature request:", payload);
+        const { signingId, message, fromAddress } = payload;
+
+        // For now, use the regular signing flow with the message as transaction data
+        // In a real implementation, you would format the message according to EIP-191
+        const messageToSign = `\x19Ethereum Signed Message:\n${message.length}${message}`;
+        
+        // Request signing through the MPC protocol
+        await webRTCManager.requestSigning(messageToSign);
+
+        // Store signing ID mapping for callback
+        if (!webRTCManager.messageSigningRequests) {
+            webRTCManager.messageSigningRequests = new Map();
+        }
+        webRTCManager.messageSigningRequests.set(webRTCManager.signingManager?.signingInfo?.signing_id, signingId);
+
+        return { success: true };
+    } catch (error) {
+        console.error("❌ [Handler] Error requesting message signature:", error);
+        
+        // Send error back to background
+        chrome.runtime.sendMessage({
+            type: 'fromOffscreen',
+            payload: {
+                type: 'messageSignatureError',
+                signingId: payload.signingId,
+                error: error instanceof Error ? error.message : String(error)
+            }
+        });
+
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : String(error)
+        };
+    }
+}
+
+/**
+ * Handle transaction signature request
+ */
+async function handleRequestTransactionSignature(messageType: string, payload: any): Promise<any> {
+    try {
+        if (!webRTCManager) {
+            throw new Error("WebRTC manager not initialized");
+        }
+
+        console.log("💰 [Handler] Transaction signature request:", payload);
+        const { signingId, transactionData, fromAddress } = payload;
+
+        // Request signing through the MPC protocol
+        await webRTCManager.requestSigning(transactionData);
+
+        // Store signing ID mapping for callback
+        if (!webRTCManager.transactionSigningRequests) {
+            webRTCManager.transactionSigningRequests = new Map();
+        }
+        webRTCManager.transactionSigningRequests.set(webRTCManager.signingManager?.signingInfo?.signing_id, signingId);
+
+        return { success: true };
+    } catch (error) {
+        console.error("❌ [Handler] Error requesting transaction signature:", error);
+        
+        // Send error back to background
+        chrome.runtime.sendMessage({
+            type: 'fromOffscreen',
+            payload: {
+                type: 'messageSignatureError',
+                signingId: payload.signingId,
+                error: error instanceof Error ? error.message : String(error)
+            }
+        });
+
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : String(error)
+        };
+    }
+}
+
+/**
  * Handle blockchain setting
  */
 async function handleSetBlockchain(messageType: string, payload: any): Promise<any> {
@@ -530,9 +620,10 @@ async function handleSessionAccepted(messageType: string, payload: any): Promise
             }
 
             // Initiate connections to other participants
+            // Only initiate to peers with larger IDs to avoid offer collision
             if (payload.sessionInfo.participants) {
                 for (const peerId of payload.sessionInfo.participants) {
-                    if (peerId !== payload.currentdeviceId && webRTCManager.initiatePeerConnection) {
+                    if (peerId !== payload.currentdeviceId && peerId > payload.currentdeviceId && webRTCManager.initiatePeerConnection) {
                         await webRTCManager.initiatePeerConnection(peerId);
                     }
                 }

@@ -29,6 +29,7 @@ export class StateManager {
     private static readonly STATE_STORAGE_KEY = 'mpc_wallet_background_state';
     private isStateLoaded = false;
     private pendingPopupPorts: chrome.runtime.Port[] = [];
+    private rpcHandler?: any; // Will be set after initialization
 
     constructor(initialState?: Partial<AppState>) {
         this.appState = {
@@ -93,6 +94,14 @@ export class StateManager {
         // Clear the pending ports array
         this.pendingPopupPorts = [];
         console.log("[StateManager] All pending popup ports processed");
+    }
+
+    /**
+     * Set the RPC handler for signature callbacks
+     */
+    setRpcHandler(handler: any): void {
+        this.rpcHandler = handler;
+        console.log("[StateManager] RPC handler set");
     }
 
     /**
@@ -395,6 +404,38 @@ export class StateManager {
             case "dataChannelStatusUpdate":
                 if ('deviceId' in payload && 'channelName' in payload && 'state' in payload) {
                     console.log(`[StateManager] Data channel ${payload.channelName} for ${payload.deviceId}: ${payload.state}`);
+                }
+                break;
+
+            case "messageSignatureComplete":
+                if ('signingId' in payload && 'signature' in payload) {
+                    console.log(`[StateManager] Message signature complete for ${payload.signingId}`);
+                    // Forward to RPC handler
+                    if (this.rpcHandler && typeof this.rpcHandler.handleSignatureComplete === 'function') {
+                        this.rpcHandler.handleSignatureComplete(payload.signingId, payload.signature);
+                    }
+                    // Also broadcast to popup for UI updates
+                    this.broadcastToPopupPorts({
+                        type: "signatureComplete",
+                        signingId: payload.signingId,
+                        signature: payload.signature
+                    } as any);
+                }
+                break;
+
+            case "messageSignatureError":
+                if ('signingId' in payload && 'error' in payload) {
+                    console.log(`[StateManager] Message signature error for ${payload.signingId}: ${payload.error}`);
+                    // Forward to RPC handler
+                    if (this.rpcHandler && typeof this.rpcHandler.handleSignatureError === 'function') {
+                        this.rpcHandler.handleSignatureError(payload.signingId, payload.error);
+                    }
+                    // Also broadcast to popup for UI updates
+                    this.broadcastToPopupPorts({
+                        type: "signatureError",
+                        signingId: payload.signingId,
+                        error: payload.error
+                    } as any);
                 }
                 break;
 

@@ -99,6 +99,9 @@ function initializeComponents(): void {
     // Initialize RPC and UI request handlers (no parameters needed)
     rpcHandler = new RpcHandler();
     uiRequestHandler = new UIRequestHandler();
+    
+    // Set RPC handler on StateManager for signature callbacks
+    stateManager.setRpcHandler(rpcHandler);
 
     // Initialize offscreen manager (needs app state)
     offscreenManager = new OffscreenManager(stateManager.getState());

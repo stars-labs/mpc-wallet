@@ -25,6 +25,7 @@ export class RpcHandler {
     private walletClientService: WalletClientService;
     private permissionService = getPermissionService();
     private origin: string = '';
+    private pendingSignatures: Map<string, { resolve: (value: string) => void; reject: (reason?: any) => void }> = new Map();
 
     constructor() {
         this.accountService = AccountService.getInstance();
@@ -193,12 +194,63 @@ export class RpcHandler {
         const transaction = params[0] as any;
 
         // Validate transaction parameters
-        if (!transaction.to || !transaction.value) {
-            throw new Error('Invalid transaction parameters');
+        if (!transaction.to) {
+            throw new Error('Invalid transaction parameters: missing "to" address');
         }
 
-        // Use wallet client service to send transaction
-        return await this.walletClientService.sendTransaction(transaction);
+        // Generate a unique transaction signing ID
+        const signingId = `tx_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        
+        // Serialize transaction for MPC signing
+        const transactionData = JSON.stringify({
+            to: transaction.to,
+            value: transaction.value || '0x0',
+            data: transaction.data || '0x',
+            nonce: transaction.nonce,
+            gasLimit: transaction.gas || transaction.gasLimit,
+            gasPrice: transaction.gasPrice,
+            maxFeePerGas: transaction.maxFeePerGas,
+            maxPriorityFeePerGas: transaction.maxPriorityFeePerGas,
+            chainId: await this.handleChainIdRequest()
+        });
+
+        // Create a promise that will resolve when we get the signed transaction
+        const signaturePromise = new Promise<string>((resolve, reject) => {
+            if (!this.pendingSignatures) {
+                this.pendingSignatures = new Map();
+            }
+            this.pendingSignatures.set(signingId, { resolve, reject });
+
+            // Set a timeout
+            setTimeout(() => {
+                if (this.pendingSignatures?.has(signingId)) {
+                    this.pendingSignatures.delete(signingId);
+                    reject(new Error('Transaction signing timed out'));
+                }
+            }, 300000); // 5 minute timeout
+        });
+
+        // Send transaction signing request to offscreen document
+        chrome.runtime.sendMessage({
+            type: 'fromBackground',
+            payload: {
+                type: 'requestTransactionSignature',
+                signingId,
+                transactionData,
+                fromAddress: transaction.from || (this.accountService.getCurrentAccount()?.address)
+            }
+        });
+
+        // Also notify popup if open for user approval
+        chrome.runtime.sendMessage({
+            type: 'transactionRequest',
+            signingId,
+            transaction,
+            origin: this.origin || 'Unknown',
+            fromAddress: transaction.from || (this.accountService.getCurrentAccount()?.address)
+        });
+
+        return signaturePromise;
     }
 
     /**
@@ -209,9 +261,77 @@ export class RpcHandler {
             throw new Error('Missing message parameter');
         }
 
-        const message = params[0] as string;
-        // WalletClientService.signMessage() only takes message parameter
-        return await this.walletClientService.signMessage(message);
+        let message: string;
+        let address: string;
+
+        // Handle different parameter formats for eth_sign vs personal_sign
+        // personal_sign: [message, address]
+        // eth_sign: [address, message]
+        if (params.length >= 2) {
+            // Determine order based on which param looks like an address
+            const param0 = params[0] as string;
+            const param1 = params[1] as string;
+            
+            if (param0.startsWith('0x') && param0.length === 42) {
+                // eth_sign format
+                address = param0;
+                message = param1;
+            } else {
+                // personal_sign format
+                message = param0;
+                address = param1;
+            }
+        } else {
+            // Single param, assume it's the message and use current account
+            message = params[0] as string;
+            const currentAccount = this.accountService.getCurrentAccount();
+            if (!currentAccount) {
+                throw new Error('No account selected');
+            }
+            address = currentAccount.address;
+        }
+
+        // Generate a unique signing ID
+        const signingId = `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+        // Create a promise that will resolve when we get the signature
+        const signaturePromise = new Promise<string>((resolve, reject) => {
+            // Store the resolver in a map (we'll need to create this)
+            if (!this.pendingSignatures) {
+                this.pendingSignatures = new Map();
+            }
+            this.pendingSignatures.set(signingId, { resolve, reject });
+
+            // Set a timeout
+            setTimeout(() => {
+                if (this.pendingSignatures?.has(signingId)) {
+                    this.pendingSignatures.delete(signingId);
+                    reject(new Error('Signature request timed out'));
+                }
+            }, 300000); // 5 minute timeout
+        });
+
+        // Send signature request to offscreen document
+        chrome.runtime.sendMessage({
+            type: 'fromBackground',
+            payload: {
+                type: 'requestMessageSignature',
+                signingId,
+                message,
+                fromAddress: address
+            }
+        });
+
+        // Also notify popup if open for user approval
+        chrome.runtime.sendMessage({
+            type: 'signatureRequest',
+            signingId,
+            message,
+            origin: this.origin || 'Unknown',
+            fromAddress: address
+        });
+
+        return signaturePromise;
     }
 
     /**
@@ -327,6 +447,28 @@ export class RpcHandler {
         } catch (error) {
             console.error(`[RpcHandler] Failed to forward to RPC provider:`, error);
             throw error;
+        }
+    }
+
+    /**
+     * Handle signature completion from offscreen document
+     */
+    handleSignatureComplete(signingId: string, signature: string): void {
+        const pending = this.pendingSignatures.get(signingId);
+        if (pending) {
+            pending.resolve(signature);
+            this.pendingSignatures.delete(signingId);
+        }
+    }
+
+    /**
+     * Handle signature error from offscreen document
+     */
+    handleSignatureError(signingId: string, error: string): void {
+        const pending = this.pendingSignatures.get(signingId);
+        if (pending) {
+            pending.reject(new Error(error));
+            this.pendingSignatures.delete(signingId);
         }
     }
 }

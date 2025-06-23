@@ -9,6 +9,7 @@
     import { INITIAL_APP_STATE } from "../../types/appstate";
     import Settings from "../../components/Settings.svelte";
     import AccountManager from "../../components/AccountManager.svelte";
+    import SignatureRequest from "../../components/SignatureRequest.svelte";
 
     // Application state (consolidated from background) - the single source of truth
     let appState: AppState = { ...INITIAL_APP_STATE };
@@ -18,6 +19,15 @@
     
     // UI state flags
     let acceptingSession = false; // Prevent multiple session accept clicks
+    let selectedDevices: Set<string> = new Set(); // Track selected devices for session proposal
+    
+    // Signature request tracking
+    let signatureRequests: Array<{
+        signingId: string;
+        message: string;
+        origin: string;
+        fromAddress: string;
+    }> = [];
 
     // Local storage for UI preferences persistence (not real-time connection state)
     const UI_STATE_KEY = "mpc_wallet_ui_preferences";
@@ -413,6 +423,36 @@
                     appState = { ...appState, accountsUpdated: Date.now() };
                 }
                 break;
+                
+            case "signatureRequest":
+                console.log("[UI] Processing signatureRequest:", message);
+                if (message.signingId && message.message && message.origin && message.fromAddress) {
+                    // Add new signature request to the list
+                    signatureRequests = [...signatureRequests, {
+                        signingId: message.signingId,
+                        message: message.message,
+                        origin: message.origin,
+                        fromAddress: message.fromAddress
+                    }];
+                }
+                break;
+                
+            case "signatureComplete":
+                console.log("[UI] Processing signatureComplete:", message);
+                if (message.signingId) {
+                    // Remove the completed request from the list
+                    signatureRequests = signatureRequests.filter(req => req.signingId !== message.signingId);
+                }
+                break;
+                
+            case "signatureError":
+                console.log("[UI] Processing signatureError:", message);
+                if (message.signingId) {
+                    // Remove the failed request from the list
+                    signatureRequests = signatureRequests.filter(req => req.signingId !== message.signingId);
+                    // TODO: Show error notification
+                }
+                break;
 
             default:
                 console.log(
@@ -596,14 +636,15 @@
     }
 
     function proposeSession() {
-        const availabledevices = appState.connecteddevices.filter(
-            (p) => p !== appState.deviceId,
-        );
-
-        if (availabledevices.length < appState.totalParticipants - 1) {
+        // Convert Set to Array for selected devices
+        const selectedDevicesList = Array.from(selectedDevices);
+        
+        // Validate selection
+        if (selectedDevicesList.length !== appState.totalParticipants - 1) {
             console.error(
-                `Need at least ${appState.totalParticipants - 1} other devices for a ${appState.totalParticipants}-participant session`,
+                `Please select exactly ${appState.totalParticipants - 1} devices for a ${appState.totalParticipants}-participant session. Currently selected: ${selectedDevicesList.length}`,
             );
+            alert(`Please select exactly ${appState.totalParticipants - 1} devices for a ${appState.totalParticipants}-participant session`);
             return;
         }
 
@@ -619,11 +660,8 @@
             return;
         }
 
-        const devicesToInclude = availabledevices.slice(
-            0,
-            appState.totalParticipants - 1,
-        );
-        const allParticipants = [appState.deviceId, ...devicesToInclude];
+        // Include self and selected devices
+        const allParticipants = [appState.deviceId, ...selectedDevicesList];
 
         const sessionId =
             appState.proposedSessionIdInput.trim() ||
@@ -644,6 +682,10 @@
             "with participants:",
             allParticipants,
         );
+        
+        // Clear selection after proposing
+        selectedDevices.clear();
+        selectedDevices = selectedDevices; // Trigger reactivity
     }
 
     function acceptInvite(sessionId: string) {
@@ -775,6 +817,13 @@
         return appState.sessionAcceptanceStatus[sessionId][deviceId];
     }
 
+    // Handle signature request completion
+    function handleSignatureRequestComplete(event: CustomEvent) {
+        const signingId = event.detail;
+        // Remove from list (already handled by background message)
+        signatureRequests = signatureRequests.filter(req => req.signingId !== signingId);
+    }
+    
     // Test MPC signing function
     function testMPCSigning() {
         console.log("[UI] Testing MPC signing");
@@ -904,6 +953,22 @@
             />
         </div>
     {/if}
+    
+    <!-- Signature Requests -->
+    {#if signatureRequests.length > 0}
+        <div class="mb-4">
+            <h2 class="text-xl font-semibold mb-3">🔏 Signature Requests</h2>
+            {#each signatureRequests as request (request.signingId)}
+                <SignatureRequest
+                    signingId={request.signingId}
+                    message={request.message}
+                    origin={request.origin}
+                    fromAddress={request.fromAddress}
+                    on:complete={handleSignatureRequestComplete}
+                />
+            {/each}
+        </div>
+    {/if}
 
     <!-- Network Status -->
     <div class="mb-4 p-3 border rounded">
@@ -929,66 +994,75 @@
         </div>
     </div>
 
-    <!-- Connected devices with Individual WebRTC Status -->
+    <!-- Connected devices - Combined with session selection when needed -->
     <div class="mb-4 p-3 border rounded">
         <h2 class="text-xl font-semibold mb-3">
-            Connected devices ({appState.connecteddevices.length})
+            Connected Devices ({appState.connecteddevices.length})
         </h2>
 
         {#if appState.connecteddevices && appState.connecteddevices.length > 0}
             <ul class="space-y-2">
                 {#each appState.connecteddevices as peer}
+                    {@const webrtcStatus = appState.webrtcConnections[peer]}
+                    {@const isOwnDevice = peer === appState.deviceId}
+                    {@const showCheckbox = !isOwnDevice && !appState.invites?.length && !appState.sessionInfo}
+                    {@const isInSession = appState.sessionInfo && appState.sessionInfo.participants.includes(peer)}
                     <li
-                        class="flex items-center justify-between p-3 bg-gray-50 rounded"
+                        class="flex items-center justify-between p-3 bg-gray-50 rounded {showCheckbox ? 'hover:bg-gray-100' : ''}"
                     >
                         <div class="flex items-center gap-3">
+                            {#if showCheckbox}
+                                <input
+                                    type="checkbox"
+                                    checked={selectedDevices.has(peer)}
+                                    disabled={!selectedDevices.has(peer) && selectedDevices.size >= appState.totalParticipants - 1}
+                                    on:change={(e) => {
+                                        if (e.currentTarget.checked) {
+                                            selectedDevices.add(peer);
+                                        } else {
+                                            selectedDevices.delete(peer);
+                                        }
+                                        selectedDevices = selectedDevices;
+                                    }}
+                                    class="w-4 h-4"
+                                />
+                            {/if}
                             <code class="text-sm font-mono">{peer}</code>
-                            {#if peer === appState.deviceId}
-                                <span
-                                    class="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded"
-                                    >You</span
-                                >
+                            {#if isOwnDevice}
+                                <span class="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">You</span>
+                            {/if}
+                            {#if isInSession}
+                                <span class="text-xs bg-purple-100 text-purple-800 px-2 py-1 rounded">In Session</span>
                             {/if}
                         </div>
 
-                        {#if peer !== appState.deviceId}
-                            {@const webrtcStatus = appState.webrtcConnections[peer]}
-                            {@const isInSession = appState.sessionInfo && appState.sessionInfo.participants.includes(peer)}
-                            {@const isConnecting = isInSession && appState.meshStatus?.type === MeshStatusType.PartiallyReady && webrtcStatus !== true}
+                        {#if !isOwnDevice}
                             <div class="flex items-center gap-2">
-                                <span class="text-xs text-gray-500"
-                                    >WebRTC:</span
-                                >
+                                <span class="text-xs text-gray-500">WebRTC:</span>
                                 {#if webrtcStatus === true}
-                                    <span
-                                        class="text-xs bg-green-100 text-green-800 px-2 py-1 rounded"
-                                        >Connected</span
-                                    >
-                                    {#if appState.sessionInfo && appState.meshStatus?.type === MeshStatusType.Ready}
+                                    <span class="text-xs bg-green-100 text-green-800 px-2 py-1 rounded">Connected</span>
+                                    {#if appState.sessionInfo && appState.meshStatus?.type === MeshStatusType.Ready && isInSession}
                                         <button
                                             class="text-xs bg-blue-500 hover:bg-blue-700 text-white px-2 py-1 rounded"
-                                            on:click={() =>
-                                                sendDirectMessage(peer)}
+                                            on:click={() => sendDirectMessage(peer)}
                                         >
                                             Test Message
                                         </button>
                                     {/if}
-                                {:else if isConnecting}
-                                    <span
-                                        class="text-xs bg-yellow-100 text-yellow-800 px-2 py-1 rounded"
-                                        >Connecting</span
-                                    >
                                 {:else}
-                                    <span
-                                        class="text-xs bg-red-100 text-red-800 px-2 py-1 rounded"
-                                        >Disconnected</span
-                                    >
+                                    <span class="text-xs bg-red-100 text-red-800 px-2 py-1 rounded">Disconnected</span>
                                 {/if}
                             </div>
                         {/if}
                     </li>
                 {/each}
             </ul>
+            
+            {#if selectedDevices.size > 0 && !appState.invites?.length && !appState.sessionInfo}
+                <p class="text-sm text-blue-600 mt-2">
+                    Selected {selectedDevices.size} of {appState.totalParticipants - 1} required participants
+                </p>
+            {/if}
         {:else}
             <p class="text-gray-500 text-center py-4">No devices connected</p>
         {/if}
@@ -1204,6 +1278,10 @@
         {:else}
             <!-- Create New Session -->
             <div class="space-y-3">
+                <p class="text-sm text-gray-600">
+                    Select devices from the list above to create a new MPC session.
+                </p>
+                
                 <div>
                     <label for="session-id-input" class="block font-bold mb-1"
                         >Session ID (optional):</label
@@ -1231,6 +1309,11 @@
                             min="2"
                             max={appState.connecteddevices.length}
                             class="w-full border p-2 rounded"
+                            on:change={() => {
+                                // Clear selection when total participants changes
+                                selectedDevices.clear();
+                                selectedDevices = selectedDevices;
+                            }}
                         />
                     </div>
                     <div>
@@ -1250,20 +1333,21 @@
                 </div>
 
                 <button
-                    class="w-full bg-indigo-500 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded"
+                    class="w-full bg-indigo-500 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded disabled:bg-gray-400 disabled:cursor-not-allowed"
                     on:click={proposeSession}
                     disabled={!appState.wsConnected ||
-                        appState.connecteddevices.filter(
-                            (p) => p !== appState.deviceId,
-                        ).length <
-                            appState.totalParticipants - 1 ||
+                        selectedDevices.size !== appState.totalParticipants - 1 ||
                         appState.threshold > appState.totalParticipants ||
                         appState.threshold < 1}
                 >
                     Propose New Session ({appState.threshold}-of-{appState.totalParticipants})
                 </button>
 
-                {#if appState.connecteddevices.filter((p) => p !== appState.deviceId).length < appState.totalParticipants - 1}
+                {#if !appState.wsConnected}
+                    <p class="text-sm text-red-500 text-center">
+                        WebSocket not connected
+                    </p>
+                {:else if appState.connecteddevices.filter((p) => p !== appState.deviceId).length < appState.totalParticipants - 1}
                     <p class="text-sm text-gray-500 text-center">
                         Need at least {appState.totalParticipants - 1} other devices
                         for a {appState.totalParticipants}-participant session
@@ -1271,6 +1355,10 @@
                 {:else if appState.threshold > appState.totalParticipants || appState.threshold < 1}
                     <p class="text-sm text-red-500 text-center">
                         Invalid threshold: must be between 1 and {appState.totalParticipants}
+                    </p>
+                {:else if selectedDevices.size !== appState.totalParticipants - 1}
+                    <p class="text-sm text-yellow-500 text-center">
+                        Please select {appState.totalParticipants - 1} device{appState.totalParticipants - 1 > 1 ? 's' : ''} to include in the session
                     </p>
                 {/if}
             </div>

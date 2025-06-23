@@ -52,7 +52,7 @@ The MPC Wallet Extension follows a Chrome Extension Manifest V3 architecture wit
 - RPC request handling for blockchain operations
 
 **Key Services:**
-- `AccountService`: Manages wallet accounts and private keys
+- `AccountService`: Manages wallet accounts and addresses
 - `NetworkService`: Handles blockchain network configurations
 - `WalletClientService`: Provides blockchain client functionality
 - `WebSocketClient`: Manages connection to signaling server
@@ -67,9 +67,9 @@ The MPC Wallet Extension follows a Chrome Extension Manifest V3 architecture wit
 - Crypto operations (signing, address generation)
 
 **Features:**
-- Private key generation and management
+- MPC-based distributed key generation (DKG)
 - Multi-chain support (Ethereum/Solana)
-- Message signing and address derivation
+- Threshold message signing via MPC protocol
 - Real-time peer discovery and session management
 - WebRTC connection status monitoring
 

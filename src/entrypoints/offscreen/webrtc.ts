@@ -85,6 +85,12 @@ export class WebRTCManager {
 
   // Add the missing callback property and constructor parameter
   private sendPayloadToBackgroundForRelay: ((toPeerId: string, payload: WebSocketMessagePayload) => void) | null = null;
+  
+  // Track message signing requests
+  public messageSigningRequests: Map<string, string> = new Map();
+  
+  // Track transaction signing requests
+  public transactionSigningRequests: Map<string, string> = new Map();
 
   constructor(localPeerId: string, sendPayloadCallback?: (toPeerId: string, payload: WebSocketMessagePayload) => void) {
 
@@ -170,6 +176,71 @@ export class WebRTCManager {
     this.signingState = newState;
     this.signingInfo = info;
     this.onSigningStateUpdate(this.signingState, this.signingInfo);
+    
+    // Check if this is a message signature completion
+    if (newState === SigningState.Complete && info?.final_signature) {
+      const messageSigningId = this.messageSigningRequests.get(info.signing_id);
+      if (messageSigningId) {
+        // Send message signature completion to background
+        chrome.runtime.sendMessage({
+          type: 'fromOffscreen',
+          payload: {
+            type: 'messageSignatureComplete',
+            signingId: messageSigningId,
+            signature: info.final_signature
+          }
+        });
+        // Clean up the mapping
+        this.messageSigningRequests.delete(info.signing_id);
+      }
+      
+      // Check if this is a transaction signature completion
+      const transactionSigningId = this.transactionSigningRequests.get(info.signing_id);
+      if (transactionSigningId) {
+        // Send transaction signature completion to background
+        chrome.runtime.sendMessage({
+          type: 'fromOffscreen',
+          payload: {
+            type: 'messageSignatureComplete',
+            signingId: transactionSigningId,
+            signature: info.final_signature
+          }
+        });
+        // Clean up the mapping
+        this.transactionSigningRequests.delete(info.signing_id);
+      }
+    } else if (newState === SigningState.Failed && info) {
+      const messageSigningId = this.messageSigningRequests.get(info.signing_id);
+      if (messageSigningId) {
+        // Send message signature error to background
+        chrome.runtime.sendMessage({
+          type: 'fromOffscreen',
+          payload: {
+            type: 'messageSignatureError',
+            signingId: messageSigningId,
+            error: 'Signing failed'
+          }
+        });
+        // Clean up the mapping
+        this.messageSigningRequests.delete(info.signing_id);
+      }
+      
+      // Check if this is a transaction signature error
+      const transactionSigningId = this.transactionSigningRequests.get(info.signing_id);
+      if (transactionSigningId) {
+        // Send transaction signature error to background
+        chrome.runtime.sendMessage({
+          type: 'fromOffscreen',
+          payload: {
+            type: 'messageSignatureError',
+            signingId: transactionSigningId,
+            error: 'Signing failed'
+          }
+        });
+        // Clean up the mapping
+        this.transactionSigningRequests.delete(info.signing_id);
+      }
+    }
   }
 
   public handleWebSocketMessagePayload(fromPeerId: string, msg: WebSocketMessagePayload): void {
@@ -2132,31 +2203,33 @@ export class WebRTCManager {
         return;
       }
 
-      // Create data channel if we are the initiator (following politeness rule)
+      // Only create offer if we have smaller ID (politeness rule)
       if (this.localPeerId < peerId) {
         this._log(`Creating data channel for ${peerId} (we are initiator)`);
         const dataChannel = pc.createDataChannel('frost-dkg', {
           ordered: true
         });
         this._setupDataChannel(dataChannel, peerId);
-      }
 
-      // Create and send offer
-      this._log(`Creating offer for ${peerId}`);
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
+        // Create and send offer
+        this._log(`Creating offer for ${peerId}`);
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
 
-      // Send offer via WebSocket relay
-      const wsMsgPayload = {
-        websocket_msg_type: 'WebRTCSignal',
-        Offer: { sdp: offer.sdp! }  // Direct at root level, matching Rust enum structure
-      };
+        // Send offer via WebSocket relay
+        const wsMsgPayload = {
+          websocket_msg_type: 'WebRTCSignal',
+          Offer: { sdp: offer.sdp! }  // Direct at root level, matching Rust enum structure
+        };
 
-      if (this.sendPayloadToBackgroundForRelay) {
-        this.sendPayloadToBackgroundForRelay(peerId, wsMsgPayload as any);
-        this._log(`Sent Offer to ${peerId} via background`);
+        if (this.sendPayloadToBackgroundForRelay) {
+          this.sendPayloadToBackgroundForRelay(peerId, wsMsgPayload as any);
+          this._log(`Sent Offer to ${peerId} via background`);
+        } else {
+          this._log(`Cannot send Offer to ${peerId}: no relay callback available`);
+        }
       } else {
-        this._log(`Cannot send Offer to ${peerId}: no relay callback available`);
+        this._log(`Waiting for offer from ${peerId} (they have smaller ID)`);
       }
 
     } catch (error) {

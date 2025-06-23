@@ -148,6 +148,11 @@ export class PopupMessageHandler {
                     console.log("🔧 [PopupMessageHandler] REQUEST_INIT: Handling initialization request");
                     await this.handleRequestInitMessage(sendResponse);
                     break;
+                    
+                case "approveMessageSignature":
+                    console.log("✍️ [PopupMessageHandler] APPROVE_MESSAGE_SIGNATURE: Handling signature approval");
+                    await this.handleApproveMessageSignature(message, sendResponse);
+                    break;
 
                 // Session restore removed - sessions are ephemeral for security
                 // case "requestSessionRestore": removed
@@ -430,6 +435,29 @@ export class PopupMessageHandler {
     private async handleRequestInitMessage(sendResponse: (response: any) => void): Promise<void> {
         const result = await this.offscreenManager.handleInitRequest();
         sendResponse(result);
+    }
+    
+    private async handleApproveMessageSignature(message: any, sendResponse: (response: any) => void): Promise<void> {
+        if (!message.requestId || typeof message.approved !== 'boolean') {
+            sendResponse({ success: false, error: "Invalid approval message" });
+            return;
+        }
+        
+        console.log(`[PopupMessageHandler] Signature approval for ${message.requestId}: ${message.approved}`);
+        
+        if (!message.approved) {
+            // User rejected the signature
+            // Find the pending signature in RPC handler and reject it
+            if (this.rpcHandler.handleSignatureError) {
+                this.rpcHandler.handleSignatureError(message.requestId, "User rejected signature request");
+            }
+            sendResponse({ success: true });
+            return;
+        }
+        
+        // User approved - the signature will be processed by the offscreen document
+        // which is already handling the MPC signing flow
+        sendResponse({ success: true });
     }
 
     // Session restore removed - sessions are ephemeral for security

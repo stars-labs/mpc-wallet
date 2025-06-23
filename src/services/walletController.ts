@@ -97,11 +97,13 @@ class WalletController {
     }
 
     public async sendTransaction(transaction: any) {
-        return this.walletClientService.getWalletClient().sendTransaction(transaction);
+        // MPC wallet - transactions must be signed through MPC protocol
+        throw new Error('Transaction signing must use MPC protocol. Please use the MPC signing flow.');
     }
 
     public async signMessage(params: { account: `0x${string}`; message: string }) {
-        return this.walletClientService.getWalletClient().signMessage(params);
+        // MPC wallet - messages must be signed through MPC protocol
+        throw new Error('Message signing must use MPC protocol. Please use the MPC signing flow.');
     }
 
     public async getBalance(address: `0x${string}`) {
