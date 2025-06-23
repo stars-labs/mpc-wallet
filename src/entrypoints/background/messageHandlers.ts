@@ -830,8 +830,7 @@ export class OffscreenMessageHandler {
                 
                 // Notify popup to refresh accounts
                 if (newAccount) {
-                    const stateManager = StateManager.getInstance();
-                    stateManager.broadcastToPopupPorts({
+                    this.stateManager.broadcastToPopupPorts({
                         type: 'accountsUpdated',
                         blockchain: newAccount.blockchain,
                         accounts: accountService.getAccountsByBlockchain(newAccount.blockchain)
