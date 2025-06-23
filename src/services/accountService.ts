@@ -119,6 +119,40 @@ class AccountService {
         return account;
     }
 
+    public async updateAccount(account: Account): Promise<Account> {
+        // Validate account
+        if (!account.id || typeof account.id !== 'string') {
+            throw new Error('Invalid account: id is required and must be a string');
+        }
+
+        const existingIndex = this.accounts.findIndex(acc => acc.id === account.id);
+        if (existingIndex === -1) {
+            throw new Error('Account not found');
+        }
+
+        // Update the account
+        this.accounts[existingIndex] = {
+            ...this.accounts[existingIndex],
+            ...account,
+            // Preserve original creation time
+            created: this.accounts[existingIndex].created
+        };
+        
+        await this.saveAccounts();
+        return this.accounts[existingIndex];
+    }
+
+    public async addOrUpdateAccount(account: Account): Promise<Account> {
+        const existingAccount = this.accounts.find(acc => acc.id === account.id);
+        if (existingAccount) {
+            console.log(`[AccountService] Account ${account.id} already exists, updating instead`);
+            return await this.updateAccount(account);
+        } else {
+            console.log(`[AccountService] Creating new account ${account.id}`);
+            return await this.addAccount(account);
+        }
+    }
+
     public async removeAccount(accountId: string): Promise<void> {
         const accountIndex = this.accounts.findIndex(acc => acc.id === accountId);
         if (accountIndex === -1) {
@@ -136,18 +170,6 @@ class AccountService {
         await this.saveAccounts();
         await this.saveCurrentAccount();
         this.notifyAccountChange(this.getCurrentAccount());
-    }
-
-    public async updateAccount(account: Account): Promise<Account> {
-        const accountIndex = this.accounts.findIndex(acc => acc.id === account.id);
-        if (accountIndex === -1) {
-            throw new Error('Account not found');
-        }
-
-        this.accounts[accountIndex] = account;
-        await this.saveAccounts();
-        this.notifyAccountChange(this.getCurrentAccount());
-        return account;
     }
 
     public getAccounts(): Account[] {
@@ -257,6 +279,8 @@ class AccountService {
         address: string,
         keyShareData: any
     ): Promise<Account | null> {
+        console.log(`[AccountService] Completing account creation for session ${sessionId} with address ${address}`);
+        
         try {
             const pendingSession = await this.getPendingSession(sessionId);
             
@@ -313,15 +337,15 @@ class AccountService {
                 });
             }
             
-            // Add account
-            await this.addAccount(account);
+            // Add or update account
+            const savedAccount = await this.addOrUpdateAccount(account);
             
             // Remove pending session if it exists
             if (pendingSession) {
                 await this.removePendingSession(sessionId);
             }
             
-            return account;
+            return savedAccount;
         } catch (error) {
             console.error('Failed to complete account creation:', error);
             return null;
