@@ -1794,13 +1794,22 @@ export class WebRTCManager {
   private _resetDkgState(): void {
     this._log(`Resetting DKG state`);
     // Note: Don't reset dkgState here - caller should manage state transitions
-    this.frostDkg = null;
-    this.participantIndex = null;
+    
+    // IMPORTANT: If DKG is complete, preserve critical state for signing
+    if (this.dkgState === DkgState.Complete) {
+      this._log(`DKG is complete - preserving frostDkg instance and participantIndex for signing`);
+      // Keep: this.frostDkg, this.participantIndex, this.groupPublicKey, addresses
+    } else {
+      this.frostDkg = null;
+      this.participantIndex = null;
+      this.groupPublicKey = null;
+      this.solanaAddress = null;
+      this.ethereumAddress = null;
+    }
+    
+    // Always clear round packages and buffers
     this.receivedRound1Packages.clear();
     this.receivedRound2Packages.clear();
-    this.groupPublicKey = null;
-    this.solanaAddress = null;
-    this.ethereumAddress = null;
     this.bufferedRound1Packages = [];
     this.bufferedRound2Packages = [];
     this.ownRound1Package = null;
@@ -2252,6 +2261,14 @@ export class WebRTCManager {
         this._log(`Error: Cannot find our participant index`);
         return;
       }
+      
+      // CRITICAL: Verify the index matches what was used during DKG
+      this._log(`[SIGNING COMMITMENT] Our participant index: ${ourIndex}, DKG participant index: ${this.participantIndex}`);
+      if (ourIndex !== this.participantIndex) {
+        this._log(`ERROR: Participant index mismatch! Signing index ${ourIndex} != DKG index ${this.participantIndex}`);
+        this._log(`This will cause signature verification to fail`);
+      }
+      
       const ourHexIdentifier = ourIndex.toString(16).padStart(64, '0');
 
       // The WASM function returns a hex-encoded JSON string
@@ -2343,6 +2360,14 @@ export class WebRTCManager {
         this._log(`Error: Cannot find our participant index`);
         return;
       }
+      
+      // CRITICAL: Verify the index matches what was used during DKG
+      this._log(`[SIGNING SHARE] Our participant index: ${ourIndex}, DKG participant index: ${this.participantIndex}`);
+      if (ourIndex !== this.participantIndex) {
+        this._log(`ERROR: Participant index mismatch! Signing index ${ourIndex} != DKG index ${this.participantIndex}`);
+        this._log(`This will cause signature verification to fail`);
+      }
+      
       const ourHexIdentifier = ourIndex.toString(16).padStart(64, '0');
 
       // Parse the share for sending - similar to commitment handling
