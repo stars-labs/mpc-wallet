@@ -74,6 +74,7 @@ export class WebRTCManager {
   private signingCommitments: Map<string, any> = new Map(); // Map peer to commitment data
   private signingShares: Map<string, any> = new Map(); // Map peer to signature share data
   private signingNonces: any | null = null; // Store nonces from commitment phase for signature generation
+  private participantIndices: Map<string, number> = new Map(); // Map device ID to participant index
 
   // Callbacks
   public onLog: (message: string) => void = console.log;
@@ -154,6 +155,17 @@ export class WebRTCManager {
 
   private _updateSession(newSessionInfo: SessionInfo | null) {
     this.sessionInfo = newSessionInfo;
+    
+    // Initialize participant indices when we have session info
+    if (newSessionInfo && newSessionInfo.participants) {
+      this.participantIndices.clear();
+      newSessionInfo.participants.forEach((deviceId, index) => {
+        // FROST uses 1-based indexing
+        this.participantIndices.set(deviceId, index + 1);
+      });
+      this._log(`Initialized participant indices: ${Array.from(this.participantIndices.entries()).map(([id, idx]) => `${id}:${idx}`).join(', ')}`);
+    }
+    
     this.onSessionUpdate(this.sessionInfo, this.invites);
   }
 
