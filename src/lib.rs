@@ -742,6 +742,9 @@ impl<C: FrostCurve> FrostDkgGeneric<C> {
 
         // Store our own signature share for later aggregation
         let our_identifier = self.identifier.ok_or("DKG not initialized")?;
+        console_log!(
+            "🔍 sign: storing own share for participant"
+        );
         self.signature_shares
             .insert(our_identifier, signature_share.clone());
 
@@ -782,8 +785,8 @@ impl<C: FrostCurve> FrostDkgGeneric<C> {
         })?;
 
         console_log!(
-            "🔍 add_signature_share: storing share for participant {}",
-            participant_index
+            "🔍 add_signature_share: storing share for participant {} (identifier index {})",
+            participant_index, participant_index
         );
         self.signature_shares.insert(identifier, signature_share);
 
@@ -800,6 +803,21 @@ impl<C: FrostCurve> FrostDkgGeneric<C> {
             self.signing_commitments.len(),
             self.signature_shares.len()
         );
+        
+        // Log commitment and share counts
+        console_log!("🔍 aggregate_signature: checking participants...");
+        
+        // Check if we have matching commitments and shares
+        let mut missing_shares = Vec::new();
+        for (id, _) in &self.signing_commitments {
+            if !self.signature_shares.contains_key(id) {
+                missing_shares.push("missing");
+            }
+        }
+        
+        if !missing_shares.is_empty() {
+            console_log!("🔍 aggregate_signature: ERROR - have commitments but missing {} shares", missing_shares.len());
+        }
 
         let public_key_package = self
             .public_key_package
