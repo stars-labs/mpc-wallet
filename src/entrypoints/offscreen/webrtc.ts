@@ -170,6 +170,7 @@ export class WebRTCManager {
       });
       
       this._log(`Initialized participant indices (alphabetically sorted): ${Array.from(this.participantIndices.entries()).map(([id, idx]) => `${id}:${idx}`).join(', ')}`);
+      this._log(`Session participants: [${newSessionInfo.participants.join(', ')}] -> sorted: [${sortedParticipants.join(', ')}]`);
     }
     
     this.onSessionUpdate(this.sessionInfo, this.invites);
@@ -2240,6 +2241,7 @@ export class WebRTCManager {
       
       this._log(`Calling FROST signing_commit with curve ${this.currentBlockchain === 'ethereum' ? 'secp256k1' : 'ed25519'}...`);
       this._log(`WASM instance exists: ${!!this.frostDkg}, DKG state: ${DkgState[this.dkgState]}`);
+      this._log(`Group public key: ${this.groupPublicKey}`);
       
       // Check if WASM instance has completed DKG
       if (this.frostDkg.is_dkg_complete && !this.frostDkg.is_dkg_complete()) {

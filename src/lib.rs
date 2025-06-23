@@ -743,7 +743,7 @@ impl<C: FrostCurve> FrostDkgGeneric<C> {
         // Store our own signature share for later aggregation
         let our_identifier = self.identifier.ok_or("DKG not initialized")?;
         console_log!(
-            "🔍 sign: storing own share for participant"
+            "🔍 sign: storing own share for participant with identifier"
         );
         self.signature_shares
             .insert(our_identifier, signature_share.clone());
