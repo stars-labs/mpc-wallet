@@ -159,11 +159,17 @@ export class WebRTCManager {
     // Initialize participant indices when we have session info
     if (newSessionInfo && newSessionInfo.participants) {
       this.participantIndices.clear();
-      newSessionInfo.participants.forEach((deviceId, index) => {
+      
+      // CRITICAL: Sort participants alphabetically to match CLI node behavior
+      // The CLI assigns FROST identifiers based on alphabetical order
+      const sortedParticipants = [...newSessionInfo.participants].sort();
+      
+      sortedParticipants.forEach((deviceId, index) => {
         // FROST uses 1-based indexing
         this.participantIndices.set(deviceId, index + 1);
       });
-      this._log(`Initialized participant indices: ${Array.from(this.participantIndices.entries()).map(([id, idx]) => `${id}:${idx}`).join(', ')}`);
+      
+      this._log(`Initialized participant indices (alphabetically sorted): ${Array.from(this.participantIndices.entries()).map(([id, idx]) => `${id}:${idx}`).join(', ')}`);
     }
     
     this.onSessionUpdate(this.sessionInfo, this.invites);
@@ -761,9 +767,12 @@ export class WebRTCManager {
         threshold :
         Math.ceil(participants_list.length / 2); // Default to n/2 + 1
 
+      // Sort participants to ensure consistent identifier assignment across all nodes
+      const sortedParticipants = [...participants_list].sort();
+      
       this.participantIndex = participantIndex > 0 ?
         participantIndex :
-        (this.sessionInfo?.participants.indexOf(this.localPeerId) ?? -1) + 1 || 0; // 1-based indexing
+        (sortedParticipants.indexOf(this.localPeerId) ?? -1) + 1 || 0; // 1-based indexing
 
       if (this.participantIndex <= 0 || this.participantIndex > participants_list.length) {
         throw new Error(`Invalid participant index: ${this.participantIndex}`);
@@ -1012,10 +1021,14 @@ export class WebRTCManager {
     // Initialize participant indices if not already done
     if (this.participantIndices.size === 0 && this.sessionInfo) {
       this._log(`DEBUG: Initializing participantIndices from sessionInfo`);
-      this.sessionInfo.participants.forEach((deviceId, index) => {
+      
+      // CRITICAL: Sort participants alphabetically to match CLI node behavior
+      const sortedParticipants = [...this.sessionInfo.participants].sort();
+      
+      sortedParticipants.forEach((deviceId, index) => {
         this.participantIndices.set(deviceId, index + 1);
       });
-      this._log(`DEBUG: participantIndices initialized: ${Array.from(this.participantIndices.entries()).map(([id, idx]) => `${id}:${idx}`).join(', ')}`);
+      this._log(`DEBUG: participantIndices initialized (alphabetically sorted): ${Array.from(this.participantIndices.entries()).map(([id, idx]) => `${id}:${idx}`).join(', ')}`);
     }
   }
 
@@ -1362,7 +1375,9 @@ export class WebRTCManager {
 
     try {
       // Process the Round 1 package with FROST DKG
-      const senderIndex = (this.sessionInfo?.participants.indexOf(fromPeerId) ?? -1) + 1;
+      // Use sorted participants to match CLI node behavior
+      const sortedParticipants = [...(this.sessionInfo?.participants || [])].sort();
+      const senderIndex = (sortedParticipants.indexOf(fromPeerId) ?? -1) + 1;
       let packageHex: string;
 
       this._log(`🔍 PRE-PROCESS: fromPeerId=${fromPeerId}, senderIndex=${senderIndex}`);
@@ -1550,7 +1565,9 @@ export class WebRTCManager {
 
     try {
       // Process the Round 2 package with FROST DKG
-      const senderIndex = (this.sessionInfo?.participants.indexOf(fromPeerId) ?? -1) + 1;
+      // Use sorted participants to match CLI node behavior
+      const sortedParticipants = [...(this.sessionInfo?.participants || [])].sort();
+      const senderIndex = (sortedParticipants.indexOf(fromPeerId) ?? -1) + 1;
       let packageHex: string;
 
       this._log(`🔍 R2 PRE-PROCESS: fromPeerId=${fromPeerId}, senderIndex=${senderIndex}`);
