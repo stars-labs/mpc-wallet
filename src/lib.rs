@@ -644,8 +644,15 @@ impl<C: FrostCurve> FrostDkgGeneric<C> {
         }
     }
 
+    fn is_dkg_complete(&self) -> bool {
+        self.key_package.is_some() && self.public_key_package.is_some()
+    }
+
     // FROST signing methods
     fn signing_commit(&mut self) -> Result<String, WasmError> {
+        console_log!("🔍 signing_commit: key_package exists: {}", self.key_package.is_some());
+        console_log!("🔍 signing_commit: identifier exists: {}", self.identifier.is_some());
+        
         let key_package = self.key_package.as_ref().ok_or("DKG not completed")?;
         let mut rng = OsRng;
 
@@ -907,6 +914,11 @@ impl FrostDkgEd25519 {
         self.inner.get_address()
     }
 
+    #[wasm_bindgen]
+    pub fn is_dkg_complete(&self) -> bool {
+        self.inner.is_dkg_complete()
+    }
+
     // FROST signing methods
     #[wasm_bindgen]
     pub fn signing_commit(&mut self) -> Result<String, WasmError> {
@@ -1026,6 +1038,11 @@ impl FrostDkgSecp256k1 {
     pub fn get_eth_address(&self) -> Result<String, WasmError> {
         // For Secp256k1, get_address returns the Ethereum address
         self.inner.get_address()
+    }
+
+    #[wasm_bindgen]
+    pub fn is_dkg_complete(&self) -> bool {
+        self.inner.is_dkg_complete()
     }
 
     // FROST signing methods

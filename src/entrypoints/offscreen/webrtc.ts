@@ -724,9 +724,15 @@ export class WebRTCManager {
       return false;
     }
 
-    if (this.dkgState !== DkgState.Idle) {
+    if (this.dkgState !== DkgState.Idle && this.dkgState !== DkgState.Complete) {
       this._log(`Cannot initialize DKG: already in progress (state: ${DkgState[this.dkgState]})`);
       return false;
+    }
+    
+    // If DKG is already complete, don't reinitialize - preserve the WASM instance
+    if (this.dkgState === DkgState.Complete && this.frostDkg) {
+      this._log(`DKG already complete, preserving existing WASM instance for signing`);
+      return true;
     }
 
     try {
@@ -1088,12 +1094,15 @@ export class WebRTCManager {
     }
 
     // Check if we have all required signature shares
-    const allSharesReceived = this.signingInfo.selected_signers.every(signer =>
-      this.signingShares.has(signer)
+    this._log(`Checking if all shares received. Selected signers: [${this.signingInfo.selected_signers.join(', ')}]`);
+    this._log(`Current shares: [${Array.from(this.signingShares.keys()).join(', ')}]`);
+    
+    const missingShares = this.signingInfo.selected_signers.filter(signer => 
+      !this.signingShares.has(signer)
     );
-
-    if (!allSharesReceived) {
-      this._log(`Cannot aggregate signature: missing signature shares`);
+    
+    if (missingShares.length > 0) {
+      this._log(`Cannot aggregate signature: missing signature shares from [${missingShares.join(', ')}]`);
       return;
     }
 
@@ -2074,17 +2083,16 @@ export class WebRTCManager {
         // We need to serialize this to match what FROST expects
         const commitment = message.commitment;
         
-        // The FROST commitment includes hiding and binding nonce commitments
-        // For secp256k1, these are compressed points (33 bytes each)
-        // We need to combine them into a single hex string
+        // The WASM function expects a hex-encoded JSON string
+        // Convert the CLI commitment object to JSON string, then to hex
         if (commitment.hiding && commitment.binding) {
-          // Remove '0x' prefix if present and combine
-          const hiding = commitment.hiding.replace(/^0x/, '');
-          const binding = commitment.binding.replace(/^0x/, '');
+          const commitmentJson = JSON.stringify(commitment);
+          // Convert JSON string to hex
+          const encoder = new TextEncoder();
+          const bytes = encoder.encode(commitmentJson);
+          commitmentHex = Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
           
-          // FROST expects: hiding || binding
-          commitmentHex = hiding + binding;
-          this._log(`Converted CLI commitment format: hiding=${hiding.substring(0, 8)}..., binding=${binding.substring(0, 8)}...`);
+          this._log(`Converted CLI commitment to hex-encoded JSON, length: ${commitmentHex.length}`);
         } else {
           throw new Error('Invalid commitment format from CLI');
         }
@@ -2131,14 +2139,30 @@ export class WebRTCManager {
       
       this._log(`Received signature share from ${fromPeerId} with identifier ${senderHexId.substring(0, 8)}... (index ${senderIndex})`);
 
-      // Add the signature share to FROST DKG
-      const shareHex = message.share;
+      // Handle share data - CLI sends JSON object, we need hex-encoded JSON string
+      let shareHex: string;
+      if (typeof message.share === 'string') {
+        // Already hex encoded
+        shareHex = message.share;
+      } else if (typeof message.share === 'object') {
+        // CLI format: JSON object 
+        // Convert to hex-encoded JSON string for WASM
+        const shareJson = JSON.stringify(message.share);
+        const encoder = new TextEncoder();
+        const bytes = encoder.encode(shareJson);
+        shareHex = Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+        
+        this._log(`Converted CLI share to hex-encoded JSON, length: ${shareHex.length}`);
+      } else {
+        throw new Error(`Unexpected share type: ${typeof message.share}`);
+      }
+      
       this._log(`Adding signature share from ${fromPeerId} (index ${senderIndex})`);
       
       this.frostDkg.add_signature_share(senderIndex, shareHex);
       
       // Store share for tracking
-      this.signingShares.set(fromPeerId, message.share);
+      this.signingShares.set(fromPeerId, shareHex);
       this._log(`Received and added signature share from ${fromPeerId}. Total: ${this.signingShares.size}`);
 
       // Try to aggregate if we have all shares
@@ -2177,19 +2201,49 @@ export class WebRTCManager {
     }
 
     try {
-      // Generate real FROST signing commitments and nonces
-      const commitmentResult = this.frostDkg.signing_commit();
-      
-      if (!commitmentResult || !commitmentResult.commitments || !commitmentResult.nonces) {
-        this._log(`Error: Invalid commitment result from FROST`);
+      // Check if FROST DKG is ready for signing
+      if (!this.groupPublicKey) {
+        this._log(`Error: Cannot generate commitment - DKG not completed (no group public key)`);
         return;
       }
-
-      // Store nonces for later use in signing phase
-      this.signingNonces = commitmentResult.nonces;
       
-      // Parse the commitments for sending
-      const commitmentsHex = commitmentResult.commitments;
+      if (this.dkgState !== DkgState.Complete) {
+        this._log(`Error: Cannot generate commitment - DKG state is ${DkgState[this.dkgState]}, not Complete`);
+        return;
+      }
+      
+      this._log(`Calling FROST signing_commit with curve ${this.currentBlockchain === 'ethereum' ? 'secp256k1' : 'ed25519'}...`);
+      this._log(`WASM instance exists: ${!!this.frostDkg}, DKG state: ${DkgState[this.dkgState]}`);
+      
+      // Check if WASM instance has completed DKG
+      if (this.frostDkg.is_dkg_complete && !this.frostDkg.is_dkg_complete()) {
+        this._log(`Error: WASM instance reports DKG is not complete`);
+        this._log(`This can happen if the instance was recreated after DKG completion`);
+        return;
+      }
+      
+      // Generate real FROST signing commitments
+      // The WASM function returns a hex-encoded JSON string of the commitments
+      // Nonces are stored internally in the WASM module
+      let commitmentsHex;
+      try {
+        commitmentsHex = this.frostDkg.signing_commit();
+      } catch (wasmError) {
+        this._log(`Error calling signing_commit: ${this._getErrorMessage(wasmError)}`);
+        this._log(`This usually means the WASM instance doesn't have a key_package from completed DKG`);
+        throw wasmError;
+      }
+      
+      if (!commitmentsHex) {
+        this._log(`Error: No commitment result from FROST`);
+        return;
+      }
+      
+      this._log(`Raw commitment hex from WASM: ${commitmentsHex.substring(0, 100)}...`);
+      
+      // Note: The nonces are stored internally in the WASM module
+      // We don't need to store them in JavaScript
+      this.signingNonces = true; // Just flag that we have nonces
       this._log(`Generated FROST commitments (hex): ${commitmentsHex}, length: ${commitmentsHex.length}`);
 
       // Get our participant index and convert to hex identifier
@@ -2200,27 +2254,22 @@ export class WebRTCManager {
       }
       const ourHexIdentifier = ourIndex.toString(16).padStart(64, '0');
 
-      // Parse the commitment hex into hiding and binding components
-      // For secp256k1, commitments are two compressed points (33 bytes each = 66 hex chars each)
+      // The WASM function returns a hex-encoded JSON string
+      // Decode it to get the actual commitment object
       let commitmentObject;
-      if (commitmentsHex.length === 132) { // 66 * 2 = 132 hex characters
-        const hiding = commitmentsHex.substring(0, 66);
-        const binding = commitmentsHex.substring(66, 132);
+      try {
+        // Decode hex to get JSON string
+        const hexPairs = commitmentsHex.match(/.{1,2}/g);
+        if (!hexPairs) {
+          throw new Error('Invalid hex string');
+        }
+        const bytes = hexPairs.map(h => parseInt(h, 16));
+        const jsonString = new TextDecoder().decode(new Uint8Array(bytes));
+        commitmentObject = JSON.parse(jsonString);
         
-        // Create CLI-compatible commitment object
-        commitmentObject = {
-          header: {
-            version: 0,
-            ciphersuite: "FROST-secp256k1-SHA256-v1"
-          },
-          hiding: hiding,
-          binding: binding
-        };
-        
-        this._log(`Parsed commitment - hiding: ${hiding.substring(0, 8)}..., binding: ${binding.substring(0, 8)}...`);
-      } else {
-        // Fallback: send raw hex if format is unexpected
-        this._log(`Warning: Unexpected commitment length ${commitmentsHex.length}, sending raw hex`);
+        this._log(`Decoded commitment from WASM: ${JSON.stringify(commitmentObject).substring(0, 100)}...`);
+      } catch (error) {
+        this._log(`Error decoding commitment from WASM: ${error}. Using raw hex.`);
         commitmentObject = commitmentsHex;
       }
 
@@ -2272,12 +2321,15 @@ export class WebRTCManager {
       this._log(`Signing message (hex): ${messageHex}`);
 
       // Generate FROST signature share
-      const signatureShareResult = this.frostDkg.sign(messageHex);
+      // The WASM function returns a hex-encoded JSON string of the share
+      const signatureShareHex = this.frostDkg.sign(messageHex);
       
-      if (!signatureShareResult || !signatureShareResult.share) {
-        this._log(`Error: Invalid signature share result from FROST`);
+      if (!signatureShareHex) {
+        this._log(`Error: No signature share result from FROST`);
         return;
       }
+
+      this._log(`Generated FROST signature share (hex): ${signatureShareHex.substring(0, 100)}...`);
 
       // Get our participant index and convert to hex identifier
       const ourIndex = this.participantIndices.get(this.localPeerId);
@@ -2287,14 +2339,30 @@ export class WebRTCManager {
       }
       const ourHexIdentifier = ourIndex.toString(16).padStart(64, '0');
 
-      this._log(`Generated FROST signature share`);
+      // Parse the share for sending - similar to commitment handling
+      let shareObject;
+      try {
+        // Decode hex to get JSON string
+        const hexPairs = signatureShareHex.match(/.{1,2}/g);
+        if (!hexPairs) {
+          throw new Error('Invalid hex string');
+        }
+        const bytes = hexPairs.map(h => parseInt(h, 16));
+        const jsonString = new TextDecoder().decode(new Uint8Array(bytes));
+        shareObject = JSON.parse(jsonString);
+        
+        this._log(`Decoded signature share from WASM: ${JSON.stringify(shareObject).substring(0, 100)}...`);
+      } catch (error) {
+        this._log(`Error decoding share from WASM: ${error}. Using raw hex.`);
+        shareObject = signatureShareHex;
+      }
 
       // Send share to all selected signers
       const message: WebRTCAppMessage = {
         webrtc_msg_type: 'SignatureShare' as const,
         signing_id: this.signingInfo.signing_id,
         sender_identifier: ourHexIdentifier, // Use hex identifier
-        share: signatureShareResult.share // Send the hex-encoded share
+        share: shareObject // Send the decoded share object
       };
 
       this.signingInfo.selected_signers.forEach(peerId => {
@@ -2303,8 +2371,8 @@ export class WebRTCManager {
         }
       });
 
-      // Add our own share
-      this.signingShares.set(this.localPeerId, signatureShareResult.share);
+      // Add our own share - store the raw hex for internal use
+      this.signingShares.set(this.localPeerId, signatureShareHex);
       this._log(`Stored own signature share and sent to ${this.signingInfo.selected_signers.length - 1} peers`);
 
     } catch (error) {
