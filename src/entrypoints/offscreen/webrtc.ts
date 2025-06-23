@@ -73,6 +73,7 @@ export class WebRTCManager {
   public signingInfo: SigningInfo | null = null;
   private signingCommitments: Map<string, any> = new Map(); // Map peer to commitment data
   private signingShares: Map<string, any> = new Map(); // Map peer to signature share data
+  private signingNonces: any | null = null; // Store nonces from commitment phase for signature generation
 
   // Callbacks
   public onLog: (message: string) => void = console.log;
@@ -1143,6 +1144,7 @@ export class WebRTCManager {
     this.signingInfo = null;
     this.signingCommitments.clear();
     this.signingShares.clear();
+    this.signingNonces = null; // Clear signing nonces
     this.onSigningStateUpdate(this.signingState, this.signingInfo);
   }
 
@@ -1972,14 +1974,37 @@ export class WebRTCManager {
       return;
     }
 
-    this.signingCommitments.set(fromPeerId, message.commitment);
-    this._log(`Received commitment from ${fromPeerId}. Total: ${this.signingCommitments.size}`);
+    if (!this.frostDkg) {
+      this._log(`Cannot handle commitment: FROST DKG not initialized`);
+      return;
+    }
 
-    // Check if we have all commitments
-    if (this.signingCommitments.size >= this.signingInfo.selected_signers.length) {
-      this._log(`All commitments received. Proceeding to share phase.`);
-      this._updateSigningState(SigningState.SharePhase, this.signingInfo);
-      this._generateAndSendSignatureShare();
+    try {
+      // Get sender's participant index
+      const senderIndex = this.participantIndices.get(fromPeerId);
+      if (senderIndex === undefined) {
+        this._log(`Error: Cannot find participant index for ${fromPeerId}`);
+        return;
+      }
+
+      // Add the commitment to FROST DKG
+      const commitmentHex = message.commitment;
+      this._log(`Adding commitment from ${fromPeerId} (index ${senderIndex})`);
+      
+      this.frostDkg.add_signing_commitment(senderIndex, commitmentHex);
+      
+      // Store commitment for tracking
+      this.signingCommitments.set(fromPeerId, message.commitment);
+      this._log(`Received and added commitment from ${fromPeerId}. Total: ${this.signingCommitments.size}`);
+
+      // Check if we have all commitments
+      if (this.signingCommitments.size >= this.signingInfo.selected_signers.length) {
+        this._log(`All commitments received. Proceeding to share phase.`);
+        this._updateSigningState(SigningState.SharePhase, this.signingInfo);
+        this._generateAndSendSignatureShare();
+      }
+    } catch (error) {
+      this._log(`Error handling signing commitment from ${fromPeerId}: ${this._getErrorMessage(error)}`);
     }
   }
 
@@ -1991,11 +2016,34 @@ export class WebRTCManager {
       return;
     }
 
-    this.signingShares.set(fromPeerId, message.signature_share);
-    this._log(`Received signature share from ${fromPeerId}. Total: ${this.signingShares.size}`);
+    if (!this.frostDkg) {
+      this._log(`Cannot handle signature share: FROST DKG not initialized`);
+      return;
+    }
 
-    // Try to aggregate if we have all shares
-    this._tryAggregateSignature();
+    try {
+      // Get sender's participant index
+      const senderIndex = this.participantIndices.get(fromPeerId);
+      if (senderIndex === undefined) {
+        this._log(`Error: Cannot find participant index for ${fromPeerId}`);
+        return;
+      }
+
+      // Add the signature share to FROST DKG
+      const shareHex = message.share;
+      this._log(`Adding signature share from ${fromPeerId} (index ${senderIndex})`);
+      
+      this.frostDkg.add_signature_share(senderIndex, shareHex);
+      
+      // Store share for tracking
+      this.signingShares.set(fromPeerId, message.share);
+      this._log(`Received and added signature share from ${fromPeerId}. Total: ${this.signingShares.size}`);
+
+      // Try to aggregate if we have all shares
+      this._tryAggregateSignature();
+    } catch (error) {
+      this._log(`Error handling signature share from ${fromPeerId}: ${this._getErrorMessage(error)}`);
+    }
   }
 
   private _handleAggregatedSignature(fromPeerId: string, message: any): void {
@@ -2016,86 +2064,179 @@ export class WebRTCManager {
   private _generateAndSendCommitment(): void {
     this._log(`Generating and sending commitment`);
 
-    if (!this.signingInfo) return;
+    if (!this.signingInfo) {
+      this._log(`Cannot generate commitment: no signing info`);
+      return;
+    }
 
-    // Mock commitment generation
-    const commitment = {
-      data: `commitment-${this.localPeerId}-${Date.now()}`,
-      participant: this.localPeerId
-    };
+    if (!this.frostDkg) {
+      this._log(`Cannot generate commitment: FROST DKG not initialized`);
+      return;
+    }
 
-    // Send commitment to all selected signers
-    const message: WebRTCAppMessage = {
-      webrtc_msg_type: 'SigningCommitment' as const,
-      signing_id: this.signingInfo.signing_id,
-      sender_identifier: this.localPeerId,
-      commitment: commitment
-    };
-
-    this.signingInfo.selected_signers.forEach(peerId => {
-      if (peerId !== this.localPeerId) {
-        this.sendWebRTCAppMessage(peerId, message);
+    try {
+      // Generate real FROST signing commitments and nonces
+      const commitmentResult = this.frostDkg.signing_commit();
+      
+      if (!commitmentResult || !commitmentResult.commitments || !commitmentResult.nonces) {
+        this._log(`Error: Invalid commitment result from FROST`);
+        return;
       }
-    });
 
-    // Add our own commitment
-    this.signingCommitments.set(this.localPeerId, commitment);
+      // Store nonces for later use in signing phase
+      this.signingNonces = commitmentResult.nonces;
+      
+      // Parse the commitments for sending
+      const commitmentsHex = commitmentResult.commitments;
+      this._log(`Generated FROST commitments (hex): ${commitmentsHex}`);
+
+      // Get our participant index
+      const ourIndex = this.participantIndices.get(this.localPeerId);
+      if (ourIndex === undefined) {
+        this._log(`Error: Cannot find our participant index`);
+        return;
+      }
+
+      // Send commitment to all selected signers
+      const message: WebRTCAppMessage = {
+        webrtc_msg_type: 'SigningCommitment' as const,
+        signing_id: this.signingInfo.signing_id,
+        sender_identifier: ourIndex, // Use participant index as identifier
+        commitment: commitmentResult.commitments // Send the hex-encoded commitments
+      };
+
+      this.signingInfo.selected_signers.forEach(peerId => {
+        if (peerId !== this.localPeerId) {
+          this.sendWebRTCAppMessage(peerId, message);
+        }
+      });
+
+      // Add our own commitment
+      this.signingCommitments.set(this.localPeerId, commitmentResult.commitments);
+      this._log(`Stored own commitment and sent to ${this.signingInfo.selected_signers.length - 1} peers`);
+
+    } catch (error) {
+      this._log(`Error generating FROST commitment: ${this._getErrorMessage(error)}`);
+      this._updateSigningState(SigningState.Failed, this.signingInfo);
+    }
   }
 
   private _generateAndSendSignatureShare(): void {
     this._log(`Generating and sending signature share`);
 
-    if (!this.signingInfo) return;
+    if (!this.signingInfo) {
+      this._log(`Cannot generate signature share: no signing info`);
+      return;
+    }
 
-    // Mock signature share generation
-    const signatureShare = {
-      data: `share-${this.localPeerId}-${Date.now()}`,
-      participant: this.localPeerId
-    };
+    if (!this.frostDkg) {
+      this._log(`Cannot generate signature share: FROST DKG not initialized`);
+      return;
+    }
 
-    // Send share to all selected signers
-    const message: WebRTCAppMessage = {
-      webrtc_msg_type: 'SignatureShare' as const,
-      signing_id: this.signingInfo.signing_id,
-      sender_identifier: this.localPeerId,
-      share: signatureShare
-    };
+    if (!this.signingNonces) {
+      this._log(`Cannot generate signature share: no signing nonces available`);
+      return;
+    }
 
-    this.signingInfo.selected_signers.forEach(peerId => {
-      if (peerId !== this.localPeerId) {
-        this.sendWebRTCAppMessage(peerId, message);
+    try {
+      // Convert transaction data from hex to bytes
+      const messageHex = this.signingInfo.transaction_data;
+      this._log(`Signing message (hex): ${messageHex}`);
+
+      // Generate FROST signature share
+      const signatureShareResult = this.frostDkg.sign(messageHex);
+      
+      if (!signatureShareResult || !signatureShareResult.share) {
+        this._log(`Error: Invalid signature share result from FROST`);
+        return;
       }
-    });
 
-    // Add our own share
-    this.signingShares.set(this.localPeerId, signatureShare);
+      // Get our participant index
+      const ourIndex = this.participantIndices.get(this.localPeerId);
+      if (ourIndex === undefined) {
+        this._log(`Error: Cannot find our participant index`);
+        return;
+      }
+
+      this._log(`Generated FROST signature share`);
+
+      // Send share to all selected signers
+      const message: WebRTCAppMessage = {
+        webrtc_msg_type: 'SignatureShare' as const,
+        signing_id: this.signingInfo.signing_id,
+        sender_identifier: ourIndex, // Use participant index as identifier
+        share: signatureShareResult.share // Send the hex-encoded share
+      };
+
+      this.signingInfo.selected_signers.forEach(peerId => {
+        if (peerId !== this.localPeerId) {
+          this.sendWebRTCAppMessage(peerId, message);
+        }
+      });
+
+      // Add our own share
+      this.signingShares.set(this.localPeerId, signatureShareResult.share);
+      this._log(`Stored own signature share and sent to ${this.signingInfo.selected_signers.length - 1} peers`);
+
+    } catch (error) {
+      this._log(`Error generating FROST signature share: ${this._getErrorMessage(error)}`);
+      this._updateSigningState(SigningState.Failed, this.signingInfo);
+    }
   }
 
   private _aggregateSignatureAndBroadcast(): void {
     this._log(`Aggregating signature and broadcasting result`);
 
-    if (!this.signingInfo) return;
+    if (!this.signingInfo) {
+      this._log(`Cannot aggregate: no signing info`);
+      return;
+    }
 
-    // Mock signature aggregation
-    const aggregatedSignature = `aggregated-sig-${Date.now()}`;
+    if (!this.frostDkg) {
+      this._log(`Cannot aggregate: FROST DKG not initialized`);
+      return;
+    }
 
-    // Broadcast aggregated signature
-    const message: WebRTCAppMessage = {
-      webrtc_msg_type: 'AggregatedSignature' as const,
-      signing_id: this.signingInfo.signing_id,
-      signature: aggregatedSignature
-    };
-
-    this.signingInfo.participants.forEach(peerId => {
-      if (peerId !== this.localPeerId) {
-        this.sendWebRTCAppMessage(peerId, message);
+    try {
+      // Aggregate the signature using FROST
+      const messageHex = this.signingInfo.transaction_data;
+      this._log(`Aggregating signature for message: ${messageHex}`);
+      
+      const aggregatedResult = this.frostDkg.aggregate_signature(messageHex);
+      
+      if (!aggregatedResult || !aggregatedResult.signature) {
+        this._log(`Error: Invalid aggregation result from FROST`);
+        return;
       }
-    });
 
-    // Update our own state
-    this.signingInfo.final_signature = aggregatedSignature;
-    this.signingInfo.step = "complete";
-    this._updateSigningState(SigningState.Complete, this.signingInfo);
+      const signatureHex = aggregatedResult.signature;
+      this._log(`Successfully aggregated signature: ${signatureHex}`);
+
+      // Broadcast aggregated signature
+      const message: WebRTCAppMessage = {
+        webrtc_msg_type: 'AggregatedSignature' as const,
+        signing_id: this.signingInfo.signing_id,
+        signature: signatureHex
+      };
+
+      this.signingInfo.participants.forEach(peerId => {
+        if (peerId !== this.localPeerId) {
+          this.sendWebRTCAppMessage(peerId, message);
+        }
+      });
+
+      // Update our own state
+      this.signingInfo.final_signature = signatureHex;
+      this.signingInfo.step = "complete";
+      this._updateSigningState(SigningState.Complete, this.signingInfo);
+      
+      this._log(`Signing process ${this.signingInfo.signing_id} completed successfully`);
+      
+    } catch (error) {
+      this._log(`Error aggregating signature: ${this._getErrorMessage(error)}`);
+      this._updateSigningState(SigningState.Failed, this.signingInfo);
+    }
   }
 
   // Add getDkgStatus method that tests are expecting
