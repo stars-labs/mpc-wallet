@@ -21,6 +21,7 @@ import { WebSocketManager } from "./webSocketManager";
 import { SessionManager } from "./sessionManager";
 import { RpcHandler, UIRequestHandler } from "./rpcHandler";
 import AccountService from "../../services/accountService";
+import { DkgState } from "../../types/dkg";
 
 /**
  * Handles messages from popup interface
@@ -705,6 +706,10 @@ export class OffscreenMessageHandler {
                 this.handleDkgComplete(payload);
                 break;
 
+            case "dkg_state_update":
+                this.handleDkgStateUpdate(payload);
+                break;
+
             default:
                 // Forward to state manager for state updates
                 this.stateManager.handleOffscreenStateUpdate(payload);
@@ -791,6 +796,9 @@ export class OffscreenMessageHandler {
     private async handleDkgComplete(payload: any): void {
         console.log("[OffscreenMessageHandler] DKG complete:", payload);
         
+        // Update DKG state to Complete
+        this.stateManager.updateStateProperty('dkgState', DkgState.Complete);
+        
         if (payload.payload && payload.payload.keyShareData) {
             const keyShareData = payload.payload.keyShareData;
             const sessionId = keyShareData.sessionId;
@@ -818,25 +826,53 @@ export class OffscreenMessageHandler {
             }
             
             if (address && sessionId) {
-                // Complete account creation
-                const accountService = AccountService.getInstance();
-                const newAccount = await accountService.completeAccountCreation(
-                    sessionId,
-                    address,
-                    keyShareData
-                );
-                
-                console.log("[OffscreenMessageHandler] Account created for session:", sessionId);
-                
-                // Notify popup to refresh accounts
-                if (newAccount) {
-                    this.stateManager.broadcastToPopupPorts({
-                        type: 'accountsUpdated',
-                        blockchain: newAccount.blockchain,
-                        accounts: accountService.getAccountsByBlockchain(newAccount.blockchain)
-                    });
+                try {
+                    // Complete account creation
+                    const accountService = AccountService.getInstance();
+                    const newAccount = await accountService.completeAccountCreation(
+                        sessionId,
+                        address,
+                        keyShareData
+                    );
+                    
+                    if (newAccount) {
+                        console.log("[OffscreenMessageHandler] Account created for session:", sessionId);
+                        
+                        // Notify popup to refresh accounts
+                        this.stateManager.broadcastToPopupPorts({
+                            type: 'accountsUpdated',
+                            blockchain: newAccount.blockchain,
+                            accounts: accountService.getAccountsByBlockchain(newAccount.blockchain)
+                        });
+                    } else {
+                        console.warn("[OffscreenMessageHandler] Account creation returned null, but DKG is still complete");
+                    }
+                } catch (error) {
+                    console.error("[OffscreenMessageHandler] Error during account creation:", error);
+                    // Even if account creation fails, DKG is still complete
+                    // The user can still use the wallet for signing
                 }
             }
+        }
+        
+        // Ensure DKG state remains Complete regardless of account creation outcome
+        this.stateManager.updateStateProperty('dkgState', DkgState.Complete);
+    }
+
+    private handleDkgStateUpdate(payload: any): void {
+        console.log("[OffscreenMessageHandler] DKG state update:", payload);
+        
+        if (payload.payload && typeof payload.payload.state === 'number') {
+            const newState = payload.payload.state;
+            // Only update state if it's not going backwards from Complete
+            const currentState = this.stateManager.getState().dkgState;
+            
+            if (currentState === DkgState.Complete && newState === DkgState.Idle) {
+                console.log("[OffscreenMessageHandler] Ignoring attempt to reset DKG state from Complete to Idle");
+                return;
+            }
+            
+            this.stateManager.updateStateProperty('dkgState', newState);
         }
     }
 }
