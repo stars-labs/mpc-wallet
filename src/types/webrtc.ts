@@ -29,7 +29,7 @@ export type WebRTCAppMessage =
   // FROST Signing Process Messages
   | { webrtc_msg_type: 'SigningRequest'; signing_id: string; transaction_data: string; required_signers: number }
   | { webrtc_msg_type: 'SigningAcceptance'; signing_id: string; accepted: boolean }
-  | { webrtc_msg_type: 'SignerSelection'; signing_id: string; selected_signers: number[] } // Array of participant indices
+  | { webrtc_msg_type: 'SignerSelection'; signing_id: string; selected_signers: string[] } // Array of hex identifiers (64-char)
   | { webrtc_msg_type: 'SigningCommitment'; signing_id: string; sender_identifier: any; commitment: any } // FROST commitment
   | { webrtc_msg_type: 'SignatureShare'; signing_id: string; sender_identifier: any; share: any } // FROST signature share
   | { webrtc_msg_type: 'AggregatedSignature'; signing_id: string; signature: string } // Final signature as string

@@ -1097,21 +1097,23 @@ export class WebRTCManager {
     this.signingInfo.step = "signer_selection";
 
     // Convert selected signers (device IDs) to participant indices for the message
-    const selectedSignerIndices: number[] = [];
+    const selectedSignerIdentifiers: string[] = [];
     for (const signer of availableSigners) {
       const index = this.participantIndices.get(signer);
       if (index !== undefined) {
-        selectedSignerIndices.push(index);
+        // Convert index to 64-character hex string (same format as CLI)
+        const hexIdentifier = index.toString(16).padStart(64, '0');
+        selectedSignerIdentifiers.push(hexIdentifier);
       } else {
         this._log(`Warning: Cannot find participant index for ${signer}`);
       }
     }
 
-    // Broadcast signer selection to all participants with indices
+    // Broadcast signer selection to all participants with hex identifiers
     const message: WebRTCAppMessage = {
       webrtc_msg_type: 'SignerSelection' as const,
       signing_id: this.signingInfo.signing_id,
-      selected_signers: selectedSignerIndices // Send indices instead of device IDs
+      selected_signers: selectedSignerIdentifiers // Send hex identifiers like CLI
     };
 
     if (this.sessionInfo) {
@@ -1122,7 +1124,7 @@ export class WebRTCManager {
       });
     }
 
-    this._log(`Selected signers: [${this.signingInfo.selected_signers.join(', ')}] with indices: [${selectedSignerIndices.join(', ')}]`);
+    this._log(`Selected signers: [${this.signingInfo.selected_signers.join(', ')}] with identifiers: [${selectedSignerIdentifiers.map(id => id.substring(0, 8) + '...').join(', ')}]`);
 
     // Check if we are selected as a signer
     const isSelectedSigner = this.signingInfo.selected_signers.includes(this.localPeerId);
@@ -1961,9 +1963,9 @@ export class WebRTCManager {
       return;
     }
 
-    // Convert indices back to device IDs for internal use
+    // Convert hex identifiers back to device IDs for internal use
     const selectedSignerDeviceIds: string[] = [];
-    const selectedIndices = message.selected_signers as number[];
+    const selectedIdentifiers = message.selected_signers as string[];
     
     // Create reverse mapping from index to device ID
     const indexToDeviceId = new Map<number, string>();
@@ -1971,19 +1973,21 @@ export class WebRTCManager {
       indexToDeviceId.set(index, deviceId);
     });
     
-    for (const index of selectedIndices) {
+    for (const hexId of selectedIdentifiers) {
+      // Parse hex identifier to get index
+      const index = parseInt(hexId, 16);
       const deviceId = indexToDeviceId.get(index);
       if (deviceId) {
         selectedSignerDeviceIds.push(deviceId);
       } else {
-        this._log(`Warning: Cannot find device ID for index ${index}`);
+        this._log(`Warning: Cannot find device ID for identifier ${hexId} (index ${index})`);
       }
     }
 
     this.signingInfo.selected_signers = selectedSignerDeviceIds;
     this.signingInfo.step = "commitment_phase";
     
-    this._log(`Received signer selection with indices [${selectedIndices.join(', ')}] => device IDs [${selectedSignerDeviceIds.join(', ')}]`);
+    this._log(`Received signer selection with identifiers [${selectedIdentifiers.map(id => id.substring(0, 8) + '...').join(', ')}] => device IDs [${selectedSignerDeviceIds.join(', ')}]`);
 
     // Check if we are selected as a signer
     const isSelectedSigner = this.signingInfo.selected_signers.includes(this.localPeerId);
@@ -2012,12 +2016,11 @@ export class WebRTCManager {
     }
 
     try {
-      // Get sender's participant index
-      const senderIndex = this.participantIndices.get(fromPeerId);
-      if (senderIndex === undefined) {
-        this._log(`Error: Cannot find participant index for ${fromPeerId}`);
-        return;
-      }
+      // Parse sender identifier from hex
+      const senderHexId = message.sender_identifier;
+      const senderIndex = parseInt(senderHexId, 16);
+      
+      this._log(`Received commitment from ${fromPeerId} with identifier ${senderHexId.substring(0, 8)}... (index ${senderIndex})`);
 
       // Add the commitment to FROST DKG
       const commitmentHex = message.commitment;
@@ -2054,12 +2057,11 @@ export class WebRTCManager {
     }
 
     try {
-      // Get sender's participant index
-      const senderIndex = this.participantIndices.get(fromPeerId);
-      if (senderIndex === undefined) {
-        this._log(`Error: Cannot find participant index for ${fromPeerId}`);
-        return;
-      }
+      // Parse sender identifier from hex
+      const senderHexId = message.sender_identifier;
+      const senderIndex = parseInt(senderHexId, 16);
+      
+      this._log(`Received signature share from ${fromPeerId} with identifier ${senderHexId.substring(0, 8)}... (index ${senderIndex})`);
 
       // Add the signature share to FROST DKG
       const shareHex = message.share;
@@ -2122,18 +2124,19 @@ export class WebRTCManager {
       const commitmentsHex = commitmentResult.commitments;
       this._log(`Generated FROST commitments (hex): ${commitmentsHex}`);
 
-      // Get our participant index
+      // Get our participant index and convert to hex identifier
       const ourIndex = this.participantIndices.get(this.localPeerId);
       if (ourIndex === undefined) {
         this._log(`Error: Cannot find our participant index`);
         return;
       }
+      const ourHexIdentifier = ourIndex.toString(16).padStart(64, '0');
 
       // Send commitment to all selected signers
       const message: WebRTCAppMessage = {
         webrtc_msg_type: 'SigningCommitment' as const,
         signing_id: this.signingInfo.signing_id,
-        sender_identifier: ourIndex, // Use participant index as identifier
+        sender_identifier: ourHexIdentifier, // Use hex identifier
         commitment: commitmentResult.commitments // Send the hex-encoded commitments
       };
 
@@ -2184,12 +2187,13 @@ export class WebRTCManager {
         return;
       }
 
-      // Get our participant index
+      // Get our participant index and convert to hex identifier
       const ourIndex = this.participantIndices.get(this.localPeerId);
       if (ourIndex === undefined) {
         this._log(`Error: Cannot find our participant index`);
         return;
       }
+      const ourHexIdentifier = ourIndex.toString(16).padStart(64, '0');
 
       this._log(`Generated FROST signature share`);
 
@@ -2197,7 +2201,7 @@ export class WebRTCManager {
       const message: WebRTCAppMessage = {
         webrtc_msg_type: 'SignatureShare' as const,
         signing_id: this.signingInfo.signing_id,
-        sender_identifier: ourIndex, // Use participant index as identifier
+        sender_identifier: ourHexIdentifier, // Use hex identifier
         share: signatureShareResult.share // Send the hex-encoded share
       };
 
