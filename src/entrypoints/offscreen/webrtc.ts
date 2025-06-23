@@ -2317,7 +2317,13 @@ export class WebRTCManager {
 
     try {
       // Convert transaction data from hex to bytes
-      const messageHex = this.signingInfo.transaction_data;
+      let messageHex = this.signingInfo.transaction_data;
+      
+      // Remove 0x prefix if present (WASM expects pure hex)
+      if (messageHex.startsWith('0x')) {
+        messageHex = messageHex.slice(2);
+      }
+      
       this._log(`Signing message (hex): ${messageHex}`);
 
       // Generate FROST signature share
@@ -2399,7 +2405,13 @@ export class WebRTCManager {
 
     try {
       // Aggregate the signature using FROST
-      const messageHex = this.signingInfo.transaction_data;
+      let messageHex = this.signingInfo.transaction_data;
+      
+      // Remove 0x prefix if present (WASM expects pure hex)
+      if (messageHex.startsWith('0x')) {
+        messageHex = messageHex.slice(2);
+      }
+      
       this._log(`Aggregating signature for message: ${messageHex}`);
       
       const signatureHex = this.frostDkg.aggregate_signature(messageHex);
