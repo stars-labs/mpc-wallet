@@ -1096,11 +1096,22 @@ export class WebRTCManager {
     this.signingInfo.selected_signers = availableSigners;
     this.signingInfo.step = "signer_selection";
 
-    // Broadcast signer selection to all participants
+    // Convert selected signers (device IDs) to participant indices for the message
+    const selectedSignerIndices: number[] = [];
+    for (const signer of availableSigners) {
+      const index = this.participantIndices.get(signer);
+      if (index !== undefined) {
+        selectedSignerIndices.push(index);
+      } else {
+        this._log(`Warning: Cannot find participant index for ${signer}`);
+      }
+    }
+
+    // Broadcast signer selection to all participants with indices
     const message: WebRTCAppMessage = {
       webrtc_msg_type: 'SignerSelection' as const,
       signing_id: this.signingInfo.signing_id,
-      selected_signers: this.signingInfo.selected_signers
+      selected_signers: selectedSignerIndices // Send indices instead of device IDs
     };
 
     if (this.sessionInfo) {
@@ -1111,7 +1122,7 @@ export class WebRTCManager {
       });
     }
 
-    this._log(`Selected signers: [${this.signingInfo.selected_signers.join(', ')}]`);
+    this._log(`Selected signers: [${this.signingInfo.selected_signers.join(', ')}] with indices: [${selectedSignerIndices.join(', ')}]`);
 
     // Check if we are selected as a signer
     const isSelectedSigner = this.signingInfo.selected_signers.includes(this.localPeerId);
@@ -1950,8 +1961,29 @@ export class WebRTCManager {
       return;
     }
 
-    this.signingInfo.selected_signers = message.selected_signers;
+    // Convert indices back to device IDs for internal use
+    const selectedSignerDeviceIds: string[] = [];
+    const selectedIndices = message.selected_signers as number[];
+    
+    // Create reverse mapping from index to device ID
+    const indexToDeviceId = new Map<number, string>();
+    this.participantIndices.forEach((index, deviceId) => {
+      indexToDeviceId.set(index, deviceId);
+    });
+    
+    for (const index of selectedIndices) {
+      const deviceId = indexToDeviceId.get(index);
+      if (deviceId) {
+        selectedSignerDeviceIds.push(deviceId);
+      } else {
+        this._log(`Warning: Cannot find device ID for index ${index}`);
+      }
+    }
+
+    this.signingInfo.selected_signers = selectedSignerDeviceIds;
     this.signingInfo.step = "commitment_phase";
+    
+    this._log(`Received signer selection with indices [${selectedIndices.join(', ')}] => device IDs [${selectedSignerDeviceIds.join(', ')}]`);
 
     // Check if we are selected as a signer
     const isSelectedSigner = this.signingInfo.selected_signers.includes(this.localPeerId);
