@@ -1087,7 +1087,12 @@
                             <span class="text-xs bg-green-100 text-green-800 px-2 py-1 rounded-full font-semibold">
                                 ✓ Ready to Sign
                             </span>
-                        {:else if appState.dkgState === DkgState.InProgress || appState.dkgState === DkgState.Round1Complete || appState.dkgState === DkgState.Round2Complete}
+                        {:else if appState.dkgState === DkgState.Initializing || 
+                                  appState.dkgState === DkgState.Round1InProgress || 
+                                  appState.dkgState === DkgState.Round1Complete || 
+                                  appState.dkgState === DkgState.Round2InProgress || 
+                                  appState.dkgState === DkgState.Round2Complete || 
+                                  appState.dkgState === DkgState.Finalizing}
                             <span class="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded-full font-semibold animate-pulse">
                                 DKG in Progress...
                             </span>
@@ -1105,7 +1110,7 @@
                             </span>
                         {:else}
                             <span class="text-xs bg-gray-100 text-gray-800 px-2 py-1 rounded-full font-semibold">
-                                Setting Up...
+                                Setting Up... (DKG: {appState.dkgState})
                             </span>
                         {/if}
                     </div>
@@ -1210,7 +1215,12 @@
                             Test MPC Signing
                         </button>
                     </div>
-                {:else if appState.dkgState === DkgState.InProgress}
+                {:else if appState.dkgState === DkgState.Initializing || 
+                          appState.dkgState === DkgState.Round1InProgress || 
+                          appState.dkgState === DkgState.Round1Complete || 
+                          appState.dkgState === DkgState.Round2InProgress || 
+                          appState.dkgState === DkgState.Round2Complete || 
+                          appState.dkgState === DkgState.Finalizing}
                     <div class="border-t border-green-200 pt-3">
                         <div class="bg-blue-50 border border-blue-200 rounded-lg p-3">
                             <p class="text-sm text-blue-800 font-semibold flex items-center">
