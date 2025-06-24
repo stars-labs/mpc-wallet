@@ -22,9 +22,11 @@ export class PermissionService {
     private static instance: PermissionService;
     private permissions: Map<string, DAppPermission> = new Map();
     private readonly STORAGE_KEY = "mpc_wallet_dapp_permissions";
+    private initialized: boolean = false;
+    private initPromise: Promise<void> | null = null;
     
     private constructor() {
-        this.loadPermissions();
+        this.initPromise = this.loadPermissions();
     }
     
     public static getInstance(): PermissionService {
@@ -32,6 +34,16 @@ export class PermissionService {
             PermissionService.instance = new PermissionService();
         }
         return PermissionService.instance;
+    }
+    
+    /**
+     * Ensure the service is initialized before use
+     */
+    public async ensureInitialized(): Promise<void> {
+        if (this.initPromise) {
+            await this.initPromise;
+            this.initPromise = null;
+        }
     }
     
     /**
@@ -47,8 +59,10 @@ export class PermissionService {
                 this.permissions = new Map(Object.entries(stored));
                 console.log("[PermissionService] Loaded permissions for", this.permissions.size, "dApps");
             }
+            this.initialized = true;
         } catch (error) {
             console.error("[PermissionService] Error loading permissions:", error);
+            this.initialized = true; // Mark as initialized even on error
         }
     }
     
@@ -90,13 +104,18 @@ export class PermissionService {
         chainId: string,
         dAppInfo?: { name?: string; icon?: string }
     ): Promise<void> {
+        // Don't store permissions for null/undefined origins (e.g., from popup)
+        if (!origin) {
+            console.log("[PermissionService] Skipping permission storage for null origin");
+            return;
+        }
+        
         const normalizedAccounts = accounts.map(a => a.toLowerCase());
         const existing = this.permissions.get(origin);
         
         if (existing) {
-            // Merge with existing accounts
-            const merged = new Set([...existing.connectedAccounts, ...normalizedAccounts]);
-            existing.connectedAccounts = Array.from(merged);
+            // Replace existing accounts (this is the standard behavior for wallet connections)
+            existing.connectedAccounts = normalizedAccounts;
             existing.lastConnected = Date.now();
             existing.chainId = chainId;
             if (dAppInfo?.name) existing.name = dAppInfo.name;
@@ -114,6 +133,41 @@ export class PermissionService {
         
         await this.savePermissions();
         console.log("[PermissionService] Connected accounts for", origin, ":", normalizedAccounts);
+    }
+    
+    /**
+     * Add additional accounts to an existing permission
+     */
+    public async addAccountsToPermission(
+        origin: string, 
+        accounts: string[], 
+        chainId: string
+    ): Promise<void> {
+        if (!origin) {
+            return;
+        }
+        
+        const normalizedAccounts = accounts.map(a => a.toLowerCase());
+        const existing = this.permissions.get(origin);
+        
+        if (existing) {
+            // Merge with existing accounts (deduplicate)
+            const merged = new Set([...existing.connectedAccounts, ...normalizedAccounts]);
+            existing.connectedAccounts = Array.from(merged);
+            existing.lastConnected = Date.now();
+            existing.chainId = chainId;
+        } else {
+            // If no existing permission, create new one
+            this.permissions.set(origin, {
+                origin,
+                connectedAccounts: normalizedAccounts,
+                lastConnected: Date.now(),
+                chainId
+            });
+        }
+        
+        await this.savePermissions();
+        console.log("[PermissionService] Added accounts to", origin, ":", normalizedAccounts);
     }
     
     /**
@@ -176,6 +230,20 @@ export class PermissionService {
             permission.chainId = chainId;
             await this.savePermissions();
         }
+    }
+    
+    /**
+     * Add a single account to an existing permission
+     */
+    public async addAccount(origin: string, account: string, chainId: string): Promise<void> {
+        await this.addAccountsToPermission(origin, [account], chainId);
+    }
+    
+    /**
+     * Disconnect a single account from an origin
+     */
+    public async disconnectAccount(origin: string, account: string): Promise<void> {
+        await this.disconnectAccounts(origin, [account]);
     }
 }
 

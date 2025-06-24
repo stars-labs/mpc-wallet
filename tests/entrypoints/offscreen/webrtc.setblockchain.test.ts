@@ -1,7 +1,6 @@
 // Test for setBlockchain message handling in offscreen context
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { WebRTCManager } from "./webrtc";
-
+import { WebRTCManager } from "../../../src/entrypoints/offscreen/webrtc";
+import {  describe, it, expect, beforeEach, afterEach  } from 'bun:test';
 describe('WebRTCManager setBlockchain functionality', () => {
     let manager: WebRTCManager;
 

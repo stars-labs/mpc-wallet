@@ -20,6 +20,7 @@ import type {
 
 export class KeystoreService {
     private static instance: KeystoreService;
+    private static testMode: boolean = false;
     private keystoreIndex: KeystoreIndex | null = null;
     private keyShares: Map<string, KeyShareData> = new Map();
     private password: string | null = null;
@@ -38,6 +39,19 @@ export class KeystoreService {
             KeystoreService.instance = new KeystoreService();
         }
         return KeystoreService.instance;
+    }
+    
+    /**
+     * Reset the singleton instance (for testing only)
+     */
+    public static resetInstance(): void {
+        if (KeystoreService.instance) {
+            KeystoreService.instance.lock();
+            KeystoreService.instance.keyShares.clear();
+            KeystoreService.instance.keystoreIndex = null;
+        }
+        KeystoreService.instance = null as any;
+        KeystoreService.testMode = true;
     }
     
     /**
@@ -253,11 +267,16 @@ export class KeystoreService {
     // === Private Helper Methods ===
     
     private async loadKeystoreIndex(): Promise<void> {
+        // Skip loading in test mode to ensure clean state
+        if (KeystoreService.testMode) {
+            return;
+        }
+        
         try {
             const stored = await storage.getItem<KeystoreIndex>(`local:${this.INDEX_KEY}`);
             if (stored) {
                 this.keystoreIndex = stored;
-                console.log("[KeystoreService] Loaded keystore index with", stored.wallets.length, "wallets");
+                console.log("[KeystoreService] Loaded keystore index with", stored.wallets?.length || 0, "wallets");
             }
         } catch (error) {
             console.error("[KeystoreService] Failed to load index:", error);

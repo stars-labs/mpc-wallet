@@ -1,51 +1,14 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import NetworkService from '../../src/services/networkService';
 import { mainnet, sepolia } from 'viem/chains';
 import type { Chain } from '../../src/types/network';
-
-// Create a proper mock for chrome.storage.local
-const mockStorage = {
-    data: {} as Record<string, any>,
-    get: async (keys: string | string[] | Record<string, any>) => {
-        // Handle different get overloads
-        if (typeof keys === 'string') {
-            return { [keys]: mockStorage.data[keys] };
-        } else if (Array.isArray(keys)) {
-            const result: Record<string, any> = {};
-            keys.forEach(key => {
-                result[key] = mockStorage.data[key];
-            });
-            return result;
-        } else {
-            const result: Record<string, any> = {};
-            Object.keys(keys).forEach(key => {
-                result[key] = mockStorage.data[key] || keys[key];
-            });
-            return result;
-        }
-    },
-    set: async (data: Record<string, any>) => {
-        Object.assign(mockStorage.data, data);
-    },
-    clear: async () => {
-        mockStorage.data = {};
-    }
-};
-
-// Install the mock
-// Mock chrome API
-(global as any).chrome = {
-    storage: {
-        local: mockStorage
-    }
-};
-
+// The chrome mock is already set up in tests/setup.ts
+import {  describe, it, expect, beforeEach, afterEach  } from 'bun:test';
 describe('NetworkService', () => {
     let networkService: NetworkService;
 
     beforeEach(async () => {
         // Clear storage before each test
-        await mockStorage.clear();
+        await chrome.storage.local.clear();
         // Reset singleton instance before each test
         NetworkService.resetInstance();
 
@@ -59,7 +22,7 @@ describe('NetworkService', () => {
     });
 
     afterEach(async () => {
-        await mockStorage.clear();
+        await chrome.storage.local.clear();
         NetworkService.resetInstance();
     });
 
@@ -67,7 +30,7 @@ describe('NetworkService', () => {
     const originalGetDefaultNetworks = NetworkService.prototype.getDefaultNetworks;
 
     it('should initialize with empty ethereum networks list in test', async () => {
-        const networks = await networkService.getNetworks();
+        const networks = networkService.getNetworks();
 
         expect(networks.ethereum).toBeDefined();
         expect(networks.ethereum.length).toBe(2); // mainnet and sepolia added in beforeEach
@@ -101,7 +64,7 @@ describe('NetworkService', () => {
 
         await networkService.addNetwork('ethereum', customNetwork);
 
-        const networks = await networkService.getNetworks();
+        const networks = networkService.getNetworks();
         const addedNetwork = networks.ethereum.find((n: Chain) => n.id === 999);
 
         expect(addedNetwork).toBeDefined();
@@ -148,7 +111,7 @@ describe('NetworkService', () => {
         // Remove custom network - should succeed
         await networkService.removeNetwork('ethereum', 999);
 
-        const networks = await networkService.getNetworks();
+        const networks = networkService.getNetworks();
         const removedNetwork = networks.ethereum.find(n => n.id === 999);
         expect(removedNetwork).toBeUndefined();
     });
@@ -169,19 +132,19 @@ describe('NetworkService', () => {
         // Set current network to our test network
         await networkService.setCurrentNetwork('ethereum', 888);
 
-        const currentNetwork = await networkService.getCurrentNetwork('ethereum');
+        const currentNetwork = networkService.getCurrentNetwork('ethereum');
         expect(currentNetwork?.id).toBe(888);
         expect(currentNetwork?.name).toBe('Test Network');
     });
 
     it('should handle blockchain switching', async () => {
         // Initially should be ethereum
-        const initialBlockchain = await networkService.getCurrentBlockchain();
+        const initialBlockchain = networkService.getCurrentBlockchain();
         expect(initialBlockchain).toBe('ethereum');
 
         // Switch to solana
         await networkService.setCurrentBlockchain('solana');
-        const newBlockchain = await networkService.getCurrentBlockchain();
+        const newBlockchain = networkService.getCurrentBlockchain();
         expect(newBlockchain).toBe('solana');
     });
 
@@ -235,7 +198,7 @@ describe('NetworkService', () => {
 
         await networkService.addNetwork('solana', solanaNetwork);
 
-        const networks = await networkService.getNetworks();
+        const networks = networkService.getNetworks();
         const addedNetwork = networks.solana.find(n => n.id === 101);
 
         expect(addedNetwork).toBeDefined();
@@ -255,7 +218,8 @@ describe('NetworkService', () => {
         await networkService.addNetwork('ethereum', customNetwork);
 
         // Check that it was saved to storage
-        const stored = await mockStorage.get('wallet_networks');
+        const stored = await chrome.storage.local.get('wallet_networks');
+        expect(stored.wallet_networks).toBeDefined();
         expect(stored.wallet_networks.ethereum).toBeDefined();
         expect(stored.wallet_networks.ethereum.some((n: Chain) => n.id === 888)).toBe(true);
     });
@@ -272,7 +236,7 @@ describe('NetworkService', () => {
         };
 
         // Clear storage and reset singleton to start fresh
-        await mockStorage.clear();
+        await chrome.storage.local.clear();
         NetworkService.resetInstance();
 
         // Create base service and add custom network
@@ -308,7 +272,7 @@ describe('NetworkService', () => {
         await networkService.addNetwork('ethereum', testNetwork);
         await networkService.setCurrentNetwork('ethereum', 777);
 
-        const currentNetwork = await networkService.getCurrentNetwork('ethereum');
+        const currentNetwork = networkService.getCurrentNetwork('ethereum');
         expect(currentNetwork).toBeDefined();
 
         // The service should be able to create RPC clients for valid networks
@@ -325,10 +289,10 @@ describe('NetworkService', () => {
 
     it('should handle malformed storage data gracefully', async () => {
         // Set malformed data in storage
-        await mockStorage.set({ wallet_networks: 'invalid-data' });
+        await chrome.storage.local.set({ wallet_networks: 'invalid-data' });
 
         // Should still work and initialize defaults
-        const networks = await networkService.getNetworks() as Record<string, Chain[]>;
+        const networks = networkService.getNetworks();
         expect(networks.ethereum).toBeDefined();
         expect(networks.solana).toBeDefined();
     });
@@ -361,7 +325,7 @@ describe('NetworkService', () => {
         await networkService.updateNetwork('ethereum', updatedNetwork);
 
         // Verify the update
-        const networks = await networkService.getNetworks() as Record<string, Chain[]>;
+        const networks = networkService.getNetworks();
         const updated = networks.ethereum.find(n => n.id === 888);
         expect(updated?.name).toBe('Updated Test Network');
         expect(updated?.nativeCurrency?.symbol).toBe('TST2');
@@ -385,7 +349,7 @@ describe('NetworkService', () => {
 
     it('should throw error when updating protected networks', async () => {
         // Try to update mainnet (protected network) - mainnet should already exist from initialization
-        const mainnetNetworks = await networkService.getNetworks();
+        const mainnetNetworks = networkService.getNetworks();
         const mainnet = (mainnetNetworks.ethereum as Chain[]).find((n: Chain) => n.id === 1);
         expect(mainnet).toBeDefined(); // Ensure mainnet exists
 
@@ -404,7 +368,7 @@ describe('NetworkService', () => {
             .rejects.toThrow('Cannot modify protected network');
     });
 
-    it('should clear networks while preserving protected ones', async () => {
+    it('should clear networks while preserving defaults', async () => {
         // Default networks (mainnet and sepolia) should already exist from initialization
         // Add some custom networks
         const customNetwork1: Chain = {
@@ -434,7 +398,7 @@ describe('NetworkService', () => {
         await networkService.clearNetworks('ethereum');
 
         // Check that only protected networks remain
-        const networks = await networkService.getNetworks() as Record<string, Chain[]>;
+        const networks = networkService.getNetworks();
         const ethNetworks = networks.ethereum;
 
         // Should only have protected networks (mainnet, sepolia, etc.)
@@ -486,12 +450,12 @@ describe('NetworkService', () => {
 
     it('should get specific network by blockchain and chain ID', async () => {
         // Test getting mainnet (already loaded by default)
-        const mainnetNetwork = networkService.getNetwork('ethereum', 1);
+        const mainnetNetwork = await networkService.getNetwork('ethereum', 1);
         expect(mainnetNetwork).toBeDefined();
         expect(mainnetNetwork?.id).toBe(1);
 
         // Test getting non-existent network
-        const nonExistentNetwork = networkService.getNetwork('ethereum', 99999);
+        const nonExistentNetwork = await networkService.getNetwork('ethereum', 99999);
         expect(nonExistentNetwork).toBeUndefined();
     });
 
@@ -546,7 +510,7 @@ describe('NetworkService', () => {
     });
 
     it('should get all networks when no blockchain specified', async () => {
-        const allNetworks = networkService.getNetworks() as Record<string, Chain[]>;
+        const allNetworks = networkService.getNetworks();
         expect(allNetworks).toHaveProperty('ethereum');
         expect(allNetworks).toHaveProperty('solana');
         expect(Array.isArray(allNetworks.ethereum)).toBe(true);

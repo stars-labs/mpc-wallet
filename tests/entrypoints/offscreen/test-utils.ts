@@ -1,5 +1,7 @@
 import { Buffer } from 'buffer';
 import wasmInit, { FrostDkgEd25519, FrostDkgSecp256k1 } from '../../../pkg/mpc_wallet.js';
+import fs from 'fs';
+import path from 'path';
 
 // Initialize WASM once for all tests
 let wasmInitialized = false;
@@ -7,7 +9,20 @@ let wasmInitialized = false;
 export async function initializeWasmIfNeeded(): Promise<boolean> {
     if (!wasmInitialized) {
         try {
-            await wasmInit();
+            // For test environment, pass the WASM ArrayBuffer directly
+            if (typeof window === 'undefined' && typeof global !== 'undefined') {
+                const wasmPath = path.join(__dirname, '../../../pkg/mpc_wallet_bg.wasm');
+                const wasmBuffer = fs.readFileSync(wasmPath);
+                // Convert Node.js Buffer to ArrayBuffer
+                const arrayBuffer = new ArrayBuffer(wasmBuffer.length);
+                const view = new Uint8Array(arrayBuffer);
+                for (let i = 0; i < wasmBuffer.length; i++) {
+                    view[i] = wasmBuffer[i];
+                }
+                await wasmInit(arrayBuffer);
+            } else {
+                await wasmInit();
+            }
             console.log('✅ WASM initialized successfully for tests');
             wasmInitialized = true;
         } catch (error) {

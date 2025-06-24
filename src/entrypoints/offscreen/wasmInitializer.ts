@@ -75,42 +75,42 @@ export class WasmInitializer {
  */
 export async function initializeWasmModules(): Promise<boolean> {
     try {
-        console.log("🔧 [WASM] Initializing FROST DKG WASM modules...");
-        console.log("🔧 [WASM] typeof wasmInit:", typeof wasmInit);
-        console.log("🔧 [WASM] typeof FrostDkgEd25519:", typeof FrostDkgEd25519);
-        console.log("🔧 [WASM] typeof FrostDkgSecp256k1:", typeof FrostDkgSecp256k1);
+//         console.log("🔧 [WASM] Initializing FROST DKG WASM modules...");
+//         console.log("🔧 [WASM] typeof wasmInit:", typeof wasmInit);
+//         console.log("🔧 [WASM] typeof FrostDkgEd25519:", typeof FrostDkgEd25519);
+//         console.log("🔧 [WASM] typeof FrostDkgSecp256k1:", typeof FrostDkgSecp256k1);
 
         // Initialize the WASM module
         await wasmInit();
-        console.log("🔧 [WASM] wasmInit() completed successfully");
+//         console.log("🔧 [WASM] wasmInit() completed successfully");
 
         // Make WASM classes available globally for WebRTCManager
         (globalThis as any).FrostDkgEd25519 = FrostDkgEd25519;
         (globalThis as any).FrostDkgSecp256k1 = FrostDkgSecp256k1;
 
-        console.log("🔧 [WASM] Set globalThis.FrostDkgEd25519 to:", typeof (globalThis as any).FrostDkgEd25519);
-        console.log("🔧 [WASM] Set globalThis.FrostDkgSecp256k1 to:", typeof (globalThis as any).FrostDkgSecp256k1);
+//         console.log("🔧 [WASM] Set globalThis.FrostDkgEd25519 to:", typeof (globalThis as any).FrostDkgEd25519);
+//         console.log("🔧 [WASM] Set globalThis.FrostDkgSecp256k1 to:", typeof (globalThis as any).FrostDkgSecp256k1);
 
         // Also set on global if available (for Node.js-like environments)
         if (typeof global !== 'undefined') {
             (global as any).FrostDkgEd25519 = FrostDkgEd25519;
             (global as any).FrostDkgSecp256k1 = FrostDkgSecp256k1;
-            console.log("🔧 [WASM] Also set on global for Node.js compatibility");
+//             console.log("🔧 [WASM] Also set on global for Node.js compatibility");
         }
 
         // Test instance creation to verify WASM is working
         try {
             const testInstance = new FrostDkgSecp256k1();
-            console.log("🔧 [WASM] Test instance creation SUCCESS");
-            console.log("🔧 [WASM] Test instance type:", testInstance.constructor.name);
-            console.log("🔧 [WASM] Test instance has add_round1_package:", typeof testInstance.add_round1_package);
+//             console.log("🔧 [WASM] Test instance creation SUCCESS");
+//             console.log("🔧 [WASM] Test instance type:", testInstance.constructor.name);
+//             console.log("🔧 [WASM] Test instance has add_round1_package:", typeof testInstance.add_round1_package);
         } catch (testError) {
-            console.log("🔧 [WASM] Test instance creation FAILED:", testError);
+//             console.log("🔧 [WASM] Test instance creation FAILED:", testError);
         }
 
         wasmInitialized = true;
-        console.log("✅ [WASM] FROST DKG WASM modules initialized successfully");
-        console.log("📦 [WASM] Available modules: FrostDkgEd25519, FrostDkgSecp256k1");
+//         console.log("✅ [WASM] FROST DKG WASM modules initialized successfully");
+//         console.log("📦 [WASM] Available modules: FrostDkgEd25519, FrostDkgSecp256k1");
 
         return true;
     } catch (error) {
@@ -148,7 +148,7 @@ export function getWasmStatus(): {
  * Force re-initialization of WASM modules (for testing/recovery)
  */
 export async function reinitializeWasm(): Promise<boolean> {
-    console.log("🔄 [WASM] Force re-initializing WASM modules...");
+//     console.log("🔄 [WASM] Force re-initializing WASM modules...");
     wasmInitialized = false;
     return await initializeWasmModules();
 }

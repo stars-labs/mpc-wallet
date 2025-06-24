@@ -30,7 +30,7 @@ import type { DkgState } from '../../types/dkg';
 import type { WebRTCAppMessage } from '../../types/webrtc';
 import { ServerMsg, ClientMsg, WebSocketMessagePayload, WebRTCSignal } from '../../types/websocket';
 
-console.log("🚀 Offscreen script loaded with modular architecture");
+// console.log("🚀 Offscreen script loaded with modular architecture");
 
 // ===================================================================
 // GLOBAL STATE AND INITIALIZATION
@@ -54,7 +54,7 @@ let webrtcConnections: Record<string, boolean> = {};
  */
 async function initializeModules(): Promise<void> {
     try {
-        console.log("🔧 [Init] Starting modular initialization...");
+//         console.log("🔧 [Init] Starting modular initialization...");
 
         // Step 1: Initialize WASM modules
         wasmInitializer = WasmInitializer.getInstance();
@@ -64,7 +64,7 @@ async function initializeModules(): Promise<void> {
             throw new Error("Failed to initialize WASM modules");
         }
 
-        console.log("✅ [Init] WASM modules initialized successfully");
+//         console.log("✅ [Init] WASM modules initialized successfully");
 
         // Step 2: Initialize message router
         messageRouter = new MessageRouter();
@@ -103,9 +103,9 @@ async function initializeModules(): Promise<void> {
         // Set up the message listener - this was missing!
         messageRouter.setupMessageListener();
 
-        console.log("✅ [Init] Message router initialized successfully");
+//         console.log("✅ [Init] Message router initialized successfully");
 
-        console.log("🎉 [Init] All modules initialized successfully!");
+//         console.log("🎉 [Init] All modules initialized successfully!");
     } catch (error) {
         console.error("❌ [Init] Failed to initialize modules:", error);
         throw error;
@@ -146,7 +146,7 @@ async function initializeWebRTCManager(deviceId: string): Promise<void> {
             };
 
             webRTCManager.onSessionUpdate = (sessionInfo: SessionInfo | null, invites: SessionInfo[]) => {
-                console.log("🔗 [WebRTC] Session update:", sessionInfo, invites);
+//                 console.log("🔗 [WebRTC] Session update:", sessionInfo, invites);
                 sendToBackground({
                     type: 'session_update',
                     payload: { sessionInfo, invites }
@@ -154,7 +154,7 @@ async function initializeWebRTCManager(deviceId: string): Promise<void> {
             };
 
             webRTCManager.onMeshStatusUpdate = (status: MeshStatus) => {
-                console.log("🔗 [WebRTC] Mesh status update:", status);
+//                 console.log("🔗 [WebRTC] Mesh status update:", status);
                 sendToBackground({
                     type: 'mesh_status_update',
                     payload: { status }
@@ -162,7 +162,7 @@ async function initializeWebRTCManager(deviceId: string): Promise<void> {
             };
 
             webRTCManager.onDkgStateUpdate = (state: DkgState) => {
-                console.log("🔗 [WebRTC] DKG state update:", state);
+//                 console.log("🔗 [WebRTC] DKG state update:", state);
                 sendToBackground({
                     type: 'dkg_state_update',
                     payload: { state }
@@ -170,7 +170,7 @@ async function initializeWebRTCManager(deviceId: string): Promise<void> {
             };
 
             webRTCManager.onDkgComplete = (state: DkgState, keyShareData: any) => {
-                console.log("🔗 [WebRTC] DKG complete, sending key share for storage");
+//                 console.log("🔗 [WebRTC] DKG complete, sending key share for storage");
                 sendToBackground({
                     type: 'dkg_complete',
                     payload: { state, keyShareData }
@@ -178,7 +178,7 @@ async function initializeWebRTCManager(deviceId: string): Promise<void> {
             };
 
             webRTCManager.onSigningStateUpdate = (state: any, info: any) => {
-                console.log("🔗 [WebRTC] Signing state update:", state, info);
+//                 console.log("🔗 [WebRTC] Signing state update:", state, info);
                 sendToBackground({
                     type: 'signing_state_update',
                     payload: { state, info }
@@ -195,7 +195,7 @@ async function initializeWebRTCManager(deviceId: string): Promise<void> {
                 });
             };
 
-            console.log("✅ [WebRTC] WebRTCManager initialized successfully");
+//             console.log("✅ [WebRTC] WebRTCManager initialized successfully");
         }
 
     } catch (error) {
@@ -213,7 +213,7 @@ async function initializeWebRTCManager(deviceId: string): Promise<void> {
  */
 async function handleInit(messageType: string, payload: any): Promise<any> {
     try {
-        console.log("🔧 [Handler] Handling init request:", payload);
+//         console.log("🔧 [Handler] Handling init request:", payload);
 
         if (!payload.deviceId) {
             throw new Error("deviceId is required for initialization");
@@ -240,7 +240,7 @@ async function handleInit(messageType: string, payload: any): Promise<any> {
  */
 async function handleInitWebRTC(messageType: string, payload: any): Promise<any> {
     try {
-        console.log("🔧 [Handler] Handling initWebRTC request:", payload);
+//         console.log("🔧 [Handler] Handling initWebRTC request:", payload);
 
         if (!payload.localdeviceId) {
             throw new Error("localdeviceId is required for WebRTC initialization");
@@ -271,7 +271,7 @@ async function handleWebRTCSignal(messageType: string, payload: any): Promise<an
             throw new Error("WebRTC manager not initialized");
         }
 
-        console.log("🔧 [Handler] Handling WebRTC signal:", payload);
+//         console.log("🔧 [Handler] Handling WebRTC signal:", payload);
         await webRTCManager.handleWebRTCSignal(payload.fromPeerId, payload.signal);
 
         return { success: true };
@@ -293,7 +293,7 @@ async function handleRelayViaWs(messageType: string, payload: any): Promise<any>
             throw new Error("WebRTC manager not initialized");
         }
 
-        console.log("🔧 [Handler] Handling relayViaWs:", payload);
+//         console.log("🔧 [Handler] Handling relayViaWs:", payload);
 
         // Extract the WebSocket message payload data
         if (!payload.to || !payload.data) {
@@ -326,7 +326,7 @@ async function handleCreateSession(messageType: string, payload: any): Promise<a
             throw new Error("WebRTC manager not initialized");
         }
 
-        console.log("🔧 [Handler] Creating session:", payload);
+//         console.log("🔧 [Handler] Creating session:", payload);
         await webRTCManager.createSession(payload.sessionId, payload.threshold);
 
         return { success: true };
@@ -348,7 +348,7 @@ async function handleJoinSession(messageType: string, payload: any): Promise<any
             throw new Error("WebRTC manager not initialized");
         }
 
-        console.log("🔧 [Handler] Joining session:", payload);
+//         console.log("🔧 [Handler] Joining session:", payload);
         await webRTCManager.joinSession(payload.sessionId);
 
         return { success: true };
@@ -370,7 +370,7 @@ async function handleAcceptSession(messageType: string, payload: any): Promise<a
             throw new Error("WebRTC manager not initialized");
         }
 
-        console.log("🔧 [Handler] Accepting session:", payload);
+//         console.log("🔧 [Handler] Accepting session:", payload);
         
         // The accept session logic is handled by the background script
         // The offscreen just needs to acknowledge and wait for sessionAccepted message
@@ -393,7 +393,7 @@ async function handleStartDkg(messageType: string, payload: any): Promise<any> {
             throw new Error("WebRTC manager not initialized");
         }
 
-        console.log("🔧 [Handler] Starting DKG");
+//         console.log("🔧 [Handler] Starting DKG");
         await webRTCManager.startDkg();
 
         return { success: true };
@@ -415,7 +415,7 @@ async function handleRequestSigning(messageType: string, payload: any): Promise<
             throw new Error("WebRTC manager not initialized");
         }
 
-        console.log("🔧 [Handler] Requesting signing:", payload);
+//         console.log("🔧 [Handler] Requesting signing:", payload);
         
         // Check if we have required parameters
         if (!payload.signingId || !payload.transactionData || !payload.requiredSigners) {
@@ -448,7 +448,7 @@ async function handleAcceptSigning(messageType: string, payload: any): Promise<a
             throw new Error("WebRTC manager not initialized");
         }
 
-        console.log("🔧 [Handler] Accepting signing:", payload);
+//         console.log("🔧 [Handler] Accepting signing:", payload);
         await webRTCManager.acceptSigning(payload.signingId);
 
         return { success: true };
@@ -558,7 +558,7 @@ async function handleSetBlockchain(messageType: string, payload: any): Promise<a
             throw new Error("WebRTC manager not initialized");
         }
 
-        console.log("🔧 [Handler] Setting blockchain:", payload);
+//         console.log("🔧 [Handler] Setting blockchain:", payload);
         webRTCManager.setBlockchain(payload.blockchain);
 
         return { success: true };
@@ -580,7 +580,7 @@ async function handleGetAddresses(messageType: string, payload: any): Promise<an
             throw new Error("WebRTC manager not initialized");
         }
 
-        console.log("🔧 [Handler] Getting addresses");
+//         console.log("🔧 [Handler] Getting addresses");
         const addresses = webRTCManager.getAddresses();
 
         return {
@@ -605,13 +605,13 @@ async function handleSessionAccepted(messageType: string, payload: any): Promise
             throw new Error("WebRTC manager not initialized");
         }
 
-        console.log("🔧 [Handler] Handling sessionAccepted:", payload);
+//         console.log("🔧 [Handler] Handling sessionAccepted:", payload);
 
         // Update session info and initiate peer connections
         if (payload.sessionInfo && payload.currentdeviceId) {
             // Set blockchain selection if provided
             if (payload.blockchain && webRTCManager.setBlockchain) {
-                console.log("🔧 [Handler] Setting blockchain to:", payload.blockchain);
+//                 console.log("🔧 [Handler] Setting blockchain to:", payload.blockchain);
                 await webRTCManager.setBlockchain(payload.blockchain);
             }
             
@@ -649,11 +649,11 @@ async function handleSessionAllAccepted(messageType: string, payload: any): Prom
             throw new Error("WebRTC manager not initialized");
         }
 
-        console.log("🔧 [Handler] Handling sessionAllAccepted:", payload);
+//         console.log("🔧 [Handler] Handling sessionAllAccepted:", payload);
 
         // Set blockchain selection if provided
         if (payload.blockchain && webRTCManager.setBlockchain) {
-            console.log("🔧 [Handler] Setting blockchain to:", payload.blockchain);
+//             console.log("🔧 [Handler] Setting blockchain to:", payload.blockchain);
             await webRTCManager.setBlockchain(payload.blockchain);
         }
 
@@ -680,7 +680,7 @@ async function handleSessionResponseUpdate(messageType: string, payload: any): P
             throw new Error("WebRTC manager not initialized");
         }
 
-        console.log("🔧 [Handler] Handling sessionResponseUpdate:", payload);
+//         console.log("🔧 [Handler] Handling sessionResponseUpdate:", payload);
 
         if (payload.sessionInfo && webRTCManager.updateSessionInfo) {
             webRTCManager.updateSessionInfo(payload.sessionInfo);
@@ -705,10 +705,10 @@ async function handleGetEthereumAddress(messageType: string, payload: any): Prom
             throw new Error("WebRTC manager not initialized");
         }
 
-        console.log("🔧 [Handler] Getting Ethereum address");
+//         console.log("🔧 [Handler] Getting Ethereum address");
         const addresses = webRTCManager.getAddresses();
-        console.log("🔧 [Handler] Available addresses:", addresses);
-        console.log("🔧 [Handler] Ethereum address:", addresses.ethereum);
+//         console.log("🔧 [Handler] Available addresses:", addresses);
+//         console.log("🔧 [Handler] Ethereum address:", addresses.ethereum);
 
         return {
             success: true,
@@ -732,7 +732,7 @@ async function handleGetSolanaAddress(messageType: string, payload: any): Promis
             throw new Error("WebRTC manager not initialized");
         }
 
-        console.log("🔧 [Handler] Getting Solana address");
+//         console.log("🔧 [Handler] Getting Solana address");
         const addresses = webRTCManager.getAddresses();
 
         return {
@@ -753,7 +753,7 @@ async function handleGetSolanaAddress(messageType: string, payload: any): Promis
  */
 async function handleGetWebRTCStatus(messageType: string, payload: any): Promise<any> {
     try {
-        console.log("🔧 [Handler] Getting WebRTC status");
+//         console.log("🔧 [Handler] Getting WebRTC status");
 
         const status = {
             initialized: !!webRTCManager,
@@ -783,7 +783,7 @@ async function handleSendDirectMessage(messageType: string, payload: any): Promi
             throw new Error("WebRTC manager not initialized");
         }
 
-        console.log("🔧 [Handler] Sending direct message:", payload);
+//         console.log("🔧 [Handler] Sending direct message:", payload);
 
         if (payload.todeviceId && payload.message) {
             webRTCManager.sendWebRTCAppMessage(payload.todeviceId, {
@@ -807,7 +807,7 @@ async function handleSendDirectMessage(messageType: string, payload: any): Promi
  */
 async function handleGetState(messageType: string, payload: any): Promise<any> {
     try {
-        console.log("🔧 [Handler] Getting state");
+//         console.log("🔧 [Handler] Getting state");
 
         const state = {
             deviceId: localdeviceId,
@@ -833,7 +833,7 @@ async function handleGetState(messageType: string, payload: any): Promise<any> {
  */
 async function handleGetDkgStatus(messageType: string, payload: any): Promise<any> {
     try {
-        console.log("🔧 [Handler] Getting DKG status");
+//         console.log("🔧 [Handler] Getting DKG status");
 
         const status = {
             initialized: !!webRTCManager,
@@ -858,7 +858,7 @@ async function handleGetDkgStatus(messageType: string, payload: any): Promise<an
  */
 async function handleGetGroupPublicKey(messageType: string, payload: any): Promise<any> {
     try {
-        console.log("🔧 [Handler] Getting group public key");
+//         console.log("🔧 [Handler] Getting group public key");
 
         // For now, return placeholder - this would need to be implemented
         // based on the actual DKG state
@@ -883,12 +883,12 @@ async function handleGetGroupPublicKey(messageType: string, payload: any): Promi
  * Send messages to the background script
  */
 function sendToBackground(message: { type: string; payload: unknown }): void {
-    console.log("📤 [Comm] Sending message to background:", message);
+//     console.log("📤 [Comm] Sending message to background:", message);
     chrome.runtime.sendMessage(message, (response) => {
         if (chrome.runtime.lastError) {
             console.error("❌ [Comm] Error sending message to background:", chrome.runtime.lastError.message);
         } else {
-            console.log("✅ [Comm] Message acknowledged:", response);
+//             console.log("✅ [Comm] Message acknowledged:", response);
         }
     });
 }
@@ -902,7 +902,7 @@ function sendToBackground(message: { type: string; payload: unknown }): void {
  */
 async function startup(): Promise<void> {
     try {
-        console.log("🚀 [Startup] Beginning offscreen initialization...");
+//         console.log("🚀 [Startup] Beginning offscreen initialization...");
 
         // Initialize all modules
         await initializeModules();
@@ -917,7 +917,7 @@ async function startup(): Promise<void> {
             }
         });
 
-        console.log("🎉 [Startup] Offscreen script fully initialized and ready!");
+//         console.log("🎉 [Startup] Offscreen script fully initialized and ready!");
     } catch (error) {
         console.error("💥 [Startup] Failed to initialize offscreen script:", error);
 

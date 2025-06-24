@@ -1,7 +1,6 @@
-import { describe, it, expect, beforeAll } from 'vitest';
 import { WebRTCManager, MeshStatusType } from '../../../src/entrypoints/offscreen/webrtc';
 import { initializeWasmIfNeeded, createTestSessionInfo, dummySend } from './test-utils';
-
+import {  describe, it, expect, beforeAll  } from 'bun:test';
 beforeAll(async () => {
     await initializeWasmIfNeeded();
 });
@@ -33,7 +32,7 @@ describe('WebRTCManager mesh readiness', () => {
         // Simulate two devices already ready
         (manager as any)._updateMeshStatus({
             type: MeshStatusType.PartiallyReady,
-            ready_devices: new Set(['a', 'b']),
+            ready_devices: ['a', 'b'],
             total_devices: 3
         });
 
@@ -50,7 +49,7 @@ describe('WebRTCManager mesh readiness', () => {
         // Set up ready mesh
         (manager as any)._updateMeshStatus({
             type: MeshStatusType.Ready,
-            ready_devices: new Set(['a', 'b', 'c']),
+            ready_devices: ['a', 'b', 'c'],
             total_devices: 3
         });
 
@@ -73,7 +72,7 @@ describe('WebRTCManager mesh readiness', () => {
         // Update to PartiallyReady
         (manager as any)._updateMeshStatus({
             type: MeshStatusType.PartiallyReady,
-            ready_devices: new Set(['a', 'b']),
+            ready_devices: ['a', 'b'],
             total_devices: 3
         });
         expect(manager.meshStatus.type).toBe(MeshStatusType.PartiallyReady);
@@ -81,7 +80,7 @@ describe('WebRTCManager mesh readiness', () => {
         // Update to Ready
         (manager as any)._updateMeshStatus({
             type: MeshStatusType.Ready,
-            ready_devices: new Set(['a', 'b', 'c']),
+            ready_devices: ['a', 'b', 'c'],
             total_devices: 3
         });
         expect(manager.meshStatus.type).toBe(MeshStatusType.Ready);

@@ -60,7 +60,7 @@ export class ContentProvider {
         
         // 转发响应到页面
         if (message.type === 'REQUEST_RESPONSE' && message.payload) {
-            console.log('[Content Script] Forwarding RPC response to page:', message.payload);
+//             console.log('[Content Script] Forwarding RPC response to page:', message.payload);
             this.sendToPage({
                 type: 'WALLET_RESPONSE',
                 payload: message.payload
@@ -102,7 +102,7 @@ export class ContentProvider {
             timestamp: Date.now()
         };
 
-        console.log('[Content Script] Forwarding request to background:', request.method);
+//         console.log('[Content Script] Forwarding request to background:', request.method);
         chrome.runtime.sendMessage(message, (response) => {
             if (chrome.runtime.lastError) {
                 console.error('[Content Script] Error forwarding request:', chrome.runtime.lastError);

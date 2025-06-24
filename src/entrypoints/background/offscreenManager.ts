@@ -22,6 +22,7 @@ export class OffscreenManager {
     private offscreenReady = false;
     private appState: AppState;
     private messageCount = 0;
+    private messageQueue: Array<{ message: OffscreenMessage; description?: string }> = [];
 
     constructor(appState: AppState) {
         this.appState = appState;
@@ -98,8 +99,9 @@ export class OffscreenManager {
         const desc = description || message.type;
 
         if (!this.offscreenReady) {
-            console.warn(`⚠️ [OffscreenManager] ${category} blocked: offscreen not ready (${desc})`);
-            return { success: false, error: "Offscreen document not ready" };
+            console.warn(`⚠️ [OffscreenManager] ${category} queued: offscreen not ready (${desc})`);
+            this.messageQueue.push({ message, description });
+            return { success: true, error: "Message queued for when offscreen is ready" };
         }
 
         if (!chrome.offscreen || !await chrome.offscreen.hasDocument()) {
@@ -129,9 +131,20 @@ export class OffscreenManager {
     /**
      * Handle offscreen ready signal - simplified
      */
-    handleOffscreenReady(): void {
+    async handleOffscreenReady(): Promise<void> {
         console.log("🎉 [OffscreenManager] Offscreen document ready - message routing enabled");
         this.offscreenReady = true;
+        
+        // Process queued messages
+        if (this.messageQueue.length > 0) {
+            console.log(`📬 [OffscreenManager] Processing ${this.messageQueue.length} queued messages`);
+            const queue = [...this.messageQueue];
+            this.messageQueue = [];
+            
+            for (const { message, description } of queue) {
+                await this.sendToOffscreen(message, description);
+            }
+        }
     }
 
     /**

@@ -780,10 +780,10 @@ export class WebRTCManager {
       }
 
       // Initialize FROST DKG using WebAssembly
-      console.log('🔍 FROST DKG INIT: Starting WASM module resolution');
-      console.log('🔍 FROST DKG INIT: typeof global:', typeof global);
-      console.log('🔍 FROST DKG INIT: typeof window:', typeof window);
-      console.log('🔍 FROST DKG INIT: typeof globalThis:', typeof globalThis);
+//       console.log('🔍 FROST DKG INIT: Starting WASM module resolution');
+//       console.log('🔍 FROST DKG INIT: typeof global:', typeof global);
+//       console.log('🔍 FROST DKG INIT: typeof window:', typeof window);
+//       console.log('🔍 FROST DKG INIT: typeof globalThis:', typeof globalThis);
 
       // Check all possible locations for FROST DKG modules
       const FrostDkgEd25519 =
@@ -798,20 +798,20 @@ export class WebRTCManager {
         (typeof globalThis !== 'undefined' && (globalThis as any).FrostDkgSecp256k1) ||
         null;
 
-      console.log('🔍 FROST DKG INIT: FrostDkgEd25519 resolved to:', FrostDkgEd25519 ? 'FOUND' : 'NULL');
-      console.log('🔍 FROST DKG INIT: FrostDkgSecp256k1 resolved to:', FrostDkgSecp256k1 ? 'FOUND' : 'NULL');
-      console.log('🔍 FROST DKG INIT: global.FrostDkgEd25519:', typeof global !== 'undefined' ? typeof (global as any)?.FrostDkgEd25519 : 'global undefined');
-      console.log('🔍 FROST DKG INIT: global.FrostDkgSecp256k1:', typeof global !== 'undefined' ? typeof (global as any)?.FrostDkgSecp256k1 : 'global undefined');
-      console.log('🔍 FROST DKG INIT: (window as any).FrostDkgEd25519:', typeof (window as any)?.FrostDkgEd25519);
-      console.log('🔍 FROST DKG INIT: (window as any).FrostDkgSecp256k1:', typeof (window as any)?.FrostDkgSecp256k1);
-      console.log('🔍 FROST DKG INIT: (globalThis as any).FrostDkgEd25519:', typeof (globalThis as any)?.FrostDkgEd25519);
-      console.log('🔍 FROST DKG INIT: (globalThis as any).FrostDkgSecp256k1:', typeof (globalThis as any)?.FrostDkgSecp256k1);
+//       console.log('🔍 FROST DKG INIT: FrostDkgEd25519 resolved to:', FrostDkgEd25519 ? 'FOUND' : 'NULL');
+//       console.log('🔍 FROST DKG INIT: FrostDkgSecp256k1 resolved to:', FrostDkgSecp256k1 ? 'FOUND' : 'NULL');
+//       console.log('🔍 FROST DKG INIT: global.FrostDkgEd25519:', typeof global !== 'undefined' ? typeof (global as any)?.FrostDkgEd25519 : 'global undefined');
+//       console.log('🔍 FROST DKG INIT: global.FrostDkgSecp256k1:', typeof global !== 'undefined' ? typeof (global as any)?.FrostDkgSecp256k1 : 'global undefined');
+//       console.log('🔍 FROST DKG INIT: (window as any).FrostDkgEd25519:', typeof (window as any)?.FrostDkgEd25519);
+//       console.log('🔍 FROST DKG INIT: (window as any).FrostDkgSecp256k1:', typeof (window as any)?.FrostDkgSecp256k1);
+//       console.log('🔍 FROST DKG INIT: (globalThis as any).FrostDkgEd25519:', typeof (globalThis as any)?.FrostDkgEd25519);
+//       console.log('🔍 FROST DKG INIT: (globalThis as any).FrostDkgSecp256k1:', typeof (globalThis as any)?.FrostDkgSecp256k1);
 
       if (!FrostDkgEd25519 || !FrostDkgSecp256k1) {
-        console.log('🚨 FROST DKG INIT: WASM modules not found - this will cause failure');
-        console.log('🚨 FROST DKG INIT: Available on global:', global ? Object.keys(global).filter(k => k.includes('Frost')) : 'global is null');
-        console.log('🚨 FROST DKG INIT: Available on window:', typeof window !== 'undefined' ? Object.keys(window).filter(k => k.includes('Frost')) : 'window is undefined');
-        console.log('🚨 FROST DKG INIT: Available on globalThis:', globalThis ? Object.keys(globalThis).filter(k => k.includes('Frost')) : 'globalThis is null');
+//         console.log('🚨 FROST DKG INIT: WASM modules not found - this will cause failure');
+//         console.log('🚨 FROST DKG INIT: Available on global:', global ? Object.keys(global).filter(k => k.includes('Frost')) : 'global is null');
+//         console.log('🚨 FROST DKG INIT: Available on window:', typeof window !== 'undefined' ? Object.keys(window).filter(k => k.includes('Frost')) : 'window is undefined');
+//         console.log('🚨 FROST DKG INIT: Available on globalThis:', globalThis ? Object.keys(globalThis).filter(k => k.includes('Frost')) : 'globalThis is null');
         throw new Error('FROST DKG WebAssembly modules not found');
       }
 
@@ -986,6 +986,12 @@ export class WebRTCManager {
       this._log(`Cannot initiate signing: signing already in progress (state: ${this.signingState})`);
       return;
     }
+
+    // Clear any previous signing state when starting a new signing session
+    this.signingCommitments.clear();
+    this.signingShares.clear();
+    this.signingNonces = null;
+    this._log(`Cleared previous signing state for new signing session`);
 
     // Create signing info
     this.signingInfo = {
@@ -1981,6 +1987,12 @@ export class WebRTCManager {
       return;
     }
 
+    // Clear any previous signing state when starting a new signing session
+    this.signingCommitments.clear();
+    this.signingShares.clear();
+    this.signingNonces = null;
+    this._log(`Cleared previous signing state for new signing session`);
+    
     // Initialize signing info for the request
     this.signingInfo = {
       signing_id: message.signing_id,
@@ -2038,6 +2050,12 @@ export class WebRTCManager {
 
     if (!this.signingInfo || this.signingInfo.signing_id !== message.signing_id) {
       this._log(`Ignoring signer selection: no matching signing process`);
+      return;
+    }
+
+    // Prevent processing our own signer selection message to avoid double commitment generation
+    if (fromPeerId === this.localPeerId) {
+      this._log(`Ignoring our own signer selection message`);
       return;
     }
 
@@ -2185,6 +2203,7 @@ export class WebRTCManager {
       }
       
       this._log(`Adding signature share from ${fromPeerId} (index ${senderIndex})`);
+      this._log(`[DEBUG] Received share hex (first 100 chars): ${shareHex.substring(0, 100)}`);
       
       this.frostDkg.add_signature_share(senderIndex, shareHex);
       
@@ -2226,12 +2245,6 @@ export class WebRTCManager {
       this._log(`Cannot generate commitment: FROST DKG not initialized`);
       return;
     }
-    
-    // Clear any previous signing state
-    this.signingCommitments.clear();
-    this.signingShares.clear();
-    this.signingNonces = false;
-    this._log(`Cleared previous signing state`);
 
     try {
       // Check if FROST DKG is ready for signing
@@ -2440,6 +2453,8 @@ export class WebRTCManager {
       // Add our own share to WASM module (CRITICAL: must do this!)
       try {
         this._log(`Adding our own signature share to WASM with index ${ourIndex}`);
+        this._log(`[DEBUG] Our share hex (first 100 chars): ${signatureShareHex.substring(0, 100)}`);
+        this._log(`[DEBUG] Message being signed: ${messageHex}`);
         this.frostDkg.add_signature_share(ourIndex, signatureShareHex);
         this._log(`Successfully added our own signature share to WASM`);
       } catch (error) {

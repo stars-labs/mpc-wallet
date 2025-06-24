@@ -21,7 +21,7 @@ export class UIStateManager {
     
     try {
       localStorage.setItem(UI_STATE_KEY, JSON.stringify(stateToSave));
-      console.log("[UIStateManager] Saved UI preferences to localStorage:", stateToSave);
+//       console.log("[UIStateManager] Saved UI preferences to localStorage:", stateToSave);
     } catch (error) {
       console.warn("[UIStateManager] Failed to save UI preferences:", error);
     }
@@ -35,10 +35,10 @@ export class UIStateManager {
         const uiState = JSON.parse(stored);
         // Check if state is not too old (1 hour)
         if (Date.now() - uiState.timestamp < 60 * 60 * 1000) {
-          console.log("[UIStateManager] Loaded UI preferences from localStorage:", uiState);
+//           console.log("[UIStateManager] Loaded UI preferences from localStorage:", uiState);
           return uiState;
         } else {
-          console.log("[UIStateManager] UI preferences expired, using defaults");
+//           console.log("[UIStateManager] UI preferences expired, using defaults");
           localStorage.removeItem(UI_STATE_KEY);
         }
       }

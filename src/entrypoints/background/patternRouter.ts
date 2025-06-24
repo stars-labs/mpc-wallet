@@ -125,27 +125,27 @@ export class PatternBasedMessageRouter {
      * Enhanced logging with pattern-based categorization
      */
     private logMessage(message: PopupToBackgroundMessage, categoryInfo: { name: string; icon: string; color: string }) {
-        console.log("┌─────────────────────────────────────────────────────────────────");
-        console.log(`│ ${categoryInfo.color}[MessageRouter] ${categoryInfo.icon} Processing: ${message.type}\x1b[0m`);
+//         console.log("┌─────────────────────────────────────────────────────────────────");
+//         console.log(`│ ${categoryInfo.color}[MessageRouter] ${categoryInfo.icon} Processing: ${message.type}\x1b[0m`);
         console.log(`│ Category: ${categoryInfo.icon} ${categoryInfo.name}`);
         console.log(`│ Async Required: ${requiresAsyncHandling(message) ? '✓' : '✗'}`);
         console.log(`│ Data:`, message);
-        console.log("└─────────────────────────────────────────────────────────────────");
+//         console.log("└─────────────────────────────────────────────────────────────────");
     }
 
     // State Management Handlers
     private async handleGetState(sendResponse: (response: any) => void) {
-        console.log("📊 [MessageRouter] GET_STATE: Returning current application state");
+//         console.log("📊 [MessageRouter] GET_STATE: Returning current application state");
         const state = this.dependencies.stateManager.getState();
-        console.log("📊 [MessageRouter] State keys:", Object.keys(state));
+//         console.log("📊 [MessageRouter] State keys:", Object.keys(state));
         sendResponse(state);
         return { type: 'STATE_RESPONSE', state };
     }
 
     private async handleGetWebRTCState(sendResponse: (response: any) => void) {
-        console.log("📡 [MessageRouter] GET_WEBRTC_STATE: Returning WebRTC connections");
+//         console.log("📡 [MessageRouter] GET_WEBRTC_STATE: Returning WebRTC connections");
         const webrtcConnections = this.dependencies.stateManager.getWebRTCConnections();
-        console.log("📡 [MessageRouter] WebRTC connections:", webrtcConnections);
+//         console.log("📡 [MessageRouter] WebRTC connections:", webrtcConnections);
         sendResponse({ webrtcConnections });
         return { type: 'WEBRTC_STATE_RESPONSE', webrtcConnections };
     }
@@ -174,7 +174,7 @@ export class PatternBasedMessageRouter {
 
     // WebRTC Control Handlers
     private async handleWebRTCControl(message: any, sendResponse: (response: any) => void) {
-        console.log("📡 [MessageRouter] WEBRTC_CONTROL: Handling WebRTC control message");
+//         console.log("📡 [MessageRouter] WEBRTC_CONTROL: Handling WebRTC control message");
         // TODO: Implement WebRTC control logic
         sendResponse({ success: true });
         return { type: 'WEBRTC_CONTROL_RESPONSE' };
@@ -228,7 +228,7 @@ export class PatternBasedMessageRouter {
 
     // Relay Handlers
     private async handleRelay(message: any, sendResponse: (response: any) => void) {
-        console.log("🔄 [MessageRouter] RELAY: Forwarding message via WebSocket");
+//         console.log("🔄 [MessageRouter] RELAY: Forwarding message via WebSocket");
         // TODO: Implement relay logic
         sendResponse({ success: true });
         return { type: 'RELAY_RESPONSE' };

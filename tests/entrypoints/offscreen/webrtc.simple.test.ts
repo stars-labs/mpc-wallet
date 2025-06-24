@@ -1,8 +1,7 @@
-import { describe, it, expect } from 'vitest';
 import { DkgState, WebRTCManager, MeshStatusType } from '../../../src/entrypoints/offscreen/webrtc';
-
 // Dummy send function for WebRTCManager
-const dummySend = (_todeviceId: string, _message: any) => { };
+import {  describe, it, expect  } from 'bun:test';
+const dummySend = (_tode_message: any) => { };
 
 describe('WebRTCManager basic functionality', () => {
     // Basic WebRTC functionality tests
@@ -19,7 +18,7 @@ describe('WebRTCManager basic functionality', () => {
             session_id: 'test-session',
             proposer_id: 'initiator',
             participants: ['test-id', 'peer-1', 'peer-2'],
-            accepted_devices: ['test-id', 'peer-1', 'peer-2'],
+            accepted_devices: ['peer-1', 'peer-2'],
             total: 3,
             threshold: 2
         };
@@ -87,7 +86,7 @@ describe('WebRTCManager state management', () => {
         // Set and verify partially ready state
         (manager as any)._updateMeshStatus({
             type: MeshStatusType.PartiallyReady,
-            ready_devices: new Set(['a', 'b']),
+            ready_devices: ['a', 'b'],
             total_devices: 3
         });
         expect(manager.meshStatus.type).toBe(MeshStatusType.PartiallyReady);

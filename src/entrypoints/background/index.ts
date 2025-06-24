@@ -139,7 +139,7 @@ function initializeComponents(): void {
         webSocketManager
     );
 
-    console.log("✅ [Background] All components initialized successfully");
+//     console.log("✅ [Background] All components initialized successfully");
 }
 
 // ===================================================================
@@ -152,7 +152,7 @@ function initializeComponents(): void {
 function setupPopupConnections(): void {
     chrome.runtime.onConnect.addListener((port) => {
         if (port.name === "popup") {
-            console.log("🔌 [Background] Popup connected");
+//             console.log("🔌 [Background] Popup connected");
             stateManager.addPopupPort(port);
         }
     });
@@ -172,13 +172,13 @@ function setupMessageHandlers(): void {
         const senderType = sender.tab ? 'content-script' : (sender.url?.includes('popup') ? 'popup' : (isOffscreenSender ? 'offscreen' : 'unknown'));
         const tabInfo = sender.tab ? `tab-${sender.tab.id}` : 'no-tab';
 
-        console.log("┌─────────────────────────────────────────────────────────────────");
+//         console.log("┌─────────────────────────────────────────────────────────────────");
         console.log(`│ [Background Router] 📨 Message Received`);
         console.log(`│ Type: ${(message as any)?.type || 'unknown'}`);
         console.log(`│ From: ${senderType} (${tabInfo})`);
         console.log(`│ URL: ${sender.url || 'unknown'}`);
         console.log(`│ Message:`, message);
-        console.log("└─────────────────────────────────────────────────────────────────");
+//         console.log("└─────────────────────────────────────────────────────────────────");
 
         // Validate basic message structure
         if (!validateMessage(message)) {
@@ -201,7 +201,7 @@ function setupMessageHandlers(): void {
                 if (isRpc) {
                     console.log(`🔄 [Background Router] Processing RPC ${rpcMethod} (ID: ${rpcId})...`);
                 } else {
-                    console.log(`🔄 [Background Router] Processing ${messageType} message...`);
+//                     console.log(`🔄 [Background Router] Processing ${messageType} message...`);
                 }
 
                 // Handle specific offscreen message types FIRST (before generic routing)
@@ -209,7 +209,7 @@ function setupMessageHandlers(): void {
                 // Handle offscreen ready signal
                 if (message.type === MESSAGE_TYPES.OFFSCREEN_READY) {
                     console.log("🎯 [Background] Handling OFFSCREEN_READY signal");
-                    offscreenManager.handleOffscreenReady();
+                    await offscreenManager.handleOffscreenReady();
 
                     // Send init data when offscreen becomes ready
                     const currentState = stateManager.getState();
@@ -231,7 +231,7 @@ function setupMessageHandlers(): void {
                 // Route messages to appropriate handlers based on sender and message type
                 if (message.type === "fromOffscreen" || senderType === 'offscreen' ||
                     (message.type === 'log' && isOffscreenSender)) {
-                    console.log("📤 [Background] Routing to OffscreenMessageHandler");
+//                     console.log("📤 [Background] Routing to OffscreenMessageHandler");
 
                     let payload: OffscreenToBackgroundMessage;
                     if (message.type === "fromOffscreen" && 'payload' in message) {
@@ -243,7 +243,7 @@ function setupMessageHandlers(): void {
                     }
 
                     await offscreenMessageHandler.handleOffscreenMessage(payload);
-                    console.log("✅ [Background] OffscreenMessage handled successfully");
+//                     console.log("✅ [Background] OffscreenMessage handled successfully");
                     sendResponse({ success: true });
                     return;
                 }
@@ -251,15 +251,15 @@ function setupMessageHandlers(): void {
 
                 // Handle init requests
                 if (message.type === "requestInit") {
-                    console.log("🔧 [Background] Handling requestInit from offscreen");
+//                     console.log("🔧 [Background] Handling requestInit from offscreen");
                     const result = await offscreenManager.handleInitRequest();
-                    console.log("✅ [Background] Init request completed:", result);
+//                     console.log("✅ [Background] Init request completed:", result);
                     sendResponse(result);
                     return;
                 }
 
                 // Route to popup message handler for most messages
-                console.log("📋 [Background] Routing to PopupMessageHandler");
+//                 console.log("📋 [Background] Routing to PopupMessageHandler");
                 await popupMessageHandler.handlePopupMessage(message, sendResponse);
 
             } catch (error) {
@@ -321,7 +321,7 @@ async function initializeWebSocket(): Promise<void> {
  * Main background script entry point
  */
 export default defineBackground(() => {
-    console.log("🚀 [Background] Background script starting...");
+//     console.log("🚀 [Background] Background script starting...");
 
     // Initialize all components
     initializeComponents();
@@ -341,10 +341,10 @@ export default defineBackground(() => {
     initializeWebSocket();
 
     // Start with fresh session state on extension startup
-    console.log("🔄 [Background] Extension starting up - sessions are ephemeral, starting fresh");
-    console.log("✅ [Background] Extension ready");
+//     console.log("🔄 [Background] Extension starting up - sessions are ephemeral, starting fresh");
+//     console.log("✅ [Background] Extension ready");
 
     // No need to clean up session state on shutdown since we don't persist it
 
-    console.log("🎉 [Background] Background script initialized successfully");
+//     console.log("🎉 [Background] Background script initialized successfully");
 });

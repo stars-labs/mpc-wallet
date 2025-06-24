@@ -1,9 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import WalletController from '../../src/services/walletController';
 import AccountService from '../../src/services/accountService';
 import NetworkService from '../../src/services/networkService';
-
 // Mock chrome.storage.local
+import {  describe, it, expect, beforeEach, afterEach  } from 'bun:test';
 const mockStorage = {
     data: {} as Record<string, any>,
     get: async (key: string) => ({ [key]: mockStorage.data[key] }),
@@ -50,7 +49,7 @@ describe('WalletController', () => {
         expect(instance1).toBe(instance2);
     });
 
-    describe('Network Service Proxies', () => {
+    describe('Network Service', () => {
         it('should proxy getNetworks call', async () => {
             const networks = await walletController.getNetworks();
 
@@ -62,8 +61,9 @@ describe('WalletController', () => {
         it('should proxy getCurrentNetwork call', async () => {
             const currentNetwork = await walletController.getCurrentNetwork();
 
-            // Should return a network or null
-            expect(currentNetwork === null || typeof currentNetwork === 'object').toBe(true);
+            // NetworkService initializes with mainnet as default
+            expect(currentNetwork).toBeDefined();
+            expect(currentNetwork?.id).toBe(1); // mainnet
         });
 
         it('should proxy addNetwork call', async () => {
@@ -103,7 +103,7 @@ describe('WalletController', () => {
         });
     });
 
-    describe('Account Service Proxies', () => {
+    describe('Account Service', () => {
         it('should proxy getAccounts call', async () => {
             const accounts = await walletController.getAccounts();
 
@@ -222,7 +222,7 @@ describe('WalletController', () => {
         });
     });
 
-    describe('Wallet Client Service Proxies', () => {
+    describe('Wallet Client Service', () => {
         it('should proxy connect call', async () => {
             // Mock the connect method since it might involve complex wallet operations
             const result = await walletController.connect();
@@ -389,7 +389,7 @@ describe('WalletController', () => {
             expect(() => WalletController.getInstance()).not.toThrow();
         });
 
-        it('should propagate service errors appropriately', async () => {
+        it('should propagate service errors correctly', async () => {
             // Test that errors from underlying services are properly propagated
             await expect(walletController.addAccount({} as any))
                 .rejects.toThrow();
@@ -429,12 +429,12 @@ describe('WalletController', () => {
             await networkService.ensureInitialized();
         });
 
-        it('should return current account address via eth_accounts', async () => {
+        it('should return current account address', async () => {
             const accounts = await walletController.eth_accounts();
             expect(accounts).toEqual(['0x1234567890123456789012345678901234567890']);
         });
 
-        it('should return empty array when no current account via eth_accounts', async () => {
+        it('should return empty array when no current account', async () => {
             const accountService = AccountService.getInstance();
             // Clear all accounts to ensure empty state
             accountService['accounts'] = [];
@@ -444,19 +444,19 @@ describe('WalletController', () => {
             expect(accounts).toEqual([]);
         });
 
-        it('should return current account address via eth_requestAccounts', async () => {
+        it('should return current account address for eth_requestAccounts', async () => {
             const accounts = await walletController.eth_requestAccounts();
             expect(accounts).toEqual(['0x1234567890123456789012345678901234567890']);
         });
 
-        it('should return current network chain ID via eth_chainId', async () => {
+        it('should return current network chain ID', async () => {
             const networkService = NetworkService.getInstance();
             // eth_chainId should return the current network's chain ID
             const chainId = await walletController.eth_chainId();
             expect(typeof chainId === 'number' || chainId === undefined).toBe(true);
         });
 
-        it('should return current network version via net_version', async () => {
+        it('should return current network version', async () => {
             const networkService = NetworkService.getInstance();
             const version = await walletController.net_version();
             expect(typeof version === 'string' || version === undefined).toBe(true);
@@ -504,12 +504,10 @@ describe('WalletController', () => {
                 message: 'Test message to sign'
             };
 
-            // This should call the wallet client service's signMessage method
-            const signPromise = walletController.signMessage(signParams);
-
-            // Since we're using a mock client, this might throw or return a mock value
-            // Just verify the method exists and can be called
-            await expect(signPromise).toBeDefined();
+            // MPC wallets throw an error for direct message signing
+            await expect(walletController.signMessage(signParams)).rejects.toThrow(
+                'Message signing must use MPC protocol. Please use the MPC signing flow.'
+            );
         });
     });
 
@@ -526,7 +524,7 @@ describe('WalletController', () => {
             await expect(walletController.sendTransaction(txParams)).rejects.toThrow();
         });
 
-        it('should handle all service initialization edge cases', async () => {
+        it('should handle all services initialization', () => {
             // Test that all services are properly initialized
             expect(walletController.networkService).toBeDefined();
             expect(walletController.accountService).toBeDefined();

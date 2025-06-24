@@ -63,8 +63,8 @@ export class PopupMessageHandler {
         // Enhanced pattern-based categorization
         const { category, categoryInfo } = this.categorizeMessage(message);
 
-        console.log("┌─────────────────────────────────────────────────────────────────");
-        console.log(`│ ${categoryInfo.color}[PopupMessageHandler] ${categoryInfo.icon} Processing: ${messageType}\x1b[0m`);
+//         console.log("┌─────────────────────────────────────────────────────────────────");
+//         console.log(`│ ${categoryInfo.color}[PopupMessageHandler] ${categoryInfo.icon} Processing: ${messageType}\x1b[0m`);
         console.log(`│ Category: ${categoryInfo.icon} ${categoryInfo.name}`);
 
         // Keep messageCategory for backward compatibility
@@ -102,21 +102,21 @@ export class PopupMessageHandler {
         }
 
         console.log(`│ Data:`, message);
-        console.log("└─────────────────────────────────────────────────────────────────");
+//         console.log("└─────────────────────────────────────────────────────────────────");
 
         try {
             switch (message.type) {
                 case MESSAGE_TYPES.GET_STATE:
-                    console.log("📊 [PopupMessageHandler] GET_STATE: Returning current application state");
+//                     console.log("📊 [PopupMessageHandler] GET_STATE: Returning current application state");
                     const state = this.stateManager.getState();
-                    console.log("📊 [PopupMessageHandler] State keys:", Object.keys(state));
+//                     console.log("📊 [PopupMessageHandler] State keys:", Object.keys(state));
                     sendResponse(state);
                     break;
 
                 case MESSAGE_TYPES.GET_WEBRTC_STATE:
-                    console.log("📡 [PopupMessageHandler] GET_WEBRTC_STATE: Returning WebRTC connections");
+//                     console.log("📡 [PopupMessageHandler] GET_WEBRTC_STATE: Returning WebRTC connections");
                     const webrtcConnections = this.stateManager.getWebRTCConnections();
-                    console.log("📡 [PopupMessageHandler] WebRTC connections:", webrtcConnections);
+//                     console.log("📡 [PopupMessageHandler] WebRTC connections:", webrtcConnections);
                     sendResponse({ webrtcConnections });
                     break;
 
@@ -126,7 +126,7 @@ export class PopupMessageHandler {
                     break;
 
                 case MESSAGE_TYPES.RELAY:
-                    console.log("🔄 [PopupMessageHandler] RELAY: Forwarding message via WebSocket");
+//                     console.log("🔄 [PopupMessageHandler] RELAY: Forwarding message via WebSocket");
                     await this.handleRelayRequest(message, sendResponse);
                     break;
 
@@ -141,12 +141,12 @@ export class PopupMessageHandler {
                     break;
 
                 case MESSAGE_TYPES.FROM_OFFSCREEN:
-                    console.log("📤 [PopupMessageHandler] FROM_OFFSCREEN: Processing offscreen message");
+//                     console.log("📤 [PopupMessageHandler] FROM_OFFSCREEN: Processing offscreen message");
                     await this.handleFromOffscreenMessage(message, sendResponse);
                     break;
 
                 case "requestInit":
-                    console.log("🔧 [PopupMessageHandler] REQUEST_INIT: Handling initialization request");
+//                     console.log("🔧 [PopupMessageHandler] REQUEST_INIT: Handling initialization request");
                     await this.handleRequestInitMessage(sendResponse);
                     break;
                     
@@ -174,12 +174,12 @@ export class PopupMessageHandler {
                     break;
 
                 case MESSAGE_TYPES.GET_WEBRTC_STATUS:
-                    console.log("📡 [PopupMessageHandler] GET_WEBRTC_STATUS: Getting WebRTC status");
+//                     console.log("📡 [PopupMessageHandler] GET_WEBRTC_STATUS: Getting WebRTC status");
                     await this.handleGetWebRTCStatusRequest(sendResponse);
                     break;
 
                 case "setBlockchain":
-                    console.log("🔗 [PopupMessageHandler] SET_BLOCKCHAIN: Setting blockchain preference");
+//                     console.log("🔗 [PopupMessageHandler] SET_BLOCKCHAIN: Setting blockchain preference");
                     this.handleSetBlockchainRequest(message, sendResponse);
                     break;
 
@@ -200,7 +200,7 @@ export class PopupMessageHandler {
 
                 default:
                     if (isRpcMessage(message)) {
-                        console.log("🔗 [PopupMessageHandler] RPC_MESSAGE: Processing JSON-RPC request");
+//                         console.log("🔗 [PopupMessageHandler] RPC_MESSAGE: Processing JSON-RPC request");
                         await this.handleRpcMessage(message, sendResponse);
                     } else if (isAccountManagement(message)) {
                         console.log("👤 [PopupMessageHandler] ACCOUNT_MANAGEMENT: Not implemented");
@@ -393,7 +393,7 @@ export class PopupMessageHandler {
     }
 
     private async handleListDevicesRequest(sendResponse: (response: any) => void): Promise<void> {
-        console.log("[PopupMessageHandler] LIST_DEVICES request received. WebSocket state:", this.webSocketManager.isReady());
+//         console.log("[PopupMessageHandler] LIST_DEVICES request received. WebSocket state:", this.webSocketManager.isReady());
 
         const result = await this.webSocketManager.listDevices();
         if (result.success) {

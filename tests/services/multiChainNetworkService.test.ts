@@ -1,12 +1,12 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { MultiChainNetworkService } from '../../src/services/multiChainNetworkService';
 import { ChainInfo, DEFAULT_CHAINS, getChainById } from '../../src/config/chains';
-
 // Mock chrome.storage API
+import {  describe, it, expect, beforeEach, afterEach } from 'bun:test';
+import { jest } from 'bun:test';
 const mockStorage = {
   local: {
-    get: vi.fn(() => Promise.resolve({})),
-    set: vi.fn(() => Promise.resolve()),
+    get: jest.fn(() => Promise.resolve({})),
+    set: jest.fn(),
   }
 };
 
@@ -75,6 +75,10 @@ describe('MultiChainNetworkService', () => {
     });
 
     it('should handle storage errors gracefully', async () => {
+      // Suppress console error for this test
+      const originalConsoleError = console.error;
+      console.error = jest.fn();
+      
       mockStorage.local.get.mockRejectedValueOnce(new Error('Storage error'));
       
       // @ts-ignore
@@ -85,6 +89,12 @@ describe('MultiChainNetworkService', () => {
       // Should fall back to defaults
       const networks = newService.getNetworksByAlgorithm('secp256k1');
       expect(networks.length).toBeGreaterThan(0);
+      
+      // Verify error was logged
+      expect(console.error).toHaveBeenCalledWith('Failed to load networks:', expect.any(Error));
+      
+      // Restore console.error
+      console.error = originalConsoleError;
     });
   });
 

@@ -70,7 +70,7 @@ export class WebRTCConnectionManager {
         // Set up connection state monitoring
         peerConnection.onconnectionstatechange = () => {
             const state = peerConnection.connectionState;
-            console.log(`🔗 [WebRTCConnection] ${peerId} connection state: ${state}`);
+//             console.log(`🔗 [WebRTCConnection] ${peerId} connection state: ${state}`);
 
             this.updateConnectionState(peerId, state);
             this.onConnectionStateChange(peerId, state);
@@ -79,7 +79,7 @@ export class WebRTCConnectionManager {
         // Handle ICE candidates
         peerConnection.onicecandidate = (event) => {
             if (event.candidate) {
-                console.log(`🧊 [WebRTCConnection] Sending ICE candidate to ${peerId}`);
+//                 console.log(`🧊 [WebRTCConnection] Sending ICE candidate to ${peerId}`);
                 this.onSignalNeeded(peerId, {
                     Candidate: {
                         candidate: event.candidate.candidate,
@@ -118,13 +118,13 @@ export class WebRTCConnectionManager {
         this.dataChannels.set(peerId, dataChannel);
 
         dataChannel.onopen = () => {
-            console.log(`✅ [WebRTCConnection] Data channel opened with ${peerId}`);
+//             console.log(`✅ [WebRTCConnection] Data channel opened with ${peerId}`);
             this.markChannelConnected(peerId, true);
             this.onDataChannelOpen(peerId);
         };
 
         dataChannel.onclose = () => {
-            console.log(`❌ [WebRTCConnection] Data channel closed with ${peerId}`);
+//             console.log(`❌ [WebRTCConnection] Data channel closed with ${peerId}`);
             this.markChannelConnected(peerId, false);
             this.onDataChannelClose(peerId);
         };
@@ -148,7 +148,7 @@ export class WebRTCConnectionManager {
      * Handle WebRTC signaling (offers, answers, candidates)
      */
     async handleSignal(fromPeerId: string, signal: any): Promise<void> {
-        console.log(`📡 [WebRTCConnection] Handling signal from ${fromPeerId}:`, signal.signal_type);
+//         console.log(`📡 [WebRTCConnection] Handling signal from ${fromPeerId}:`, signal.signal_type);
 
         let peerConnection = this.peerConnections.get(fromPeerId);
 
@@ -180,7 +180,7 @@ export class WebRTCConnectionManager {
      * Handle incoming offer
      */
     private async handleOffer(peerId: string, peerConnection: RTCPeerConnection, offer: RTCSessionDescriptionInit): Promise<void> {
-        console.log(`📥 [WebRTCConnection] Handling offer from ${peerId}`);
+//         console.log(`📥 [WebRTCConnection] Handling offer from ${peerId}`);
 
         await peerConnection.setRemoteDescription(offer);
         const answer = await peerConnection.createAnswer();
@@ -200,7 +200,7 @@ export class WebRTCConnectionManager {
      * Handle incoming answer
      */
     private async handleAnswer(peerId: string, peerConnection: RTCPeerConnection, answer: RTCSessionDescriptionInit): Promise<void> {
-        console.log(`📥 [WebRTCConnection] Handling answer from ${peerId}`);
+//         console.log(`📥 [WebRTCConnection] Handling answer from ${peerId}`);
 
         await peerConnection.setRemoteDescription(answer);
 
@@ -212,7 +212,7 @@ export class WebRTCConnectionManager {
      * Handle incoming ICE candidate
      */
     private async handleIceCandidate(peerId: string, peerConnection: RTCPeerConnection, candidate: RTCIceCandidateInit): Promise<void> {
-        console.log(`🧊 [WebRTCConnection] Handling ICE candidate from ${peerId}`);
+//         console.log(`🧊 [WebRTCConnection] Handling ICE candidate from ${peerId}`);
 
         if (peerConnection.remoteDescription) {
             await peerConnection.addIceCandidate(candidate);
@@ -223,7 +223,7 @@ export class WebRTCConnectionManager {
                 this.pendingIceCandidates.set(peerId, []);
             }
             this.pendingIceCandidates.get(peerId)!.push(candidate);
-            console.log(`🧊 [WebRTCConnection] Queued ICE candidate from ${peerId} (no remote description yet)`);
+//             console.log(`🧊 [WebRTCConnection] Queued ICE candidate from ${peerId} (no remote description yet)`);
         }
     }
 
@@ -233,7 +233,7 @@ export class WebRTCConnectionManager {
     private async processPendingIceCandidates(peerId: string, peerConnection: RTCPeerConnection): Promise<void> {
         const pending = this.pendingIceCandidates.get(peerId);
         if (pending && pending.length > 0) {
-            console.log(`🧊 [WebRTCConnection] Processing ${pending.length} pending ICE candidates for ${peerId}`);
+//             console.log(`🧊 [WebRTCConnection] Processing ${pending.length} pending ICE candidates for ${peerId}`);
 
             for (const candidate of pending) {
                 try {

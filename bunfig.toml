@@ -5,3 +5,11 @@ coverage = true
 coverageSkipTestFiles = true
 # Generate both text and lcov coverage reports
 coverageReporter = ["text", "lcov"]
+
+# Path mapping for module resolution
+[test]
+preload = ["./tests/setup-bun.ts"]
+
+# Module resolution paths
+[resolve.alias]
+"#imports" = "./tests/__mocks__/imports.ts"

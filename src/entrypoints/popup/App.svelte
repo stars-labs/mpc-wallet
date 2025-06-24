@@ -44,7 +44,7 @@
         };
         try {
             localStorage.setItem(UI_STATE_KEY, JSON.stringify(uiState));
-            console.log("[UI] Saved UI preferences to localStorage:", uiState);
+//             console.log("[UI] Saved UI preferences to localStorage:", uiState);
         } catch (error) {
             console.warn("[UI] Failed to save UI preferences:", error);
         }
@@ -71,7 +71,7 @@
                         chain: uiState.chain || "ethereum",
                     };
                 } else {
-                    console.log("[UI] UI preferences expired, using defaults");
+//                     console.log("[UI] UI preferences expired, using defaults");
                     localStorage.removeItem(UI_STATE_KEY);
                 }
             }
@@ -220,7 +220,7 @@
                 break;
 
             case "wsStatus":
-                console.log("[UI] Processing wsStatus:", message);
+//                 console.log("[UI] Processing wsStatus:", message);
                 appState.wsConnected = message.connected || false;
                 if (!message.connected && message.reason) {
                     appState.wsError = `WebSocket disconnected: ${message.reason}`;
@@ -232,7 +232,7 @@
                 break;
 
             case "wsMessage":
-                console.log("[UI] Processing wsMessage:", message);
+//                 console.log("[UI] Processing wsMessage:", message);
                 if (message.message) {
                     console.log("[UI] Server message:", message.message);
                     // Device list updates are handled via "deviceList" messages
@@ -241,7 +241,7 @@
                 break;
 
             case "wsError":
-                console.log("[UI] Processing wsError:", message);
+//                 console.log("[UI] Processing wsError:", message);
                 appState.wsError = message.error;
                 console.error("[UI] WebSocket error:", message.error);
                 // Trigger reactivity
@@ -249,7 +249,7 @@
                 break;
 
             case "deviceList":
-                console.log("[UI] Processing deviceList:", message);
+//                 console.log("[UI] Processing deviceList:", message);
                 // Only update if we have a valid devices array
                 if (Array.isArray(message.devices)) {
                     const newConnectedDevices = [...message.devices];
@@ -265,7 +265,7 @@
                 break;
 
             case "sessionUpdate":
-                console.log("[UI] Processing sessionUpdate:", message);
+//                 console.log("[UI] Processing sessionUpdate:", message);
                 appState.sessionInfo = message.sessionInfo || null;
                 appState.invites = message.invites ? [...message.invites] : [];
                 console.log("[UI] Session update:", {
@@ -293,7 +293,7 @@
                 break;
 
             case "meshStatusUpdate":
-                console.log("[UI] Processing meshStatusUpdate:", message);
+//                 console.log("[UI] Processing meshStatusUpdate:", message);
                 const newMeshStatus = message.status || {
                     type: MeshStatusType.Incomplete,
                 };
@@ -306,7 +306,7 @@
                 break;
 
             case "webrtcConnectionUpdate":
-                console.log("[UI] Processing webrtcConnectionUpdate:", message);
+//                 console.log("[UI] Processing webrtcConnectionUpdate:", message);
 
                 if (
                     message.deviceId &&
@@ -344,7 +344,7 @@
                 break;
 
             case "dkgStateUpdate":
-                console.log("[UI] Processing dkgStateUpdate:", message);
+//                 console.log("[UI] Processing dkgStateUpdate:", message);
                 appState.dkgState = message.state || DkgState.Idle;
                 console.log("[UI] DKG state update:", appState.dkgState);
                 // Trigger reactivity
@@ -352,7 +352,7 @@
                 break;
 
             case "fromOffscreen":
-                console.log("[UI] Processing fromOffscreen wrapper:", message);
+//                 console.log("[UI] Processing fromOffscreen wrapper:", message);
                 // Handle wrapped messages from offscreen
                 if (message.payload) {
                     console.log(
@@ -364,7 +364,7 @@
                 break;
 
             case "webrtcStatusUpdate":
-                console.log("[UI] Processing webrtcStatusUpdate:", message);
+//                 console.log("[UI] Processing webrtcStatusUpdate:", message);
                 if (message.deviceId && message.status) {
                     console.log(
                         `[UI] WebRTC status for ${message.deviceId}: ${message.status}`,
@@ -398,7 +398,7 @@
                 break;
 
             case "dkgAddressUpdate":
-                console.log("[UI] Processing dkgAddressUpdate:", message);
+//                 console.log("[UI] Processing dkgAddressUpdate:", message);
                 if (message.address && message.blockchain) {
                     console.log(
                         "[UI] DKG address automatically fetched:",
@@ -414,7 +414,7 @@
                 break;
                 
             case "accountsUpdated":
-                console.log("[UI] Processing accountsUpdated:", message);
+//                 console.log("[UI] Processing accountsUpdated:", message);
                 // Trigger account refresh in AccountManager component
                 // The AccountManager component will automatically refresh when AccountService notifies it
                 if (message.blockchain && message.accounts) {
@@ -425,7 +425,7 @@
                 break;
                 
             case "signatureRequest":
-                console.log("[UI] Processing signatureRequest:", message);
+//                 console.log("[UI] Processing signatureRequest:", message);
                 if (message.signingId && message.message && message.origin && message.fromAddress) {
                     // Add new signature request to the list
                     signatureRequests = [...signatureRequests, {
@@ -438,7 +438,7 @@
                 break;
                 
             case "signatureComplete":
-                console.log("[UI] Processing signatureComplete:", message);
+//                 console.log("[UI] Processing signatureComplete:", message);
                 if (message.signingId) {
                     // Remove the completed request from the list
                     signatureRequests = signatureRequests.filter(req => req.signingId !== message.signingId);
@@ -446,7 +446,7 @@
                 break;
                 
             case "signatureError":
-                console.log("[UI] Processing signatureError:", message);
+//                 console.log("[UI] Processing signatureError:", message);
                 if (message.signingId) {
                     // Remove the failed request from the list
                     signatureRequests = signatureRequests.filter(req => req.signingId !== message.signingId);

@@ -1,11 +1,19 @@
 // Environment difference test for FROST DKG in production vs test
 import { DkgState, WebRTCManager } from '../../../src/entrypoints/offscreen/webrtc';
 import wasmInit, { FrostDkgEd25519, FrostDkgSecp256k1 } from '../../../pkg/mpc_wallet.js';
+let originalConsoleLog: any;
+let originalConsoleError: any;
+let originalConsoleWarn: any;
 
-describe('FROST DKG Environment Difference Analysis', () => {
+describe('FROST DKG Environment', () => {
   let wasmInitialized = false;
 
   beforeAll(async () => {
+    // Store original console methods
+    originalConsoleLog = console.log;
+    originalConsoleError = console.error;
+    originalConsoleWarn = console.warn;
+    
     if (!wasmInitialized) {
       try {
         await wasmInit();
@@ -15,9 +23,25 @@ describe('FROST DKG Environment Difference Analysis', () => {
         console.warn('⚠️ WASM initialization failed:', error);
       }
     }
+    
+    // Suppress console output after initialization
+    console.log = jest.fn();
+    console.error = jest.fn();
+    console.warn = jest.fn();
+  });
+  
+  afterAll(() => {
+    // Restore console methods
+    console.log = originalConsoleLog;
+    console.error = originalConsoleError;
+    console.warn = originalConsoleWarn;
   });
 
   test('should analyze FROST DKG initialization differences', async () => {
+    // Temporarily restore console.log for this test
+    const tempLog = console.log;
+    console.log = originalConsoleLog;
+    
     console.log('=== ENVIRONMENT ANALYSIS ===');
     
     // Test 1: Direct WASM module access (like in tests)
@@ -93,6 +117,9 @@ describe('FROST DKG Environment Difference Analysis', () => {
     }
     
     console.log('=== ANALYSIS COMPLETE ===');
+    
+    // Restore console mock
+    console.log = tempLog;
   });
 
   test('should test real FROST DKG package processing', async () => {

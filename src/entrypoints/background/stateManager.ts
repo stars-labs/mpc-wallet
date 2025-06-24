@@ -138,7 +138,7 @@ export class StateManager {
      * Update application state
      */
     updateState(updates: Partial<AppState>): void {
-        console.log("[StateManager] Updating state:", updates);
+//         console.log("[StateManager] Updating state:", updates);
         this.appState = {
             ...this.appState,
             ...updates
@@ -151,7 +151,7 @@ export class StateManager {
      * Update specific state properties with deep merge support
      */
     updateStateProperty<K extends keyof AppState>(key: K, value: AppState[K]): void {
-        console.log(`[StateManager] Updating state property ${String(key)}:`, value);
+//         console.log(`[StateManager] Updating state property ${String(key)}:`, value);
         this.appState[key] = value;
         // Persist state changes
         this.persistState();
@@ -307,7 +307,7 @@ export class StateManager {
      * Handle state updates from offscreen document
      */
     handleOffscreenStateUpdate(payload: OffscreenToBackgroundMessage): void {
-        console.log("[StateManager] Handling offscreen state update:", payload);
+//         console.log("[StateManager] Handling offscreen state update:", payload);
 
         switch (payload.type) {
             case "webrtcConnectionUpdate":
@@ -328,7 +328,7 @@ export class StateManager {
                         connected: payload.connected
                     };
 
-                    console.log("[StateManager] Sending WebRTC connection update to popup:", webrtcMessage);
+//                     console.log("[StateManager] Sending WebRTC connection update to popup:", webrtcMessage);
                     this.broadcastToPopupPorts(webrtcMessage as any);
                 } else {
                     console.warn("[StateManager] Invalid WebRTC connection update payload:", payload);
@@ -336,7 +336,7 @@ export class StateManager {
                 break;
 
             case "meshStatusUpdate":
-                console.log("[StateManager] Received mesh status update from offscreen:", payload);
+//                 console.log("[StateManager] Received mesh status update from offscreen:", payload);
                 this.appState.meshStatus = payload.status || { type: MeshStatusType.Incomplete };
 
                 // No persistence - sessions are ephemeral
@@ -349,7 +349,7 @@ export class StateManager {
                 break;
 
             case "dkgStateUpdate":
-                console.log("[StateManager] Received DKG state update from offscreen:", payload);
+//                 console.log("[StateManager] Received DKG state update from offscreen:", payload);
                 this.appState.dkgState = payload.state || DkgState.Idle;
 
                 // No persistence - sessions are ephemeral
@@ -369,7 +369,7 @@ export class StateManager {
 
             case "sessionUpdate":
                 if ('sessionInfo' in payload && 'invites' in payload) {
-                    console.log("[StateManager] Received session update from offscreen:", payload);
+//                     console.log("[StateManager] Received session update from offscreen:", payload);
 
                     this.appState.sessionInfo = payload.sessionInfo || null;
                     this.appState.invites = payload.invites || [];
@@ -385,7 +385,7 @@ export class StateManager {
 
             case "webrtcStatusUpdate":
                 if ('deviceId' in payload && 'status' in payload) {
-                    console.log(`[StateManager] WebRTC status update for ${payload.deviceId}: ${payload.status}`);
+//                     console.log(`[StateManager] WebRTC status update for ${payload.deviceId}: ${payload.status}`);
                     // Forward to popup if needed
                     this.broadcastToPopupPorts({
                         type: "webrtcStatusUpdate",
@@ -397,13 +397,13 @@ export class StateManager {
 
             case "peerConnectionStatusUpdate":
                 if ('deviceId' in payload && 'connectionState' in payload) {
-                    console.log(`[StateManager] Peer connection status update for ${payload.deviceId}: ${payload.connectionState}`);
+//                     console.log(`[StateManager] Peer connection status update for ${payload.deviceId}: ${payload.connectionState}`);
                 }
                 break;
 
             case "dataChannelStatusUpdate":
                 if ('deviceId' in payload && 'channelName' in payload && 'state' in payload) {
-                    console.log(`[StateManager] Data channel ${payload.channelName} for ${payload.deviceId}: ${payload.state}`);
+//                     console.log(`[StateManager] Data channel ${payload.channelName} for ${payload.deviceId}: ${payload.state}`);
                 }
                 break;
 
@@ -440,7 +440,7 @@ export class StateManager {
                 break;
 
             default:
-                console.log("[StateManager] Forwarding unknown message to popup:", payload);
+//                 console.log("[StateManager] Forwarding unknown message to popup:", payload);
                 this.broadcastToPopupPorts({
                     type: "fromOffscreen",
                     payload

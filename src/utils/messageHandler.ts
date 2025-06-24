@@ -53,7 +53,7 @@ export class MessageHandler {
         this.callbacks.onInitialState(newState);
       })
       .with("wsStatus", () => {
-        console.log("[MessageHandler] Processing wsStatus:", message);
+//         console.log("[MessageHandler] Processing wsStatus:", message);
         newState.wsConnected = message.connected || false;
         
         const error = !message.connected && message.reason 
@@ -63,7 +63,7 @@ export class MessageHandler {
         this.callbacks.onWSStatusUpdate(newState.wsConnected, error);
       })
       .with("wsMessage", () => {
-        console.log("[MessageHandler] Processing wsMessage:", message);
+//         console.log("[MessageHandler] Processing wsMessage:", message);
         if (message.message) {
           console.log("[MessageHandler] Server message:", message.message);
           if (message.message.type === "devices") {
@@ -72,15 +72,15 @@ export class MessageHandler {
         }
       })
       .with("wsError", () => {
-        console.log("[MessageHandler] Processing wsError:", message);
+//         console.log("[MessageHandler] Processing wsError:", message);
         console.error("[MessageHandler] WebSocket error:", message.error);
       })
       .with("deviceList", () => {
-        console.log("[MessageHandler] Processing deviceList:", message);
+//         console.log("[MessageHandler] Processing deviceList:", message);
         newState.connecteddevices = [...(message.devices || [])];
       })
       .with("sessionUpdate", () => {
-        console.log("[MessageHandler] Processing sessionUpdate:", message);
+//         console.log("[MessageHandler] Processing sessionUpdate:", message);
 
         // Clear processing state for any sessions that are no longer in invites
         const newInviteIds = new Set(
@@ -120,14 +120,14 @@ export class MessageHandler {
         this.callbacks.onProcessingInvitesUpdate(this.processingInvites);
       })
       .with("meshStatusUpdate", () => {
-        console.log("[MessageHandler] Processing meshStatusUpdate:", message);
+//         console.log("[MessageHandler] Processing meshStatusUpdate:", message);
         newState.meshStatus = message.status || {
           type: MeshStatusType.Incomplete,
         };
         console.log("[MessageHandler] Mesh status update:", newState.meshStatus);
       })
       .with("webrtcConnectionUpdate", () => {
-        console.log("[MessageHandler] Processing webrtcConnectionUpdate:", message);
+//         console.log("[MessageHandler] Processing webrtcConnectionUpdate:", message);
 
         if (message.deviceId && typeof message.connected === "boolean") {
           console.log(
@@ -151,12 +151,12 @@ export class MessageHandler {
         }
       })
       .with("dkgStateUpdate", () => {
-        console.log("[MessageHandler] Processing dkgStateUpdate:", message);
+//         console.log("[MessageHandler] Processing dkgStateUpdate:", message);
         newState.dkgState = message.state || DkgState.Idle;
         console.log("[MessageHandler] DKG state update:", newState.dkgState);
       })
       .with("fromOffscreen", () => {
-        console.log("[MessageHandler] Processing fromOffscreen wrapper:", message);
+//         console.log("[MessageHandler] Processing fromOffscreen wrapper:", message);
         // Handle wrapped messages from offscreen
         if (message.payload) {
           console.log(
@@ -167,7 +167,7 @@ export class MessageHandler {
         }
       })
       .with("webrtcStatusUpdate", () => {
-        console.log("[MessageHandler] Processing webrtcStatusUpdate:", message);
+//         console.log("[MessageHandler] Processing webrtcStatusUpdate:", message);
         if (message.deviceId && message.status) {
           console.log(
             `[MessageHandler] WebRTC status for ${message.deviceId}: ${message.status}`,
@@ -175,7 +175,7 @@ export class MessageHandler {
         }
       })
       .with("dataChannelStatusUpdate", () => {
-        console.log("[MessageHandler] Processing dataChannelStatusUpdate:", message);
+//         console.log("[MessageHandler] Processing dataChannelStatusUpdate:", message);
         if (message.deviceId && message.channelName && message.state) {
           console.log(
             `[MessageHandler] Data channel ${message.channelName} for ${message.deviceId}: ${message.state}`,
@@ -183,7 +183,7 @@ export class MessageHandler {
         }
       })
       .with("peerConnectionStatusUpdate", () => {
-        console.log("[MessageHandler] Processing peerConnectionStatusUpdate:", message);
+//         console.log("[MessageHandler] Processing peerConnectionStatusUpdate:", message);
         if (message.deviceId && message.connectionState) {
           console.log(
             `[MessageHandler] Peer connection for ${message.deviceId}: ${message.connectionState}`,
@@ -191,7 +191,7 @@ export class MessageHandler {
         }
       })
       .with("dkgAddressUpdate", () => {
-        console.log("[MessageHandler] Processing dkgAddressUpdate:", message);
+//         console.log("[MessageHandler] Processing dkgAddressUpdate:", message);
         if (message.address && message.blockchain) {
           console.log(
             "[MessageHandler] DKG address automatically fetched:",

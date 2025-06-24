@@ -1,38 +1,38 @@
-import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import type { MessageHandler } from '../../../src/entrypoints/background/messageHandlers';
 import type { OffscreenManager } from '../../../src/entrypoints/background/offscreenManager';
-
 // Mock dependencies
+import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
+import { jest } from 'bun:test';
 const mockOffscreenManager = {
-    ensureOffscreenDocument: vi.fn(),
-    sendToOffscreen: vi.fn(),
-    closeOffscreenDocument: vi.fn()
+    ensureOffscreenDocument: jest.fn(),
+    sendToOffscreen: jest.fn(),
+    closeOffscreenDocument: jest.fn().mockResolvedValue(undefined)
 };
 
 const mockWebSocketManager = {
-    isConnected: vi.fn(() => true),
-    sendMessage: vi.fn(),
-    getDeviceId: vi.fn(() => 'test-device-123')
+    isConnected: jest.fn(() => true),
+    sendMessage: jest.fn(),
+    getDeviceId: jest.fn(() => 'test-device-123')
 };
 
 const mockAccountService = {
-    getCurrentAccount: vi.fn(),
-    getAccounts: vi.fn(),
-    getAccountsByBlockchain: vi.fn()
+    getCurrentAccount: jest.fn(),
+    getAccounts: jest.fn(),
+    getAccountsByBlockchain: jest.fn()
 };
 
 // Mock chrome APIs
 const mockChrome = {
     runtime: {
-        sendMessage: vi.fn(),
+        sendMessage: jest.fn(),
         onMessage: {
-            addListener: vi.fn()
+            addListener: jest.fn()
         }
     },
     storage: {
         local: {
-            get: vi.fn(),
-            set: vi.fn()
+            get: jest.fn(() => Promise.resolve({})),
+            set: jest.fn()
         }
     }
 };
@@ -43,7 +43,11 @@ describe('MPC Signing Flow', () => {
     let messageHandler: any;
     
     beforeEach(() => {
-        vi.clearAllMocks();
+        jest.clearAllMocks();
+        
+        // Reset mock return values after clearing
+        mockWebSocketManager.isConnected.mockReturnValue(true);
+        mockOffscreenManager.ensureOffscreenDocument.mockResolvedValue(undefined);
         
         // Create a mock message handler with the methods we need
         messageHandler = {
@@ -286,7 +290,7 @@ describe('MPC Signing Flow', () => {
     });
 
     describe('RPC signing integration', () => {
-        it('should handle eth_signTransaction via MPC', async () => {
+        it('should handle eth_signTransaction request', async () => {
             const rpcRequest = {
                 method: 'eth_signTransaction',
                 params: [{
@@ -399,6 +403,9 @@ describe('MPC Signing Flow', () => {
 
     describe('concurrent signing requests', () => {
         it('should handle multiple concurrent signing requests', async () => {
+            // Ensure WebSocket is connected
+            mockWebSocketManager.isConnected.mockReturnValue(true);
+            
             const signingRequests = [
                 {
                     signingId: 'sign_1',
@@ -417,12 +424,15 @@ describe('MPC Signing Flow', () => {
                 }
             ];
             
-            mockOffscreenManager.sendToOffscreen.mockImplementation((message) => 
-                Promise.resolve({ 
-                    success: true, 
-                    signingId: message.signingId 
-                })
-            );
+            mockOffscreenManager.sendToOffscreen.mockImplementation((message) => {
+                if (message.type === 'requestSigning') {
+                    return Promise.resolve({ 
+                        success: true, 
+                        signingId: message.signingId 
+                    });
+                }
+                return Promise.resolve({ success: true });
+            });
             
             // Initiate all signing requests concurrently
             const promises = signingRequests.map(request => 
