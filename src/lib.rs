@@ -688,6 +688,19 @@ impl<C: FrostCurve> FrostDkgGeneric<C> {
         console_log!("🔍 signing_commit: identifier exists: {}", self.identifier.is_some());
         console_log!("🔍 signing_commit: existing nonces: {}", self.signing_nonces.is_some());
         
+        // CRITICAL FIX: Check if we already have nonces to prevent clearing them on duplicate calls
+        if self.signing_nonces.is_some() {
+            console_log!("🔍 signing_commit: WARNING - Nonces already exist! Returning existing commitment to prevent nonce loss.");
+            
+            // Return the existing commitment if we have one
+            let our_identifier = self.identifier.ok_or("DKG not initialized")?;
+            if let Some(existing_commitment) = self.signing_commitments.get(&our_identifier) {
+                let serialized = serde_json::to_string(existing_commitment)
+                    .map_err(|e| format!("Serialization failed: {}", e))?;
+                return Ok(hex::encode(serialized.as_bytes()));
+            }
+        }
+        
         // Clear any existing signing state to ensure fresh nonces
         self.signing_commitments.clear();
         self.signature_shares.clear();
@@ -838,6 +851,14 @@ impl<C: FrostCurve> FrostDkgGeneric<C> {
         Ok(())
     }
 
+    fn clear_signing_state(&mut self) {
+        console_log!("🔍 clear_signing_state: Clearing all signing state");
+        self.signing_commitments.clear();
+        self.signature_shares.clear();
+        self.signing_nonces = None;
+        console_log!("🔍 clear_signing_state: State cleared successfully");
+    }
+
     fn aggregate_signature(&self, message_hex: &str) -> Result<String, WasmError> {
         console_log!(
             "🔍 aggregate_signature: starting with {} commitments and {} shares",
@@ -910,10 +931,16 @@ impl<C: FrostCurve> FrostDkgGeneric<C> {
                     console_log!("  - Identifier: {} (u16: {:?})", hex::encode(&id_bytes), C::identifier_to_u16(&id));
                 }
                 
-                // Try to determine which shares are invalid
+                // Try to determine which shares are invalid by logging more details
                 console_log!("🔍 aggregate_signature: Checking share validity...");
                 for (id, share) in &self.signature_shares {
-                    console_log!("  - Checking share from identifier u16={:?}", C::identifier_to_u16(&id));
+                    let share_str = serde_json::to_string(share).unwrap_or_else(|_| "serialization_failed".to_string());
+                    let share_preview = if share_str.len() > 50 {
+                        format!("{}...", &share_str[..50])
+                    } else {
+                        share_str
+                    };
+                    console_log!("  - Share from identifier u16={:?}: {}", C::identifier_to_u16(&id), share_preview);
                 }
                 
                 return Err(format!("Failed to aggregate signature: {}", e).into());
@@ -1047,6 +1074,11 @@ impl FrostDkgEd25519 {
     pub fn aggregate_signature(&self, message_hex: &str) -> Result<String, WasmError> {
         self.inner.aggregate_signature(message_hex)
     }
+
+    #[wasm_bindgen]
+    pub fn clear_signing_state(&mut self) {
+        self.inner.clear_signing_state()
+    }
 }
 
 #[wasm_bindgen]
@@ -1172,6 +1204,11 @@ impl FrostDkgSecp256k1 {
     #[wasm_bindgen]
     pub fn aggregate_signature(&self, message_hex: &str) -> Result<String, WasmError> {
         self.inner.aggregate_signature(message_hex)
+    }
+
+    #[wasm_bindgen]
+    pub fn clear_signing_state(&mut self) {
+        self.inner.clear_signing_state()
     }
 }
 

@@ -82,12 +82,19 @@ export class DkgManager {
         }
 
         this.sessionInfo = sessionInfo;
-        this.participantIndex = sessionInfo.participants.indexOf(this.localPeerId) + 1; // 1-based indexing
+        
+        // CRITICAL: Sort participants alphabetically to ensure consistent identifier assignment across all peers
+        // This matches the behavior of the working CLI implementation
+        const sortedParticipants = [...sessionInfo.participants].sort();
+        this.participantIndex = sortedParticipants.indexOf(this.localPeerId) + 1; // 1-based indexing
 
         if (this.participantIndex <= 0) {
             this._log(`Error: Local peer ID ${this.localPeerId} not found in session participants`);
             return false;
         }
+        
+        this._log(`Participant order: ${sortedParticipants.join(', ')}`);
+        this._log(`My participant index: ${this.participantIndex}`);
 
         this._log(`Initializing DKG for session ${sessionInfo.session_id} as participant ${this.participantIndex}`);
         this._updateDkgState(DkgState.Initializing);
@@ -301,7 +308,9 @@ export class DkgManager {
                 return;
             }
 
-            const participantIndex = this.sessionInfo!.participants.indexOf(fromPeerId) + 1;
+            // Use sorted participants for consistent identifier assignment
+            const sortedParticipants = [...this.sessionInfo!.participants].sort();
+            const participantIndex = sortedParticipants.indexOf(fromPeerId) + 1;
             if (participantIndex <= 0) {
                 throw new Error(`Unknown peer: ${fromPeerId}`);
             }
@@ -384,7 +393,9 @@ export class DkgManager {
                 return;
             }
 
-            const participantIndex = this.sessionInfo!.participants.indexOf(fromPeerId) + 1;
+            // Use sorted participants for consistent identifier assignment
+            const sortedParticipants = [...this.sessionInfo!.participants].sort();
+            const participantIndex = sortedParticipants.indexOf(fromPeerId) + 1;
             if (participantIndex <= 0) {
                 throw new Error(`Unknown peer: ${fromPeerId}`);
             }

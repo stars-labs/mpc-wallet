@@ -75,6 +75,7 @@ export class WebRTCManager {
   private signingShares: Map<string, any> = new Map(); // Map peer to signature share data
   private signingNonces: any | null = null; // Store nonces from commitment phase for signature generation
   private participantIndices: Map<string, number> = new Map(); // Map device ID to participant index
+  private processedSigningMessages: Set<string> = new Set(); // Track processed signing messages to prevent duplicates
 
   // Callbacks
   public onLog: (message: string) => void = console.log;
@@ -991,6 +992,18 @@ export class WebRTCManager {
     this.signingCommitments.clear();
     this.signingShares.clear();
     this.signingNonces = null;
+    this.processedSigningMessages.clear(); // Clear processed messages for new session
+    
+    // CRITICAL: Also clear WASM signing state to prevent nonce reuse
+    if (this.frostDkg) {
+      try {
+        this.frostDkg.clear_signing_state();
+        this._log(`Cleared WASM signing state`);
+      } catch (error) {
+        this._log(`Warning: Failed to clear WASM signing state: ${error}`);
+      }
+    }
+    
     this._log(`Cleared previous signing state for new signing session`);
 
     // Create signing info
@@ -1079,6 +1092,7 @@ export class WebRTCManager {
           this._handleSigningAcceptance(fromPeerId, message as any);
           break;
         case 'SignerSelection':
+          this._log(`[DEBUG] Received SignerSelection message in switch case from ${fromPeerId}`);
           this._handleSignerSelection(fromPeerId, message as any);
           break;
         case 'SigningCommitment':
@@ -1139,6 +1153,12 @@ export class WebRTCManager {
 
     if (!this.signingInfo) {
       this._log(`Cannot select signers: no signing info`);
+      return;
+    }
+
+    // CRITICAL: Prevent multiple executions that could cause commitment reuse
+    if (this.signingInfo.step !== "pending_acceptance") {
+      this._log(`[RACE CONDITION FIX] Skipping _selectSignersAndProceed - already in ${this.signingInfo.step} phase`);
       return;
     }
 
@@ -1224,6 +1244,7 @@ export class WebRTCManager {
     this.signingCommitments.clear();
     this.signingShares.clear();
     this.signingNonces = null; // Clear signing nonces
+    this.processedSigningMessages.clear(); // Clear processed messages
     this.onSigningStateUpdate(this.signingState, this.signingInfo);
   }
 
@@ -1991,6 +2012,18 @@ export class WebRTCManager {
     this.signingCommitments.clear();
     this.signingShares.clear();
     this.signingNonces = null;
+    this.processedSigningMessages.clear(); // Clear processed messages for new session
+    
+    // CRITICAL: Also clear WASM signing state to prevent nonce reuse
+    if (this.frostDkg) {
+      try {
+        this.frostDkg.clear_signing_state();
+        this._log(`Cleared WASM signing state`);
+      } catch (error) {
+        this._log(`Warning: Failed to clear WASM signing state: ${error}`);
+      }
+    }
+    
     this._log(`Cleared previous signing state for new signing session`);
     
     // Initialize signing info for the request
@@ -2025,6 +2058,12 @@ export class WebRTCManager {
       return;
     }
 
+    // CRITICAL: Check if we've already moved past the acceptance phase
+    if (this.signingInfo.step !== "pending_acceptance") {
+      this._log(`[RACE CONDITION FIX] Ignoring late acceptance from ${fromPeerId} - already in ${this.signingInfo.step} phase`);
+      return;
+    }
+
     // Record the acceptance in the map
     this.signingInfo.acceptances.set(fromPeerId, message.accepted);
 
@@ -2046,16 +2085,17 @@ export class WebRTCManager {
   }
 
   private _handleSignerSelection(fromPeerId: string, message: any): void {
-    this._log(`Handling signer selection from ${fromPeerId}`);
+    this._log(`Handling signer selection from ${fromPeerId} (our ID: ${this.localPeerId})`);
 
     if (!this.signingInfo || this.signingInfo.signing_id !== message.signing_id) {
       this._log(`Ignoring signer selection: no matching signing process`);
       return;
     }
 
-    // Prevent processing our own signer selection message to avoid double commitment generation
+    // CRITICAL: Prevent processing our own signer selection message to avoid double commitment generation
+    // This is essential to prevent clearing signing nonces which causes "Invalid signature share" errors
     if (fromPeerId === this.localPeerId) {
-      this._log(`Ignoring our own signer selection message`);
+      this._log(`[CRITICAL FIX] Ignoring our own signer selection message to prevent double commitment generation`);
       return;
     }
 
@@ -2089,9 +2129,17 @@ export class WebRTCManager {
     const isSelectedSigner = this.signingInfo.selected_signers.includes(this.localPeerId);
 
     if (isSelectedSigner) {
-      this._log(`We are selected as a signer. Generating commitment.`);
-      this._updateSigningState(SigningState.CommitmentPhase, this.signingInfo);
-      this._generateAndSendCommitment();
+      this._log(`We are selected as a signer. Checking if commitment already generated...`);
+      
+      // Check if we've already generated a commitment (e.g., as the initiator)
+      if (this.signingCommitments.has(this.localPeerId)) {
+        this._log(`[CRITICAL FIX] Commitment already generated for our peer ID. Skipping duplicate generation.`);
+        this._updateSigningState(SigningState.CommitmentPhase, this.signingInfo);
+      } else {
+        this._log(`No existing commitment found. Generating commitment.`);
+        this._updateSigningState(SigningState.CommitmentPhase, this.signingInfo);
+        this._generateAndSendCommitment();
+      }
     } else {
       this._log(`We are not selected as a signer. Monitoring signing process.`);
       this._updateSigningState(SigningState.CommitmentPhase, this.signingInfo);
@@ -2110,6 +2158,14 @@ export class WebRTCManager {
       this._log(`Cannot handle commitment: FROST DKG not initialized`);
       return;
     }
+
+    // CRITICAL: Deduplicate signing messages to prevent processing the same commitment twice
+    const messageId = `commitment-${this.signingInfo.signing_id}-${fromPeerId}-${message.sender_identifier}`;
+    if (this.processedSigningMessages.has(messageId)) {
+      this._log(`[DEDUPLICATION] Ignoring duplicate signing commitment from ${fromPeerId}`);
+      return;
+    }
+    this.processedSigningMessages.add(messageId);
 
     try {
       // Parse sender identifier from hex
@@ -2177,6 +2233,14 @@ export class WebRTCManager {
       return;
     }
 
+    // CRITICAL: Deduplicate signing messages to prevent processing the same share twice
+    const messageId = `share-${this.signingInfo.signing_id}-${fromPeerId}-${message.sender_identifier}`;
+    if (this.processedSigningMessages.has(messageId)) {
+      this._log(`[DEDUPLICATION] Ignoring duplicate signature share from ${fromPeerId}`);
+      return;
+    }
+    this.processedSigningMessages.add(messageId);
+
     try {
       // Parse sender identifier from hex
       const senderHexId = message.sender_identifier;
@@ -2234,7 +2298,8 @@ export class WebRTCManager {
   }
 
   private _generateAndSendCommitment(): void {
-    this._log(`Generating and sending commitment`);
+    this._log(`[COMMITMENT GENERATION] Generating and sending commitment for signing ${this.signingInfo?.signing_id || 'unknown'}`);
+    this._log(`[COMMITMENT GENERATION] Stack trace: ${new Error().stack?.split('\n').slice(1, 4).join(' <- ')}`);
 
     if (!this.signingInfo) {
       this._log(`Cannot generate commitment: no signing info`);
