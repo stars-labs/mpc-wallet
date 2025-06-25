@@ -98,7 +98,6 @@ trait FrostCurve {
 
     fn identifier_from_u16(value: u16) -> Result<Self::Identifier, String>;
     fn identifier_to_u16(identifier: &Self::Identifier) -> Result<u16, String>;
-    fn serialize_identifier(identifier: &Self::Identifier) -> Result<Vec<u8>, String>;
     fn dkg_part1(
         identifier: Self::Identifier,
         total: u16,
@@ -124,12 +123,11 @@ trait FrostCurve {
     fn serialize_verifying_key(key: &Self::VerifyingKey) -> Result<Vec<u8>, String>;
     fn get_address(key: &Self::VerifyingKey) -> String;
 
-    // FROST signing methods
-    fn signing_commit(
+    // FROST signing methods (matching CLI naming)
+    fn generate_signing_commitment(
         key_package: &Self::KeyPackage,
-        rng: &mut OsRng,
     ) -> Result<(Self::SigningNonces, Self::SigningCommitments), String>;
-    fn sign(
+    fn generate_signature_share(
         signing_package: &Self::SigningPackage,
         nonces: &Self::SigningNonces,
         key_package: &Self::KeyPackage,
@@ -181,10 +179,6 @@ impl FrostCurve for Ed25519Curve {
         }
     }
 
-    fn serialize_identifier(identifier: &Self::Identifier) -> Result<Vec<u8>, String> {
-        Ok(identifier.serialize())
-    }
-
     fn dkg_part1(
         identifier: Self::Identifier,
         total: u16,
@@ -229,21 +223,22 @@ impl FrostCurve for Ed25519Curve {
         bs58::encode(pubkey_bytes).into_string()
     }
 
-    // FROST signing method implementations
-    fn signing_commit(
+    // FROST signing method implementations (matching CLI)
+    fn generate_signing_commitment(
         key_package: &Self::KeyPackage,
-        rng: &mut OsRng,
     ) -> Result<(Self::SigningNonces, Self::SigningCommitments), String> {
-        let (nonces, commitments) = frost_ed25519::round1::commit(key_package.signing_share(), rng);
+        let mut rng = OsRng;
+        let (nonces, commitments) = frost_ed25519::round1::commit(key_package.signing_share(), &mut rng);
         Ok((nonces, commitments))
     }
 
-    fn sign(
+    fn generate_signature_share(
         signing_package: &Self::SigningPackage,
         nonces: &Self::SigningNonces,
         key_package: &Self::KeyPackage,
     ) -> Result<Self::SignatureShare, String> {
-        frost_ed25519::round2::sign(signing_package, nonces, key_package).map_err(|e| e.to_string())
+        frost_ed25519::round2::sign(signing_package, nonces, key_package)
+            .map_err(|e| format!("Failed to generate signature share: {:?}", e))
     }
 
     fn aggregate_signature(
@@ -308,10 +303,6 @@ impl FrostCurve for Secp256k1Curve {
         }
     }
 
-    fn serialize_identifier(identifier: &Self::Identifier) -> Result<Vec<u8>, String> {
-        Ok(identifier.serialize())
-    }
-
     fn dkg_part1(
         identifier: Self::Identifier,
         total: u16,
@@ -367,23 +358,23 @@ impl FrostCurve for Secp256k1Curve {
         }
     }
 
-    // FROST signing method implementations
-    fn signing_commit(
+    // FROST signing method implementations (matching CLI)
+    fn generate_signing_commitment(
         key_package: &Self::KeyPackage,
-        rng: &mut OsRng,
     ) -> Result<(Self::SigningNonces, Self::SigningCommitments), String> {
+        let mut rng = OsRng;
         let (nonces, commitments) =
-            frost_secp256k1::round1::commit(key_package.signing_share(), rng);
+            frost_secp256k1::round1::commit(key_package.signing_share(), &mut rng);
         Ok((nonces, commitments))
     }
 
-    fn sign(
+    fn generate_signature_share(
         signing_package: &Self::SigningPackage,
         nonces: &Self::SigningNonces,
         key_package: &Self::KeyPackage,
     ) -> Result<Self::SignatureShare, String> {
         frost_secp256k1::round2::sign(signing_package, nonces, key_package)
-            .map_err(|e| e.to_string())
+            .map_err(|e| format!("Failed to generate signature share: {:?}", e))
     }
 
     fn aggregate_signature(
@@ -684,19 +675,23 @@ impl<C: FrostCurve> FrostDkgGeneric<C> {
 
     // FROST signing methods
     fn signing_commit(&mut self) -> Result<String, WasmError> {
-        console_log!("🔍 signing_commit: key_package exists: {}", self.key_package.is_some());
-        console_log!("🔍 signing_commit: identifier exists: {}", self.identifier.is_some());
-        console_log!("🔍 signing_commit: existing nonces: {}", self.signing_nonces.is_some());
+        // Add instance tracking
+        let instance_id = format!("{:p}", self as *const _);
+        console_log!("🔍 signing_commit [instance {}]: key_package exists: {}", instance_id, self.key_package.is_some());
+        console_log!("🔍 signing_commit [instance {}]: identifier exists: {}", instance_id, self.identifier.is_some());
+        console_log!("🔍 signing_commit [instance {}]: existing nonces: {}", instance_id, self.signing_nonces.is_some());
+        console_log!("🔍 signing_commit [instance {}]: commitments count: {}", instance_id, self.signing_commitments.len());
         
         // CRITICAL FIX: Check if we already have nonces to prevent clearing them on duplicate calls
         if self.signing_nonces.is_some() {
-            console_log!("🔍 signing_commit: WARNING - Nonces already exist! Returning existing commitment to prevent nonce loss.");
+            console_log!("🔍 signing_commit [instance {}]: WARNING - Nonces already exist! Returning existing commitment to prevent nonce loss.", instance_id);
             
             // Return the existing commitment if we have one
             let our_identifier = self.identifier.ok_or("DKG not initialized")?;
             if let Some(existing_commitment) = self.signing_commitments.get(&our_identifier) {
                 let serialized = serde_json::to_string(existing_commitment)
                     .map_err(|e| format!("Serialization failed: {}", e))?;
+                console_log!("🔍 signing_commit [instance {}]: Returning existing commitment", instance_id);
                 return Ok(hex::encode(serialized.as_bytes()));
             }
         }
@@ -705,12 +700,12 @@ impl<C: FrostCurve> FrostDkgGeneric<C> {
         self.signing_commitments.clear();
         self.signature_shares.clear();
         self.signing_nonces = None;
-        console_log!("🔍 signing_commit: cleared previous signing state");
+        console_log!("🔍 signing_commit [instance {}]: cleared previous signing state", instance_id);
         
         let key_package = self.key_package.as_ref().ok_or("DKG not completed")?;
-        let mut rng = OsRng;
 
-        let (nonces, commitments) = C::signing_commit(key_package, &mut rng)?;
+        // Generate signing commitment using CLI-compatible function
+        let (nonces, commitments) = C::generate_signing_commitment(key_package)?;
 
         // Store nonces for later use in signing
         self.signing_nonces = Some(nonces.clone());
@@ -765,52 +760,84 @@ impl<C: FrostCurve> FrostDkgGeneric<C> {
     }
 
     fn sign(&mut self, message_hex: &str) -> Result<String, WasmError> {
+        // Add instance tracking
+        let instance_id = format!("{:p}", self as *const _);
         console_log!(
-            "🔍 sign: starting with {} commitments",
+            "🔍 sign [instance {}]: starting with {} commitments",
+            instance_id,
             self.signing_commitments.len()
         );
+        console_log!(
+            "🔍 sign [instance {}]: nonces exist: {}",
+            instance_id,
+            self.signing_nonces.is_some()
+        );
 
+        // Get stored nonces from commitment phase
         let nonces = self
             .signing_nonces
             .as_ref()
-            .ok_or("No signing nonces available")?;
-        let key_package = self.key_package.as_ref().ok_or("DKG not completed")?;
+            .ok_or_else(|| {
+                let instance_id = format!("{:p}", self as *const _);
+                console_log!("🔍 sign [instance {}]: ERROR - Nonces not found!", instance_id);
+                console_log!("🔍 sign [instance {}]: This means either:", instance_id);
+                console_log!("🔍 sign [instance {}]: 1. signing_commit was never called", instance_id);
+                console_log!("🔍 sign [instance {}]: 2. clear_signing_state was called after commitment", instance_id);
+                console_log!("🔍 sign [instance {}]: 3. WASM instance was recreated", instance_id);
+                "Failed to generate signature share: No signing nonces available"
+            })?;
+        
+        // Get key package from DKG
+        let key_package = self
+            .key_package
+            .as_ref()
+            .ok_or("Failed to generate signature share: DKG not completed")?;
 
         // Decode message from hex
-        let message =
-            hex::decode(message_hex).map_err(|e| format!("Failed to decode message hex: {}", e))?;
+        let message = hex::decode(message_hex)
+            .map_err(|e| format!("Failed to generate signature share: Failed to decode message hex: {}", e))?;
 
         console_log!(
-            "🔍 sign: creating signing package with {} commitments",
-            self.signing_commitments.len()
+            "🔍 sign: creating signing package with {} commitments for message {} bytes",
+            self.signing_commitments.len(),
+            message.len()
         );
 
-        // Create signing package from commitments
+        // Create signing package from collected commitments
         let signing_package = C::create_signing_package(&self.signing_commitments, &message)
-            .map_err(|e| format!("Failed to create signing package: {}", e))?;
+            .map_err(|e| format!("Failed to generate signature share: {}", e))?;
 
-        console_log!("🔍 sign: signing package created, generating signature share");
+        console_log!("🔍 sign: signing package created, calling generate_signature_share");
 
-        // Generate signature share
-        let signature_share = C::sign(&signing_package, nonces, key_package)?;
+        // Generate signature share using CLI-compatible function
+        let signature_share = C::generate_signature_share(&signing_package, nonces, key_package)?;
 
-        // Store our own signature share for later aggregation
-        let our_identifier = self.identifier.ok_or("DKG not initialized")?;
+        // Store our own signature share for aggregation
+        let our_identifier = self
+            .identifier
+            .ok_or("Failed to generate signature share: DKG not initialized")?;
+        
         console_log!(
-            "🔍 sign: storing own share for participant with identifier"
+            "🔍 sign: signature share generated successfully for identifier u16={}",
+            C::identifier_to_u16(&our_identifier).unwrap_or(9999)
         );
+        
         self.signature_shares
             .insert(our_identifier, signature_share.clone());
 
         console_log!(
-            "🔍 sign: stored our own signature share, total shares now: {}",
+            "🔍 sign: stored our signature share, total shares: {}",
             self.signature_shares.len()
         );
 
-        // Serialize and return
+        // Serialize signature share for transmission
         let serialized = serde_json::to_string(&signature_share)
-            .map_err(|e| format!("Serialization failed: {}", e))?;
-        Ok(hex::encode(serialized.as_bytes()))
+            .map_err(|e| format!("Failed to serialize signature share: {}", e))?;
+        
+        let result = hex::encode(serialized.as_bytes());
+        console_log!("🔍 sign: returning serialized share: {} bytes", result.len());
+        
+        Ok(result)
     }
 
     fn add_signature_share(
@@ -852,11 +879,21 @@ impl<C: FrostCurve> FrostDkgGeneric<C> {
     }
 
     fn clear_signing_state(&mut self) {
-        console_log!("🔍 clear_signing_state: Clearing all signing state");
+        let instance_id = format!("{:p}", self as *const _);
+        console_log!("🔍 clear_signing_state [instance {}]: Clearing all signing state", instance_id);
+        console_log!("🔍 clear_signing_state [instance {}]: Had nonces: {}", instance_id, self.signing_nonces.is_some());
+        console_log!("🔍 clear_signing_state [instance {}]: Had {} commitments", instance_id, self.signing_commitments.len());
         self.signing_commitments.clear();
         self.signature_shares.clear();
         self.signing_nonces = None;
-        console_log!("🔍 clear_signing_state: State cleared successfully");
+        console_log!("🔍 clear_signing_state [instance {}]: State cleared successfully", instance_id);
+    }
+
+    fn has_signing_nonces(&self) -> bool {
+        let instance_id = format!("{:p}", self as *const _);
+        let has_nonces = self.signing_nonces.is_some();
+        console_log!("🔍 has_signing_nonces [instance {}]: {}", instance_id, has_nonces);
+        has_nonces
     }
 
     fn aggregate_signature(&self, message_hex: &str) -> Result<String, WasmError> {
@@ -866,92 +903,86 @@ impl<C: FrostCurve> FrostDkgGeneric<C> {
             self.signature_shares.len()
         );
         
-        // Log commitment and share counts
-        console_log!("🔍 aggregate_signature: checking participants...");
-        
-        // Check if we have matching commitments and shares
-        let mut missing_shares = Vec::new();
+        // Validate we have matching commitments and shares
         for (id, _) in &self.signing_commitments {
             if !self.signature_shares.contains_key(id) {
-                missing_shares.push("missing");
+                let id_u16 = C::identifier_to_u16(id).unwrap_or(9999);
+                return Err(format!(
+                    "Failed to aggregate signature: Missing signature share for participant {}",
+                    id_u16
+                ).into());
             }
         }
         
-        if !missing_shares.is_empty() {
-            console_log!("🔍 aggregate_signature: ERROR - have commitments but missing {} shares", missing_shares.len());
-        }
+        console_log!("🔍 aggregate_signature: all participants have provided shares");
 
+        // Get the group public key package from DKG
         let public_key_package = self
             .public_key_package
             .as_ref()
-            .ok_or("DKG not completed")?;
+            .ok_or("Failed to aggregate signature: DKG not completed")?;
 
         // Decode message from hex
-        let message =
-            hex::decode(message_hex).map_err(|e| format!("Failed to decode message hex: {}", e))?;
-
-        console_log!("🔍 aggregate_signature: creating signing package");
-
-        // Create signing package from commitments
-        let signing_package = C::create_signing_package(&self.signing_commitments, &message)
-            .map_err(|e| format!("Failed to create signing package for aggregation: {}", e))?;
+        let message = hex::decode(message_hex)
+            .map_err(|e| format!("Failed to aggregate signature: Failed to decode message hex: {}", e))?;
 
         console_log!(
-            "🔍 aggregate_signature: aggregating signature with {} shares",
+            "🔍 aggregate_signature: creating signing package for {} byte message",
+            message.len()
+        );
+
+        // Create signing package from commitments (must match the one used for signing)
+        let signing_package = C::create_signing_package(&self.signing_commitments, &message)
+            .map_err(|e| format!("Failed to aggregate signature: {}", e))?;
+
+        console_log!(
+            "🔍 aggregate_signature: calling FROST aggregate with {} shares",
             self.signature_shares.len()
         );
 
-        // Aggregate signature
+        // Aggregate signature shares using FROST aggregate (matching CLI exactly)
         let signature = match C::aggregate_signature(&signing_package, &self.signature_shares, public_key_package) {
-            Ok(sig) => sig,
+            Ok(sig) => {
+                console_log!("🔍 aggregate_signature: FROST aggregation successful");
+                sig
+            },
             Err(e) => {
-                console_log!("🔍 aggregate_signature: FROST error: {:?}", e);
-                console_log!("🔍 aggregate_signature: shares count: {}", self.signature_shares.len());
-                console_log!("🔍 aggregate_signature: commitments count: {}", self.signing_commitments.len());
+                // Enhanced error logging for debugging
+                console_log!("🔍 aggregate_signature: FROST aggregation failed: {:?}", e);
+                console_log!("🔍 aggregate_signature: Participants count - commitments: {}, shares: {}", 
+                    self.signing_commitments.len(), 
+                    self.signature_shares.len()
+                );
                 
-                // Log detailed state for debugging
-                console_log!("🔍 aggregate_signature: DEBUG - Signing state details:");
-                if let Some(our_id) = self.identifier {
-                    console_log!("🔍 aggregate_signature: Our identifier u16: {:?}", C::identifier_to_u16(&our_id));
-                } else {
-                    console_log!("🔍 aggregate_signature: Our identifier is None");
-                }
-                
-                // Log identifiers in commitments
-                console_log!("🔍 aggregate_signature: Commitments from identifiers:");
+                // Log participant identifiers for debugging
+                console_log!("🔍 aggregate_signature: Commitment participants:");
                 for (id, _) in &self.signing_commitments {
-                    let id_bytes = C::serialize_identifier(&id).unwrap_or_else(|_| vec![0]);
-                    console_log!("  - Identifier: {} (u16: {:?})", hex::encode(&id_bytes), C::identifier_to_u16(&id));
+                    let id_u16 = C::identifier_to_u16(&id).unwrap_or(9999);
+                    console_log!("  - Participant {}", id_u16);
                 }
                 
-                // Log identifiers in shares
-                console_log!("🔍 aggregate_signature: Shares from identifiers:");
+                console_log!("🔍 aggregate_signature: Share participants:");
                 for (id, _) in &self.signature_shares {
-                    let id_bytes = C::serialize_identifier(&id).unwrap_or_else(|_| vec![0]);
-                    console_log!("  - Identifier: {} (u16: {:?})", hex::encode(&id_bytes), C::identifier_to_u16(&id));
+                    let id_u16 = C::identifier_to_u16(&id).unwrap_or(9999);
+                    console_log!("  - Participant {}", id_u16);
                 }
                 
-                // Try to determine which shares are invalid by logging more details
-                console_log!("🔍 aggregate_signature: Checking share validity...");
-                for (id, share) in &self.signature_shares {
-                    let share_str = serde_json::to_string(share).unwrap_or_else(|_| "serialization_failed".to_string());
-                    let share_preview = if share_str.len() > 50 {
-                        format!("{}...", &share_str[..50])
-                    } else {
-                        share_str
-                    };
-                    console_log!("  - Share from identifier u16={:?}: {}", C::identifier_to_u16(&id), share_preview);
-                }
-                
-                return Err(format!("Failed to aggregate signature: {}", e).into());
+                return Err(format!("Failed to aggregate signature: {:?}", e).into());
             }
         };
 
-        console_log!("🔍 aggregate_signature: signature aggregation successful");
-
-        // Serialize signature
-        let signature_bytes = C::serialize_signature(&signature)?;
-        Ok(hex::encode(signature_bytes))
+        // Serialize the aggregated signature
+        let signature_bytes = match C::serialize_signature(&signature) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                return Err(format!("Failed to serialize signature: {:?}", e).into());
+            }
+        };
+        
+        let result = hex::encode(signature_bytes);
+        console_log!("🔍 aggregate_signature: returning {} byte signature", result.len() / 2);
+        
+        Ok(result)
     }
 }
 
@@ -1078,6 +1109,11 @@ impl FrostDkgEd25519 {
     #[wasm_bindgen]
     pub fn clear_signing_state(&mut self) {
         self.inner.clear_signing_state()
+    }
+
+    #[wasm_bindgen]
+    pub fn has_signing_nonces(&self) -> bool {
+        self.inner.has_signing_nonces()
     }
 }
 
@@ -1209,6 +1245,11 @@ impl FrostDkgSecp256k1 {
     #[wasm_bindgen]
     pub fn clear_signing_state(&mut self) {
         self.inner.clear_signing_state()
+    }
+
+    #[wasm_bindgen]
+    pub fn has_signing_nonces(&self) -> bool {
+        self.inner.has_signing_nonces()
     }
 }
 

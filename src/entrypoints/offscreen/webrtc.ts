@@ -2325,6 +2325,7 @@ export class WebRTCManager {
       
       this._log(`Calling FROST signing_commit with curve ${this.currentBlockchain === 'ethereum' ? 'secp256k1' : 'ed25519'}...`);
       this._log(`WASM instance exists: ${!!this.frostDkg}, DKG state: ${DkgState[this.dkgState]}`);
+      this._log(`WASM instance ID: ${this.frostDkg ? (this.frostDkg as any).__proto__.constructor.name : 'null'}`);
       this._log(`Group public key: ${this.groupPublicKey}`);
       
       // Check if WASM instance has completed DKG
@@ -2339,7 +2340,9 @@ export class WebRTCManager {
       // Nonces are stored internally in the WASM module
       let commitmentsHex;
       try {
+        this._log(`[COMMITMENT] About to call signing_commit on WASM instance`);
         commitmentsHex = this.frostDkg.signing_commit();
+        this._log(`[COMMITMENT] signing_commit returned successfully`);
       } catch (wasmError) {
         this._log(`Error calling signing_commit: ${this._getErrorMessage(wasmError)}`);
         this._log(`This usually means the WASM instance doesn't have a key_package from completed DKG`);
@@ -2441,7 +2444,9 @@ export class WebRTCManager {
     }
 
     if (!this.signingNonces) {
-      this._log(`Cannot generate signature share: no signing nonces available`);
+      this._log(`ERROR: Cannot generate signature share: no signing nonces available`);
+      this._log(`ERROR: This indicates the WASM instance lost its state between commitment and share generation`);
+      this._log(`ERROR: signingNonces flag: ${this.signingNonces}, WASM instance exists: ${!!this.frostDkg}`);
       return;
     }
 
@@ -2455,10 +2460,25 @@ export class WebRTCManager {
       }
       
       this._log(`Signing message (hex): ${messageHex}`);
+      this._log(`[SIGNATURE SHARE] WASM instance ID: ${this.frostDkg ? (this.frostDkg as any).__proto__.constructor.name : 'null'}`);
+      
+      // Check if nonces exist in WASM before attempting to sign
+      if (this.frostDkg.has_signing_nonces) {
+        const hasNonces = this.frostDkg.has_signing_nonces();
+        this._log(`[SIGNATURE SHARE] WASM has_signing_nonces: ${hasNonces}`);
+        if (!hasNonces) {
+          this._log(`ERROR: WASM module reports no nonces available!`);
+          this._log(`ERROR: This confirms the nonces were lost between commitment and share generation`);
+          return;
+        }
+      }
+      
+      this._log(`[SIGNATURE SHARE] About to call sign on WASM instance`);
 
       // Generate FROST signature share
       // The WASM function returns a hex-encoded JSON string of the share
       const signatureShareHex = this.frostDkg.sign(messageHex);
+      this._log(`[SIGNATURE SHARE] sign returned successfully`);
       
       if (!signatureShareHex) {
         this._log(`Error: No signature share result from FROST`);
