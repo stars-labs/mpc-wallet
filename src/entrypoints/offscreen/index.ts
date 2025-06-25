@@ -99,6 +99,8 @@ async function initializeModules(): Promise<void> {
         messageRouter.registerHandler('getState', handleGetState);
         messageRouter.registerHandler('getDkgStatus', handleGetDkgStatus);
         messageRouter.registerHandler('getGroupPublicKey', handleGetGroupPublicKey);
+        messageRouter.registerHandler('importKeystore', handleImportKeystore);
+        messageRouter.registerHandler('exportKeystore', handleExportKeystore);
 
         // Set up the message listener - this was missing!
         messageRouter.setupMessageListener();
@@ -896,6 +898,121 @@ function sendToBackground(message: { type: string; payload: unknown }): void {
 // ===================================================================
 // STARTUP SEQUENCE
 // ===================================================================
+
+/**
+ * Handle import keystore request
+ */
+async function handleImportKeystore(messageType: string, payload: any): Promise<any> {
+    try {
+        console.log("🔑 [Handler] Importing keystore");
+        
+        if (!payload.keystoreData || !payload.chain) {
+            throw new Error("Missing keystore data or chain");
+        }
+
+        // Parse the keystore data
+        const keystoreJson = typeof payload.keystoreData === 'string' 
+            ? payload.keystoreData 
+            : JSON.stringify(payload.keystoreData);
+
+        // Determine the curve based on chain
+        const curve = payload.chain === "ethereum" ? "secp256k1" : "ed25519";
+        
+        // Get the appropriate WASM class
+        const WasmClass = curve === "ed25519" 
+            ? (globalThis as any).FrostDkgEd25519 
+            : (globalThis as any).FrostDkgSecp256k1;
+            
+        if (!WasmClass) {
+            throw new Error(`WASM class not available for curve ${curve}`);
+        }
+
+        // Create new instance and import keystore
+        const frostInstance = new WasmClass();
+        frostInstance.import_keystore(keystoreJson);
+        
+        // Get the imported data
+        const groupPublicKey = frostInstance.get_group_public_key();
+        const address = payload.chain === "ethereum" 
+            ? frostInstance.get_eth_address() 
+            : frostInstance.get_address();
+
+        // Parse keystore to get session info
+        const keystore = JSON.parse(keystoreJson);
+        
+        // Create a WebRTC manager if it doesn't exist
+        if (!webRTCManager && keystore.identifier) {
+            const deviceId = `imported-${keystore.identifier}`;
+            await initializeWebRTCManager(deviceId);
+        }
+
+        // Store the imported instance in WebRTC manager
+        if (webRTCManager) {
+            webRTCManager.frostDkg = frostInstance;
+            webRTCManager.updateDkgState("Complete");
+            webRTCManager.groupPublicKey = groupPublicKey;
+            
+            if (payload.chain === "ethereum") {
+                webRTCManager.ethereumAddress = address;
+            } else {
+                webRTCManager.solanaAddress = address;
+            }
+        }
+
+        return {
+            success: true,
+            address: address,
+            groupPublicKey: groupPublicKey,
+            sessionInfo: {
+                sessionId: keystore.identifier || "imported",
+                deviceId: keystore.identifier || "imported",
+                threshold: keystore.threshold,
+                totalParticipants: keystore.total_participants
+            }
+        };
+    } catch (error) {
+        console.error("❌ [Handler] Error importing keystore:", error);
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : String(error)
+        };
+    }
+}
+
+/**
+ * Handle export keystore request
+ */
+async function handleExportKeystore(messageType: string, payload: any): Promise<any> {
+    try {
+        console.log("🔑 [Handler] Exporting keystore");
+        
+        if (!payload.chain) {
+            throw new Error("Missing chain parameter");
+        }
+
+        // Check if we have a WebRTC manager with DKG data
+        if (!webRTCManager || !webRTCManager.frostDkg) {
+            throw new Error("No DKG data available for export");
+        }
+
+        // Get the appropriate WASM instance
+        const frostInstance = webRTCManager.frostDkg;
+        
+        // Call export_keystore method
+        const keystoreJson = frostInstance.export_keystore();
+        
+        return {
+            success: true,
+            keystoreData: keystoreJson
+        };
+    } catch (error) {
+        console.error("❌ [Handler] Error exporting keystore:", error);
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : String(error)
+        };
+    }
+}
 
 /**
  * Main startup function

@@ -198,6 +198,16 @@ export class PopupMessageHandler {
                     await this.handleRequestSigningMessage(message, sendResponse);
                     break;
 
+                case "importKeystore":
+                    console.log("📥 [PopupMessageHandler] IMPORT_KEYSTORE: Importing keystore file");
+                    await this.handleImportKeystoreMessage(message, sendResponse);
+                    break;
+
+                case "exportKeystore":
+                    console.log("📤 [PopupMessageHandler] EXPORT_KEYSTORE: Exporting keystore file");
+                    await this.handleExportKeystoreMessage(message, sendResponse);
+                    break;
+
                 default:
                     if (isRpcMessage(message)) {
 //                         console.log("🔗 [PopupMessageHandler] RPC_MESSAGE: Processing JSON-RPC request");
@@ -660,6 +670,110 @@ export class PopupMessageHandler {
             }
         } else {
             sendResponse({ success: false, error: "Invalid signing request format" });
+        }
+    }
+
+    /**
+     * Handle import keystore request from popup
+     */
+    private async handleImportKeystoreMessage(message: any, sendResponse: (response: any) => void): Promise<void> {
+        console.log("[PopupMessageHandler] Processing import keystore request");
+        
+        try {
+            if (!message.keystoreData || !message.chain) {
+                sendResponse({ success: false, error: "Missing keystore data or chain" });
+                return;
+            }
+
+            // Ensure offscreen document exists
+            await this.offscreenManager.ensureOffscreenDocument();
+            
+            // Forward to offscreen for WASM processing
+            const response = await chrome.runtime.sendMessage({
+                type: "forwardToOffscreen",
+                payload: {
+                    type: "importKeystore",
+                    keystoreData: message.keystoreData,
+                    chain: message.chain
+                }
+            });
+
+            if (response && response.success) {
+                // Update state with imported session info
+                this.stateManager.setDkgState(DkgState.Complete);
+                this.stateManager.setSessionInfo({
+                    session_id: response.sessionInfo.sessionId,
+                    proposer_id: response.sessionInfo.deviceId,
+                    participants: [response.sessionInfo.deviceId], // Single participant for imported keystore
+                    accepted_devices: [response.sessionInfo.deviceId],
+                    threshold: response.sessionInfo.threshold,
+                    total: response.sessionInfo.totalParticipants,
+                    is_proposer: true,
+                    timestamp: Date.now()
+                });
+                
+                // Store address based on chain
+                if (message.chain === "ethereum") {
+                    this.stateManager.setEthereumAddress(response.address);
+                } else if (message.chain === "solana") {
+                    this.stateManager.setSolanaAddress(response.address);
+                }
+                
+                sendResponse({ success: true, address: response.address });
+            } else {
+                sendResponse({ success: false, error: response?.error || "Failed to import keystore" });
+            }
+        } catch (error) {
+            console.error("[PopupMessageHandler] Error importing keystore:", error);
+            sendResponse({ success: false, error: (error as Error).message });
+        }
+    }
+
+    /**
+     * Handle export keystore request from popup
+     */
+    private async handleExportKeystoreMessage(message: any, sendResponse: (response: any) => void): Promise<void> {
+        console.log("[PopupMessageHandler] Processing export keystore request");
+        
+        try {
+            if (!message.chain) {
+                sendResponse({ success: false, error: "Missing chain parameter" });
+                return;
+            }
+
+            // Check if DKG is complete
+            const dkgState = this.stateManager.getDkgState();
+            if (dkgState !== DkgState.Complete) {
+                sendResponse({ success: false, error: "DKG not complete. Cannot export keystore." });
+                return;
+            }
+
+            // Ensure offscreen document exists
+            await this.offscreenManager.ensureOffscreenDocument();
+            
+            // Forward to offscreen for WASM processing
+            const response = await chrome.runtime.sendMessage({
+                type: "forwardToOffscreen",
+                payload: {
+                    type: "exportKeystore",
+                    chain: message.chain
+                }
+            });
+
+            if (response && response.success && response.keystoreData) {
+                sendResponse({ 
+                    success: true, 
+                    keystoreData: response.keystoreData 
+                });
+            } else {
+                sendResponse({ 
+                    success: false, 
+                    error: response?.error || "Failed to export keystore" 
+                });
+            }
+        } catch (error) {
+            console.error("[PopupMessageHandler] Error exporting keystore:", error);
+            sendResponse({ success: false, error: (error as Error).message });
         }
     }
 }

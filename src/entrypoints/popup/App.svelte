@@ -828,11 +828,11 @@
     function testMPCSigning() {
         console.log("[UI] Testing MPC signing");
         
-        // Generate a test signing ID and transaction data
+        // Generate a test signing ID
         const signingId = `test_signing_${Date.now()}`;
-        const testTransactionData = appState.chain === "ethereum" 
-            ? "0x" + "00".repeat(32) // Ethereum test transaction hash
-            : "test_solana_transaction_" + Date.now(); // Solana test data
+        
+        // Use hex of "hello" (68656c6c6f) to match CLI node test
+        const testTransactionData = "68656c6c6f";
         
         // Use the threshold from the current session
         const requiredSigners = appState.sessionInfo?.threshold || 2;
@@ -855,7 +855,7 @@
         
         console.log("[UI] Sent signing request:", {
             signingId,
-            transactionData: testTransactionData,
+            transactionData: testTransactionData + ' (hex of "hello")',
             requiredSigners
         });
     }
@@ -1327,8 +1327,109 @@
             <!-- Create New Session -->
             <div class="space-y-3">
                 <p class="text-sm text-gray-600">
-                    Select devices from the list above to create a new MPC session.
+                    Select devices from the list above to create a new MPC session, or import an existing keystore.
                 </p>
+                
+                <!-- Import/Export Keystore Buttons -->
+                <div class="mb-4 space-y-2">
+                    <!-- Import Keystore Button -->
+                    <button
+                        class="w-full bg-purple-500 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded flex items-center justify-center"
+                        on:click={() => {
+                            const input = document.createElement('input');
+                            input.type = 'file';
+                            input.accept = '.json';
+                            input.onchange = async (e) => {
+                                const file = (e.target as HTMLInputElement).files?.[0];
+                                if (file) {
+                                    const reader = new FileReader();
+                                    reader.onload = async (event) => {
+                                        const keystoreData = event.target?.result as string;
+                                        try {
+                                            chrome.runtime.sendMessage({
+                                                type: "importKeystore",
+                                                keystoreData,
+                                                chain: appState.chain
+                                            }, (response) => {
+                                                if (chrome.runtime.lastError) {
+                                                    console.error("[UI] Error importing keystore:", chrome.runtime.lastError.message);
+                                                    alert("Failed to import keystore: " + chrome.runtime.lastError.message);
+                                                    return;
+                                                }
+                                                if (response.success) {
+                                                    console.log("[UI] Keystore imported successfully");
+                                                    alert("Keystore imported successfully!");
+                                                } else {
+                                                    console.error("[UI] Failed to import keystore:", response.error);
+                                                    alert("Failed to import keystore: " + response.error);
+                                                }
+                                            });
+                                        } catch (err) {
+                                            console.error("[UI] Error reading keystore file:", err);
+                                            alert("Invalid keystore file");
+                                        }
+                                    };
+                                    reader.readAsText(file);
+                                }
+                            };
+                            input.click();
+                        }}
+                    >
+                        <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
+                        </svg>
+                        Import Keystore from CLI
+                    </button>
+                    
+                    <!-- Export Keystore Button - Only show when DKG is complete -->
+                    {#if appState.dkgState === DkgState.Complete}
+                        <button
+                            class="w-full bg-green-500 hover:bg-green-700 text-white font-bold py-2 px-4 rounded flex items-center justify-center"
+                            on:click={() => {
+                                chrome.runtime.sendMessage({
+                                    type: "exportKeystore",
+                                    chain: appState.chain
+                                }, (response) => {
+                                    if (chrome.runtime.lastError) {
+                                        console.error("[UI] Error exporting keystore:", chrome.runtime.lastError.message);
+                                        alert("Failed to export keystore: " + chrome.runtime.lastError.message);
+                                        return;
+                                    }
+                                    if (response.success && response.keystoreData) {
+                                        // Create a blob and download link
+                                        const blob = new Blob([response.keystoreData], { type: 'application/json' });
+                                        const url = URL.createObjectURL(blob);
+                                        const a = document.createElement('a');
+                                        a.href = url;
+                                        a.download = `mpc-wallet-keystore-${appState.chain}-${Date.now()}.json`;
+                                        document.body.appendChild(a);
+                                        a.click();
+                                        document.body.removeChild(a);
+                                        URL.revokeObjectURL(url);
+                                        console.log("[UI] Keystore exported successfully");
+                                    } else {
+                                        console.error("[UI] Failed to export keystore:", response.error);
+                                        alert("Failed to export keystore: " + response.error);
+                                    }
+                                });
+                            }}
+                        >
+                            <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 10l3-3m0 0l3 3m-3-3v12"></path>
+                            </svg>
+                            Export Keystore for Backup
+                        </button>
+                    {/if}
+                </div>
+                
+                <div class="relative">
+                    <div class="absolute inset-0 flex items-center">
+                        <div class="w-full border-t border-gray-300"></div>
+                    </div>
+                    <div class="relative flex justify-center text-sm">
+                        <span class="px-2 bg-white text-gray-500">OR</span>
+                    </div>
+                </div>
                 
                 <div>
                     <label for="session-id-input" class="block font-bold mb-1"
