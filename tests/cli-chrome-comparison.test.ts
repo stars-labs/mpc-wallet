@@ -53,7 +53,7 @@ const cliKeystoreData = {
   total_participants: 3,
   threshold: 2,
   key_package: "7b2268656164657222322c2276657273696f6e223a302c22636970686572737569746522322246524f53542d736563703235366b312d5348413235362d763122327d",
-  public_key_package: "7b2276657269667969666e675f73686172657322327b22303131223a22303365306132663566666563343364336338306431316539393033343866313130343538646334616434393435376338353166663063386263313665616461363339227d327d",
+  group_public_key: "7b2276657269667969666e675f73686172657322327b22303131223a22303365306132663566666563343364336338306431316539393033343866313130343538646334616434393435376338353166663063386263313665616461363339227d327d",
   created_at: 1750842511
 };
 
@@ -74,7 +74,7 @@ describe('CLI-Chrome Extension Compatibility Tests', () => {
     expect(exportedData.total_participants).toBe(cliKeystoreData.total_participants);
     expect(exportedData.threshold).toBe(cliKeystoreData.threshold);
     expect(exportedData.key_package).toBe(cliKeystoreData.key_package);
-    expect(exportedData.public_key_package).toBe(cliKeystoreData.public_key_package);
+    expect(exportedData.group_public_key).toBe(cliKeystoreData.group_public_key);
   });
 
   test('should generate same Ethereum address as CLI', () => {
@@ -206,7 +206,7 @@ describe('Bit-by-Bit Comparison Readiness', () => {
     expect(parsed).toHaveProperty('total_participants');
     expect(parsed).toHaveProperty('threshold');
     expect(parsed).toHaveProperty('key_package');
-    expect(parsed).toHaveProperty('public_key_package');
+    expect(parsed).toHaveProperty('group_public_key');
     
     console.log('✅ CLI keystore ready for import:');
     console.log(`   - Device: mpc-3 (identifier: ${parsed.identifier})`);

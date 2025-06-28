@@ -112,7 +112,6 @@ describe('KeystoreService', () => {
         const deviceId = 'test-device-123';
         const mockKeyShareData: KeyShareData = {
             keyPackage: 'mock-key-package',
-            publicKeyPackage: 'mock-public-key',
             groupPublicKey: '0x1234567890abcdef',
             sessionId: 'session-123',
             deviceId: 'device-123',
@@ -265,7 +264,6 @@ describe('KeystoreService', () => {
                 },
                 keyShare: {
                     keyPackage: 'key-1',
-                    publicKeyPackage: 'pub-1',
                     groupPublicKey: '0xabc',
                     sessionId: 'session-1',
                     deviceId: 'device-123',
@@ -398,7 +396,6 @@ describe('KeystoreService', () => {
             
             const keyShare: KeyShareData = {
                 keyPackage: 'test',
-                publicKeyPackage: 'test',
                 groupPublicKey: '0x123',
                 sessionId: 'session-1',
                 deviceId: 'device-123',

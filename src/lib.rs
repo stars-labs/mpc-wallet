@@ -1,5 +1,6 @@
 use hex;
 use wasm_bindgen::prelude::*;
+use base64::engine::Engine;
 
 // FROST DKG imports for Ed25519 and Secp256k1 curves
 use frost_ed25519::{
@@ -1150,15 +1151,18 @@ impl<C: FrostCurve> FrostDkgGeneric<C> {
             .map_err(|e| format!("Failed to parse keystore JSON: {}", e))?;
         
         // Extract key components
-        let key_package_hex = keystore["key_package"]
+        let key_package_str = keystore["key_package"]
             .as_str()
             .ok_or("Missing key_package in keystore")?;
-        let public_key_package_hex = keystore["public_key_package"]
+        // Accept both CLI naming (group_public_key) and legacy naming (public_key_package)
+        let public_key_package_str = keystore["group_public_key"]
             .as_str()
-            .ok_or("Missing public_key_package in keystore")?;
-        let identifier_value = keystore["identifier"]
+            .or_else(|| keystore["public_key_package"].as_str())
+            .ok_or("Missing group_public_key in keystore")?;
+        // Get the participant index (numeric FROST identifier)
+        let participant_index = keystore["participant_index"]
             .as_u64()
-            .ok_or("Missing or invalid identifier in keystore")? as u16;
+            .ok_or("Missing or invalid participant_index in keystore")? as u16;
         let total_participants = keystore["total_participants"]
             .as_u64()
             .ok_or("Missing or invalid total_participants in keystore")? as u16;
@@ -1167,25 +1171,43 @@ impl<C: FrostCurve> FrostDkgGeneric<C> {
             .ok_or("Missing or invalid threshold in keystore")? as u16;
         
         console_log!(
-            "🔍 import_keystore: identifier={}, total={}, threshold={}",
-            identifier_value, total_participants, threshold
+            "🔍 import_keystore: participant_index={}, total={}, threshold={}",
+            participant_index, total_participants, threshold
         );
         
-        // Deserialize key package
-        let key_package_bytes = hex::decode(key_package_hex)
-            .map_err(|e| format!("Failed to decode key_package hex: {}", e))?;
-        let key_package: C::KeyPackage = serde_json::from_slice(&key_package_bytes)
-            .map_err(|e| format!("Failed to deserialize key_package: {}", e))?;
+        // Deserialize key package - handle both hex-encoded and direct JSON formats
+        let key_package: C::KeyPackage = if key_package_str.chars().all(|c| c.is_ascii_hexdigit()) {
+            // Try hex decode first (CLI format)
+            console_log!("🔍 import_keystore: Attempting hex decode for key_package");
+            let key_package_bytes = hex::decode(key_package_str)
+                .map_err(|e| format!("Failed to decode key_package hex: {}", e))?;
+            serde_json::from_slice(&key_package_bytes)
+                .map_err(|e| format!("Failed to deserialize key_package from hex: {}", e))?
+        } else {
+            // Direct JSON format (extension export format)
+            console_log!("🔍 import_keystore: Using direct JSON for key_package");
+            serde_json::from_str(key_package_str)
+                .map_err(|e| format!("Failed to deserialize key_package: {}", e))?
+        };
         
-        // Deserialize public key package
-        let public_key_package_bytes = hex::decode(public_key_package_hex)
-            .map_err(|e| format!("Failed to decode public_key_package hex: {}", e))?;
-        let public_key_package: C::PublicKeyPackage = serde_json::from_slice(&public_key_package_bytes)
-            .map_err(|e| format!("Failed to deserialize public_key_package: {}", e))?;
+        // Deserialize public key package - handle both hex-encoded and direct JSON formats
+        let public_key_package: C::PublicKeyPackage = if public_key_package_str.chars().all(|c| c.is_ascii_hexdigit()) {
+            // Try hex decode first (CLI format)
+            console_log!("🔍 import_keystore: Attempting hex decode for public_key_package");
+            let public_key_package_bytes = hex::decode(public_key_package_str)
+                .map_err(|e| format!("Failed to decode public_key_package hex: {}", e))?;
+            serde_json::from_slice(&public_key_package_bytes)
+                .map_err(|e| format!("Failed to deserialize public_key_package from hex: {}", e))?
+        } else {
+            // Direct JSON format (extension export format)
+            console_log!("🔍 import_keystore: Using direct JSON for public_key_package");
+            serde_json::from_str(public_key_package_str)
+                .map_err(|e| format!("Failed to deserialize public_key_package: {}", e))?
+        };
         
-        // Create identifier
-        let identifier = C::identifier_from_u16(identifier_value)
-            .map_err(|e| format!("Failed to create identifier: {}", e))?;
+        // Create identifier from participant_index
+        let identifier = C::identifier_from_u16(participant_index)
+            .map_err(|e| format!("Failed to create identifier from participant_index: {}", e))?;
         
         // Set the imported state
         self.identifier = Some(identifier);
@@ -1218,8 +1240,8 @@ impl<C: FrostCurve> FrostDkgGeneric<C> {
         let public_key_package_json = serde_json::to_string(public_key_package)
             .map_err(|e| format!("Failed to serialize public_key_package: {}", e))?;
         
-        let identifier_value = C::identifier_to_u16(identifier)
-            .map_err(|e| format!("Failed to convert identifier: {}", e))?;
+        let participant_index = C::identifier_to_u16(identifier)
+            .map_err(|e| format!("Failed to convert identifier to participant_index: {}", e))?;
         
         // Get curve name in CLI format
         let curve_name = match std::any::type_name::<C>() {
@@ -1230,21 +1252,21 @@ impl<C: FrostCurve> FrostDkgGeneric<C> {
         
         // Create CLI-compatible keystore JSON (matches ExtensionKeyShareData structure)
         let keystore = serde_json::json!({
-            // Core CLI fields (stored in .dat files)
-            "key_package": key_package_json,           // JSON string (matches CLI exactly)
-            "public_key_package": public_key_package_json, // JSON string (matches CLI exactly)
+            // Core CLI fields (stored in .dat files) - hex-encoded JSON for CLI compatibility
+            "key_package": hex::encode(key_package_json.as_bytes()),           // Hex-encoded JSON string (matches CLI)
+            "group_public_key": hex::encode(public_key_package_json.as_bytes()), // Hex-encoded JSON string (matches CLI)
             "session_id": format!("wallet_{}of{}", threshold, total_participants), // CLI naming convention
-            "device_id": format!("device-{}", identifier_value),
+            "device_id": format!("mpc-{}", participant_index),  // Use CLI format: mpc-1, mpc-2, etc
             
             // Extension compatibility fields
-            "keyPackage": base64::encode(key_package_json.as_bytes()),
-            "publicKeyPackage": base64::encode(public_key_package_json.as_bytes()),
+            "keyPackage": base64::engine::general_purpose::STANDARD.encode(key_package_json.as_bytes()),
+            "publicKeyPackage": base64::engine::general_purpose::STANDARD.encode(public_key_package_json.as_bytes()),
             "groupPublicKey": C::serialize_verifying_key(&C::verifying_key(public_key_package))
                 .map(|bytes| hex::encode(bytes))
                 .unwrap_or_default(),
             "sessionId": format!("wallet_{}of{}", threshold, total_participants),
-            "deviceId": format!("device-{}", identifier_value),
-            "participantIndex": identifier_value,      // 1-based index for extension
+            "deviceId": format!("mpc-{}", participant_index),
+            "participant_index": participant_index,      // Numeric FROST participant index
             "threshold": threshold,
             "totalParticipants": total_participants,
             "participants": (1..=total_participants).map(|i| format!("device-{}", i)).collect::<Vec<_>>(),
@@ -1265,9 +1287,10 @@ impl<C: FrostCurve> FrostDkgGeneric<C> {
                 .unwrap_or_default()
                 .as_millis() as i64,
             
-            // Legacy fields for backward compatibility
+            // Core fields using CLI naming convention
             "version": "1.0",
-            "identifier": identifier_value,
+            "participant_index": participant_index,
+            "identifier": format!("mpc-{}", participant_index),  // Human-readable device name
             "total_participants": total_participants,
             "created_at": std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

@@ -14,7 +14,7 @@ const mockCliKeystore = {
   // These would be hex-encoded JSON serialized FROST structures
   // Using mock data that represents the correct format
   key_package: "7b2268656164657222",  // Mock hex data
-  public_key_package: "7b2268656164657222", // Mock hex data  
+  group_public_key: "7b2268656164657222", // Mock hex data  
   created_at: 1750842511
 };
 
@@ -44,7 +44,7 @@ describe('CLI Keystore Import Tests', () => {
     expect(parsed.total_participants).toBe(3);
     expect(parsed.threshold).toBe(2);
     expect(parsed.key_package).toBeDefined();
-    expect(parsed.public_key_package).toBeDefined();
+    expect(parsed.group_public_key).toBeDefined();
   });
 
   test('should match CLI wallet metadata', () => {
@@ -80,7 +80,7 @@ describe('CLI Keystore Import Tests', () => {
       'total_participants',
       'threshold',
       'key_package',
-      'public_key_package',
+      'group_public_key',
       'created_at'
     ];
     

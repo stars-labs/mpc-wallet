@@ -14,7 +14,6 @@ interface CLIWalletData {
 
 interface CLIExtensionKeyShareData {
     keyPackage: string;
-    publicKeyPackage: string;
     groupPublicKey: string;
     sessionId: string;
     deviceId: string;
@@ -64,7 +63,6 @@ describe('Extension-CLI Keystore Interoperability', () => {
             // Simulate CLI wallet data format
             const cliKeyShareData: CLIExtensionKeyShareData = {
                 keyPackage: btoa('mock-secp256k1-key-package'),
-                publicKeyPackage: btoa('mock-secp256k1-public-key'),
                 groupPublicKey: '0x' + '1234567890abcdef'.repeat(8),
                 sessionId: 'cli-session-eth-123',
                 deviceId: 'device-123',
@@ -81,7 +79,6 @@ describe('Extension-CLI Keystore Interoperability', () => {
             // Convert to extension format
             const extensionKeyShare: KeyShareData = {
                 keyPackage: cliKeyShareData.keyPackage,
-                publicKeyPackage: cliKeyShareData.publicKeyPackage,
                 groupPublicKey: cliKeyShareData.groupPublicKey,
                 sessionId: cliKeyShareData.sessionId,
                 deviceId: 'device-123',
@@ -120,7 +117,6 @@ describe('Extension-CLI Keystore Interoperability', () => {
         it('should import CLI Solana wallet to extension', async () => {
             const cliKeyShareData: CLIExtensionKeyShareData = {
                 keyPackage: btoa('mock-ed25519-key-package'),
-                publicKeyPackage: btoa('mock-ed25519-public-key'),
                 groupPublicKey: '0x' + 'fedcba0987654321'.repeat(8),
                 sessionId: 'cli-session-sol-456',
                 deviceId: 'device-123',
@@ -136,7 +132,6 @@ describe('Extension-CLI Keystore Interoperability', () => {
             
             const extensionKeyShare: KeyShareData = {
                 keyPackage: cliKeyShareData.keyPackage,
-                publicKeyPackage: cliKeyShareData.publicKeyPackage,
                 groupPublicKey: cliKeyShareData.groupPublicKey,
                 sessionId: cliKeyShareData.sessionId,
                 deviceId: 'device-123',
@@ -178,7 +173,6 @@ describe('Extension-CLI Keystore Interoperability', () => {
             extensionWalletId = 'ext-wallet-1';
             extensionKeyShare = {
                 keyPackage: btoa('extension-key-package'),
-                publicKeyPackage: btoa('extension-public-key'),
                 groupPublicKey: '0xabcdef1234567890',
                 sessionId: 'ext-session-123',
                 deviceId: 'device-123',
@@ -221,7 +215,6 @@ describe('Extension-CLI Keystore Interoperability', () => {
             };
             const mockKeyShare = {
                 keyPackage: btoa('mock-key-package'),
-                publicKeyPackage: btoa('mock-public-key'),
                 groupPublicKey: '0xabcdef',
                 sessionId: 'ext-session-1',
                 deviceId: 'device-123',
@@ -247,7 +240,6 @@ describe('Extension-CLI Keystore Interoperability', () => {
             // Simulate CLI decryption and conversion
             const cliFormat: CLIExtensionKeyShareData = {
                 keyPackage: extensionKeyShare.keyPackage,
-                publicKeyPackage: extensionKeyShare.publicKeyPackage,
                 groupPublicKey: extensionKeyShare.groupPublicKey,
                 sessionId: extensionKeyShare.sessionId,
                 deviceId: 'device-123',
@@ -272,7 +264,6 @@ describe('Extension-CLI Keystore Interoperability', () => {
         it('should use PBKDF2 with 100k iterations for CLI compatibility', async () => {
             const keyShare: KeyShareData = {
                 keyPackage: 'test-key',
-                publicKeyPackage: 'test-pub',
                 groupPublicKey: '0x123',
                 sessionId: 'test-session',
                 deviceId: 'device-123',
@@ -327,7 +318,6 @@ describe('Extension-CLI Keystore Interoperability', () => {
             // Import from CLI
             const cliKeyShare: CLIExtensionKeyShareData = {
                 keyPackage: btoa('cli-key'),
-                publicKeyPackage: btoa('cli-pub'),
                 groupPublicKey: '0x999',
                 sessionId: sessionId,
                 deviceId: 'device-123',
@@ -386,7 +376,6 @@ describe('Extension-CLI Keystore Interoperability', () => {
             for (const device of devices) {
                 const keyShare: KeyShareData = {
                     keyPackage: btoa(`key-${device.id}`),
-                    publicKeyPackage: btoa(`pub-${device.id}`),
                     groupPublicKey: '0xSHARED_GROUP_KEY',
                     sessionId: sessionId,
                     deviceId: 'device-123',

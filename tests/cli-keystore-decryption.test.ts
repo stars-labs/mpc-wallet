@@ -88,13 +88,12 @@ describe("CLI Keystore Decryption", () => {
         const extensionCompatibleFormat = {
             // Core CLI fields (stored in .dat files) - as JSON strings
             key_package: "JSON_STRING",           
-            public_key_package: "JSON_STRING",    
+            group_public_key: "JSON_STRING",    
             session_id: "wallet_2of3",           
             device_id: "device-identifier",
             
             // Extension compatibility fields - base64 encoded
             keyPackage: "BASE64_ENCODED_KEY_PACKAGE",
-            publicKeyPackage: "BASE64_ENCODED_PUBLIC_KEY_PACKAGE", 
             groupPublicKey: "HEX_ENCODED_GROUP_PUBLIC_KEY",
             
             // Session and threshold info

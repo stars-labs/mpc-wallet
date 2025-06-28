@@ -218,7 +218,6 @@ describe('Multi-Account Integration', () => {
                 // Also add to keystore
                 const mockKeyShare: KeyShareData = {
                     keyPackage: 'mock-key',
-                    publicKeyPackage: 'mock-pub',
                     groupPublicKey: '0x123',
                     sessionId: account.metadata?.sessionId || 'session',
                     deviceId: 'device-123',

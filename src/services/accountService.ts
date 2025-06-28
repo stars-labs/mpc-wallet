@@ -318,7 +318,7 @@ class AccountService {
                         sessionId,
                         source: 'dkg',
                         threshold: keyShareData.threshold || 2,
-                        totalParticipants: keyShareData.totalParticipants || 3
+                        totalParticipants: keyShareData.total_participants || 3
                     }
                 };
             }

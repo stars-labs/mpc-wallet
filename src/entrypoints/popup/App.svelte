@@ -1346,9 +1346,23 @@
                                     reader.onload = async (event) => {
                                         const keystoreData = event.target?.result as string;
                                         try {
+                                            // Parse to check if encrypted
+                                            const parsedKeystore = JSON.parse(keystoreData);
+                                            let password = undefined;
+                                            
+                                            // Check if keystore is encrypted
+                                            if (parsedKeystore.encrypted === true) {
+                                                password = prompt("This keystore is encrypted. Please enter the password:");
+                                                if (!password) {
+                                                    alert("Password is required for encrypted keystores");
+                                                    return;
+                                                }
+                                            }
+                                            
                                             chrome.runtime.sendMessage({
                                                 type: "importKeystore",
                                                 keystoreData,
+                                                password,
                                                 chain: appState.chain
                                             }, (response) => {
                                                 if (chrome.runtime.lastError) {

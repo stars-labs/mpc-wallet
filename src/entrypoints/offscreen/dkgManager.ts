@@ -50,7 +50,7 @@ export class DkgManager {
 
     // FROST DKG integration
     private frostDkg: any | null = null;
-    private participantIndex: number | null = null;
+    private participant_index: number | null = null;
 
     // Package tracking for rounds
     private receivedRound1Packages: Set<string> = new Set();
@@ -61,7 +61,7 @@ export class DkgManager {
     private bufferedRound2Packages: Array<DkgPackageInfo> = [];
 
     // Generated keys and addresses
-    private groupPublicKey: string | null = null;
+    private group_public_key: string | null = null;
     private solanaAddress: string | null = null;
     private ethereumAddress: string | null = null;
     private walletAddress: string | null = null;
@@ -86,17 +86,17 @@ export class DkgManager {
         // CRITICAL: Sort participants alphabetically to ensure consistent identifier assignment across all peers
         // This matches the behavior of the working CLI implementation
         const sortedParticipants = [...sessionInfo.participants].sort();
-        this.participantIndex = sortedParticipants.indexOf(this.localPeerId) + 1; // 1-based indexing
+        this.participant_index = sortedParticipants.indexOf(this.localPeerId) + 1; // 1-based indexing
 
-        if (this.participantIndex <= 0) {
+        if (this.participant_index <= 0) {
             this._log(`Error: Local peer ID ${this.localPeerId} not found in session participants`);
             return false;
         }
         
         this._log(`Participant order: ${sortedParticipants.join(', ')}`);
-        this._log(`My participant index: ${this.participantIndex}`);
+        this._log(`My participant index: ${this.participant_index}`);
 
-        this._log(`Initializing DKG for session ${sessionInfo.session_id} as participant ${this.participantIndex}`);
+        this._log(`Initializing DKG for session ${sessionInfo.session_id} as participant ${this.participant_index}`);
         this._updateDkgState(DkgState.Initializing);
 
         return true;
@@ -203,14 +203,14 @@ export class DkgManager {
         this.dkgState = DkgState.Idle;
         this.sessionInfo = null;
         this.frostDkg = null;
-        this.participantIndex = null;
+        this.participant_index = null;
 
         this.receivedRound1Packages.clear();
         this.receivedRound2Packages.clear();
         this.bufferedRound1Packages = [];
         this.bufferedRound2Packages = [];
 
-        this.groupPublicKey = null;
+        this.group_public_key = null;
         this.solanaAddress = null;
         this.ethereumAddress = null;
         this.walletAddress = null;
@@ -252,12 +252,12 @@ export class DkgManager {
             // Create FROST DKG instance
             this.frostDkg = new wasmModule.FrostDkgEd25519();
             this.frostDkg.init_dkg(
-                this.participantIndex!,
+                this.participant_index!,
                 this.sessionInfo.participants.length,
                 this.sessionInfo.threshold
             );
 
-            this._log(`FROST DKG initialized for participant ${this.participantIndex}`);
+            this._log(`FROST DKG initialized for participant ${this.participant_index}`);
         } catch (error) {
             this._log(`Failed to initialize FROST DKG: ${error}`);
             this._updateDkgState(DkgState.Failed);
@@ -436,7 +436,7 @@ export class DkgManager {
             const result = this.frostDkg.finalize_dkg();
             const finalData = JSON.parse(result);
 
-            this.groupPublicKey = finalData.group_public_key;
+            this.group_public_key = finalData.group_public_key;
             this.solanaAddress = finalData.solana_address;
             this.ethereumAddress = finalData.ethereum_address;
 
@@ -444,7 +444,7 @@ export class DkgManager {
             this.walletAddress = this.currentBlockchain === "ethereum" ? this.ethereumAddress : this.solanaAddress;
 
             this._log(`DKG completed successfully!`);
-            this._log(`Group Public Key: ${this.groupPublicKey}`);
+            this._log(`Group Public Key: ${this.group_public_key}`);
             this._log(`Solana Address: ${this.solanaAddress}`);
             this._log(`Ethereum Address: ${this.ethereumAddress}`);
             
@@ -567,25 +567,58 @@ export class DkgManager {
                 throw new Error("No session info available");
             }
             
-            // Prepare key share data
-            const keyShareData: KeyShareData = {
+            // Create blockchain info array matching CLI format
+            const blockchains: import("../../types/keystore").BlockchainInfo[] = [];
+            
+            // Add Ethereum support for secp256k1
+            if (this.ethereumAddress && (this.currentBlockchain === 'ethereum' || finalData.ethereum_address)) {
+                blockchains.push({
+                    blockchain: "ethereum",
+                    network: "mainnet",
+                    chain_id: 1,
+                    address: this.ethereumAddress || finalData.ethereum_address,
+                    address_format: "EIP-55",
+                    enabled: this.currentBlockchain === 'ethereum',
+                    rpc_endpoint: undefined,
+                    metadata: undefined
+                });
+            }
+            
+            // Add Solana support for ed25519
+            if (this.solanaAddress && (this.currentBlockchain === 'solana' || finalData.solana_address)) {
+                blockchains.push({
+                    blockchain: "solana",
+                    network: "mainnet",
+                    chain_id: undefined,
+                    address: this.solanaAddress || finalData.solana_address,
+                    address_format: "base58",
+                    enabled: this.currentBlockchain === 'solana',
+                    rpc_endpoint: undefined,
+                    metadata: undefined
+                });
+            }
+            
+            // Prepare key share data with CLI-compatible multi-chain format
+            const keyShareData: import("../../types/keystore").KeyShareData = {
                 // Core FROST key material
                 keyPackage: finalData.key_package || '', // Serialized from WASM
-                publicKeyPackage: finalData.public_key_package || '',
                 groupPublicKey: finalData.group_public_key,
                 
                 // Session information
                 sessionId: this.sessionInfo.session_id,
                 deviceId: this.localPeerId,
-                participantIndex: this.participantIndex!,
+                participantIndex: this.participant_index!,
                 
                 // Threshold configuration
                 threshold: this.sessionInfo.threshold,
                 totalParticipants: this.sessionInfo.total,
                 participants: [...this.sessionInfo.participants],
                 
-                // Blockchain specific
+                // Blockchain specific (multi-chain support)
                 curve: this.currentBlockchain === 'ethereum' ? 'secp256k1' : 'ed25519',
+                blockchains,
+                
+                // Legacy support for backward compatibility
                 ethereumAddress: this.ethereumAddress,
                 solanaAddress: this.solanaAddress,
                 

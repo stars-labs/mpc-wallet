@@ -11,10 +11,14 @@
 import { storage } from "#imports";
 import type { 
     KeyShareData, 
-    WalletMetadata, 
+    WalletMetadata,
+    ExtensionWalletMetadata, 
     KeystoreIndex, 
     EncryptedKeyShare,
     KeystoreBackup,
+    CLIKeystoreBackup,
+    WalletFile,
+    BlockchainInfo,
     NewAccountSession
 } from "../types/keystore";
 
@@ -116,7 +120,7 @@ export class KeystoreService {
     public async addWallet(
         walletId: string,
         keyShareData: KeyShareData,
-        metadata: WalletMetadata
+        metadata: ExtensionWalletMetadata
     ): Promise<void> {
         if (!this.isUnlocked || !this.password) {
             throw new Error("Keystore is locked");
@@ -139,6 +143,130 @@ export class KeystoreService {
         this.keyShares.set(walletId, keyShareData);
         
         console.log("[KeystoreService] Added wallet:", walletId);
+    }
+    
+    /**
+     * Import wallet from CLI-compatible format
+     */
+    public async importCLIWallet(walletFile: WalletFile, password: string): Promise<void> {
+        if (!this.isUnlocked) {
+            throw new Error("Keystore is locked");
+        }
+        
+        const cliMetadata = walletFile.metadata;
+        const walletId = cliMetadata.wallet_id;
+        
+        // Check if wallet already exists
+        if (this.getWallet(walletId)) {
+            console.warn("[KeystoreService] Wallet already exists:", walletId);
+            return;
+        }
+        
+        // Decrypt the CLI wallet data using CLI password
+        const decryptedData = await this.decryptCLIData(walletFile.data, password);
+        const cliKeyData = JSON.parse(decryptedData);
+        
+        // Convert CLI data to extension format
+        const keyShareData: KeyShareData = {
+            key_package: cliKeyData.key_package || '',
+            group_public_key: cliMetadata.group_public_key,
+            session_id: cliMetadata.wallet_id,
+            device_id: cliMetadata.device_id,
+            participant_index: cliMetadata.participant_index,
+            threshold: cliMetadata.threshold,
+            total_participants: cliMetadata.total_participants,
+            participants: [cliMetadata.device_id], // Only this device known from CLI
+            curve: cliMetadata.curve_type as 'secp256k1' | 'ed25519',
+            blockchains: cliMetadata.blockchains,
+            ethereum_address: cliMetadata.blockchains.find(b => b.blockchain === 'ethereum')?.address,
+            solana_address: cliMetadata.blockchains.find(b => b.blockchain === 'solana')?.address,
+            created_at: new Date(cliMetadata.created_at).getTime()
+        };
+        
+        // Convert to extension metadata
+        const primaryBlockchain = cliMetadata.blockchains.find(b => b.enabled) || cliMetadata.blockchains[0];
+        const extensionMetadata: ExtensionWalletMetadata = {
+            id: walletId,
+            name: walletId,
+            blockchain: primaryBlockchain?.blockchain || 'ethereum',
+            address: primaryBlockchain?.address || '',
+            session_id: cliMetadata.wallet_id,
+            isActive: true,
+            hasBackup: true
+        };
+        
+        // Re-encrypt with extension password
+        const encrypted = await this.encryptKeyShare(walletId, keyShareData);
+        await this.saveEncryptedShare(walletId, encrypted);
+        
+        // Update index
+        if (!this.keystoreIndex) {
+            throw new Error("Keystore not initialized");
+        }
+        
+        this.keystoreIndex.wallets.push(extensionMetadata);
+        this.keystoreIndex.lastModified = Date.now();
+        await this.saveKeystoreIndex();
+        
+        // Cache decrypted share
+        this.keyShares.set(walletId, keyShareData);
+        
+        console.log("[KeystoreService] Imported CLI wallet:", walletId);
+    }
+    
+    /**
+     * Export wallet in CLI-compatible format
+     */
+    public async exportCLIWallet(walletId: string): Promise<WalletFile> {
+        if (!this.isUnlocked || !this.keystoreIndex) {
+            throw new Error("Keystore is locked");
+        }
+        
+        const metadata = this.getWallet(walletId);
+        if (!metadata) {
+            throw new Error("Wallet not found");
+        }
+        
+        const keyShareData = await this.getKeyShare(walletId);
+        if (!keyShareData) {
+            throw new Error("Key share not found");
+        }
+        
+        // Create CLI-compatible metadata
+        const cliMetadata: WalletMetadata = {
+            wallet_id: walletId,
+            device_id: keyShareData.device_id,
+            device_name: keyShareData.device_id,
+            curve_type: keyShareData.curve,
+            blockchains: keyShareData.blockchains || [],
+            threshold: keyShareData.threshold,
+            total_participants: keyShareData.total_participants,
+            participant_index: keyShareData.participant_index,
+            group_public_key: keyShareData.group_public_key,
+            created_at: new Date(keyShareData.created_at).toISOString(),
+            last_modified: new Date().toISOString(),
+            tags: [],
+            description: `Exported from Chrome extension on ${new Date().toISOString()}`
+        };
+        
+        // Prepare CLI key data
+        const cliKeyData = {
+            key_package: keyShareData.key_package,
+            group_public_key: keyShareData.group_public_key,
+            session_id: keyShareData.session_id,
+            device_id: keyShareData.deviceId
+        };
+        
+        // Encrypt with current extension password (CLI will need to re-encrypt with their password)
+        const encryptedData = await this.encryptCLIData(JSON.stringify(cliKeyData));
+        
+        return {
+            version: "2.0",
+            encrypted: true,
+            algorithm: "AES-256-GCM",
+            data: encryptedData,
+            metadata: cliMetadata
+        };
     }
     
     /**
@@ -170,14 +298,14 @@ export class KeystoreService {
     /**
      * Get all wallet metadata
      */
-    public getWallets(): WalletMetadata[] {
+    public getWallets(): ExtensionWalletMetadata[] {
         return this.keystoreIndex?.wallets || [];
     }
     
     /**
      * Get wallet metadata by ID
      */
-    public getWallet(walletId: string): WalletMetadata | null {
+    public getWallet(walletId: string): ExtensionWalletMetadata | null {
         return this.keystoreIndex?.wallets.find(w => w.id === walletId) || null;
     }
     
@@ -386,6 +514,101 @@ export class KeystoreService {
         if (!encrypted) return null;
         
         return await this.decryptKeyShare(encrypted);
+    }
+
+    /**
+     * Decrypt CLI data using base64 format
+     */
+    public async decryptCLIData(base64Data: string, password: string): Promise<string> {
+        // CLI uses base64 encoding for the entire encrypted blob
+        const encryptedData = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0));
+        
+        // CLI format: salt (16) + nonce (12) + ciphertext
+        if (encryptedData.length < 28) {
+            throw new Error("Invalid CLI encrypted data");
+        }
+        
+        const salt = encryptedData.slice(0, 16);
+        const nonce = encryptedData.slice(16, 28);
+        const ciphertext = encryptedData.slice(28);
+        
+        // Note: CLI uses Argon2id, but for now we'll use PBKDF2
+        // This is a limitation that would need proper Argon2id implementation
+        const key = await this.deriveCLIKey(password, salt);
+        
+        // Decrypt using AES-GCM
+        const decrypted = await crypto.subtle.decrypt(
+            { name: 'AES-GCM', iv: nonce },
+            key,
+            ciphertext
+        );
+        
+        const decoder = new TextDecoder();
+        return decoder.decode(decrypted);
+    }
+
+    /**
+     * Encrypt data in CLI format
+     */
+    private async encryptCLIData(data: string): Promise<string> {
+        if (!this.password) {
+            throw new Error("No password set");
+        }
+
+        // Generate salt and nonce like CLI
+        const salt = crypto.getRandomValues(new Uint8Array(16));
+        const nonce = crypto.getRandomValues(new Uint8Array(12));
+        
+        // Derive key (should be Argon2id for full CLI compatibility)
+        const key = await this.deriveCLIKey(this.password, salt);
+        
+        // Encrypt data
+        const encoder = new TextEncoder();
+        const dataBytes = encoder.encode(data);
+        
+        const ciphertext = await crypto.subtle.encrypt(
+            { name: 'AES-GCM', iv: nonce },
+            key,
+            dataBytes
+        );
+        
+        // Combine salt + nonce + ciphertext like CLI
+        const combined = new Uint8Array(salt.length + nonce.length + ciphertext.byteLength);
+        combined.set(salt, 0);
+        combined.set(nonce, salt.length);
+        combined.set(new Uint8Array(ciphertext), salt.length + nonce.length);
+        
+        // Encode as base64
+        return btoa(String.fromCharCode(...combined));
+    }
+
+    /**
+     * Derive key compatible with CLI (should use Argon2id for full compatibility)
+     */
+    private async deriveCLIKey(password: string, salt: Uint8Array): Promise<CryptoKey> {
+        // NOTE: CLI uses Argon2id, but WebCrypto doesn't support it natively
+        // For now, using PBKDF2 with higher iterations as a fallback
+        const encoder = new TextEncoder();
+        const keyMaterial = await crypto.subtle.importKey(
+            'raw',
+            encoder.encode(password),
+            'PBKDF2',
+            false,
+            ['deriveKey']
+        );
+        
+        return crypto.subtle.deriveKey(
+            {
+                name: 'PBKDF2',
+                salt,
+                iterations: 600000, // Higher iterations to compensate for not using Argon2id
+                hash: 'SHA-256'
+            },
+            keyMaterial,
+            { name: 'AES-GCM', length: 256 },
+            false,
+            ['encrypt', 'decrypt']
+        );
     }
 }
 

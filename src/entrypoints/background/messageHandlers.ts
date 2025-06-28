@@ -677,46 +677,81 @@ export class PopupMessageHandler {
      * Handle import keystore request from popup
      */
     private async handleImportKeystoreMessage(message: any, sendResponse: (response: any) => void): Promise<void> {
-        console.log("[PopupMessageHandler] Processing import keystore request");
+        const messageId = `import-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        console.log(`[PopupMessageHandler] Processing import keystore request (ID: ${messageId})`);
         
         try {
+            console.log(`[PopupMessageHandler] Import keystore data received (ID: ${messageId}), chain:`, message.chain);
             if (!message.keystoreData || !message.chain) {
                 sendResponse({ success: false, error: "Missing keystore data or chain" });
                 return;
             }
 
             // Ensure offscreen document exists
-            await this.offscreenManager.ensureOffscreenDocument();
+            console.log(`[PopupMessageHandler] Creating offscreen document (ID: ${messageId})`);
+            const createResult = await this.offscreenManager.createOffscreenDocument();
+            if (!createResult.success) {
+                console.error(`[PopupMessageHandler] Failed to create offscreen document (ID: ${messageId}):`, createResult.error);
+                sendResponse({ success: false, error: createResult.error || "Failed to create offscreen document" });
+                return;
+            }
             
-            // Forward to offscreen for WASM processing
-            const response = await chrome.runtime.sendMessage({
-                type: "forwardToOffscreen",
-                payload: {
-                    type: "importKeystore",
-                    keystoreData: message.keystoreData,
-                    chain: message.chain
-                }
-            });
+            console.log(`[PopupMessageHandler] Sending importKeystore to offscreen (ID: ${messageId})`);
+            const response = await this.offscreenManager.sendToOffscreen({
+                type: "importKeystore",
+                keystoreData: message.keystoreData,
+                chain: message.chain,
+                password: message.password // Include password for encrypted keystores
+            }, `Import keystore from CLI (ID: ${messageId})`);
 
-            if (response && response.success) {
+            // Check if message was queued
+            if (response?.error === "Message queued for when offscreen is ready") {
+                console.log("[PopupMessageHandler] Keystore import queued - offscreen not ready");
+                sendResponse({ success: false, error: "Extension is initializing. Please try again in a moment." });
+                return;
+            }
+
+            if (response && response.success && response.sessionInfo) {
                 // Update state with imported session info
-                this.stateManager.setDkgState(DkgState.Complete);
-                this.stateManager.setSessionInfo({
-                    session_id: response.sessionInfo.sessionId,
-                    proposer_id: response.sessionInfo.deviceId,
-                    participants: [response.sessionInfo.deviceId], // Single participant for imported keystore
-                    accepted_devices: [response.sessionInfo.deviceId],
+                // Update DKG state directly
+                this.stateManager.appState.dkgState = DkgState.Complete;
+                
+                // Update session info
+                this.stateManager.appState.sessionInfo = {
+                    session_id: response.sessionInfo.session_id,
+                    proposer_id: response.sessionInfo.device_id,
+                    participants: [response.sessionInfo.device_id], // Single participant for imported keystore
+                    accepted_devices: [response.sessionInfo.device_id],
                     threshold: response.sessionInfo.threshold,
-                    total: response.sessionInfo.totalParticipants,
+                    total: response.sessionInfo.total_participants,
                     is_proposer: true,
                     timestamp: Date.now()
-                });
+                };
+                
+                // Store address and group public key
+                this.stateManager.appState.dkgAddress = response.address;
+                if (response.group_public_key) {
+                    // Store group public key if available
+                    this.stateManager.appState.groupPublicKey = response.group_public_key;
+                }
+                
+                // Broadcast state updates to popup
+                this.stateManager.broadcastToPopupPorts({
+                    type: "dkgStateUpdate",
+                    state: DkgState.Complete
+                } as any);
+                
+                this.stateManager.broadcastToPopupPorts({
+                    type: "sessionUpdate",
+                    sessionInfo: this.stateManager.appState.sessionInfo,
+                    invites: []
+                } as any);
                 
                 // Store address based on chain
                 if (message.chain === "ethereum") {
-                    this.stateManager.setEthereumAddress(response.address);
+                    this.stateManager.appState.ethereumAddress = response.address;
                 } else if (message.chain === "solana") {
-                    this.stateManager.setSolanaAddress(response.address);
+                    this.stateManager.appState.solanaAddress = response.address;
                 }
                 
                 sendResponse({ success: true, address: response.address });
@@ -749,16 +784,17 @@ export class PopupMessageHandler {
             }
 
             // Ensure offscreen document exists
-            await this.offscreenManager.ensureOffscreenDocument();
+            const createResult = await this.offscreenManager.createOffscreenDocument();
+            if (!createResult.success) {
+                sendResponse({ success: false, error: createResult.error || "Failed to create offscreen document" });
+                return;
+            }
             
             // Forward to offscreen for WASM processing
-            const response = await chrome.runtime.sendMessage({
-                type: "forwardToOffscreen",
-                payload: {
-                    type: "exportKeystore",
-                    chain: message.chain
-                }
-            });
+            const response = await this.offscreenManager.sendToOffscreen({
+                type: "exportKeystore",
+                chain: message.chain
+            }, "Export keystore to CLI format");
 
             if (response && response.success && response.keystoreData) {
                 sendResponse({ 
@@ -915,27 +951,27 @@ export class OffscreenMessageHandler {
         
         if (payload.payload && payload.payload.keyShareData) {
             const keyShareData = payload.payload.keyShareData;
-            const sessionId = keyShareData.sessionId;
+            const sessionId = keyShareData.session_id;
             
             // Get the appropriate address based on blockchain
             const address = keyShareData.curve === 'secp256k1' 
-                ? keyShareData.ethereumAddress 
-                : keyShareData.solanaAddress;
+                ? keyShareData.ethereum_address 
+                : keyShareData.solana_address;
             
             // Store addresses in chrome.storage.local for immediate access
-            if (keyShareData.ethereumAddress) {
+            if (keyShareData.ethereum_address) {
                 chrome.storage.local.set({ 
-                    'mpc_ethereum_address': keyShareData.ethereumAddress 
+                    'mpc_ethereum_address': keyShareData.ethereum_address 
                 }, () => {
-                    console.log("[OffscreenMessageHandler] Stored Ethereum address in chrome.storage.local:", keyShareData.ethereumAddress);
+                    console.log("[OffscreenMessageHandler] Stored Ethereum address in chrome.storage.local:", keyShareData.ethereum_address);
                 });
             }
             
-            if (keyShareData.solanaAddress) {
+            if (keyShareData.solana_address) {
                 chrome.storage.local.set({ 
-                    'mpc_solana_address': keyShareData.solanaAddress 
+                    'mpc_solana_address': keyShareData.solana_address 
                 }, () => {
-                    console.log("[OffscreenMessageHandler] Stored Solana address in chrome.storage.local:", keyShareData.solanaAddress);
+                    console.log("[OffscreenMessageHandler] Stored Solana address in chrome.storage.local:", keyShareData.solana_address);
                 });
             }
             

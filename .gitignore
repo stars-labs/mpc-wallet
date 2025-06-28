@@ -1,9 +1,51 @@
+# Nix
 .direnv
 result
 
+# Dependencies
+node_modules/
+bun.lockb
+
+# Build outputs
+dist/
+target/
+pkg/
+.output
+.wxt
+*.wasm
+*.wasm.d.ts
+stats.html
+stats-*.json
+web-ext.config.ts
+
+# Coverage reports
+coverage/
+*.lcov
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# IDE files
+.vscode/*
+!.vscode/extensions.json
+.idea
+*.swp
+*.swo
+*~
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw
+
+# OS files
+.DS_Store
+Thumbs.db
 
 # Logs
-logs
+logs/
 *.log
 npm-debug.log*
 yarn-debug.log*
@@ -11,21 +53,23 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-node_modules
-.output
-stats.html
-stats-*.json
-.wxt
-web-ext.config.ts
+# Test artifacts
+test-results/
+*.test.js.map
 
-# Editor directories and files
-.vscode/*
-!.vscode/extensions.json
-.idea
-.DS_Store
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw
-coverage/
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# Extension build artifacts
+public/index.js
+public/index_bg.wasm
+public/index.d.ts
+
+# Lock files conflict backups
+*.sync-conflict-*
+
+# Usage tracking
+usage_tracking*.json
+uploads/

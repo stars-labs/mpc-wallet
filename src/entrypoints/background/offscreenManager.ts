@@ -93,10 +93,12 @@ export class OffscreenManager {
     /**
      * Send message to offscreen with enhanced logging
      */
-    async sendToOffscreen(message: OffscreenMessage, description?: string): Promise<{ success: boolean; error?: string }> {
+    async sendToOffscreen(message: OffscreenMessage, description?: string): Promise<any> {
         const messageId = ++this.messageCount;
         const category = this.getMessageCategory(message);
         const desc = description || message.type;
+
+        console.log(`[OffscreenManager] sendToOffscreen: offscreenReady=${this.offscreenReady}, message type=${message.type}`);
 
         if (!this.offscreenReady) {
             console.warn(`⚠️ [OffscreenManager] ${category} queued: offscreen not ready (${desc})`);
@@ -117,11 +119,21 @@ export class OffscreenManager {
             };
 
             console.log(`🚀 [OffscreenManager #${messageId}] ${category} → ${desc}`);
-            await chrome.runtime.sendMessage(wrappedMessage);
+            
+            // Send message and wait for response
+            const response = await new Promise<any>((resolve) => {
+                chrome.runtime.sendMessage(wrappedMessage, (response) => {
+                    if (chrome.runtime.lastError) {
+                        resolve({ success: false, error: chrome.runtime.lastError.message });
+                    } else {
+                        resolve(response || { success: true });
+                    }
+                });
+            });
 
             const duration = performance.now() - startTime;
-            console.log(`✅ [OffscreenManager #${messageId}] ${category} sent (${duration.toFixed(2)}ms)`);
-            return { success: true };
+            console.log(`✅ [OffscreenManager #${messageId}] ${category} completed (${duration.toFixed(2)}ms)`);
+            return response;
         } catch (error: any) {
             console.error(`❌ [OffscreenManager #${messageId}] ${category} failed:`, error);
             return { success: false, error: error.message };
@@ -132,7 +144,14 @@ export class OffscreenManager {
      * Handle offscreen ready signal - simplified
      */
     async handleOffscreenReady(): Promise<void> {
+        // Prevent duplicate processing
+        if (this.offscreenReady) {
+            console.log("⚠️ [OffscreenManager] Offscreen already marked as ready, ignoring duplicate signal");
+            return;
+        }
+        
         console.log("🎉 [OffscreenManager] Offscreen document ready - message routing enabled");
+        console.log(`[OffscreenManager] Setting offscreenReady = true (was ${this.offscreenReady})`);
         this.offscreenReady = true;
         
         // Process queued messages
@@ -150,7 +169,7 @@ export class OffscreenManager {
     /**
      * Send initialization data to offscreen
      */
-    async sendInitData(deviceId: string, wsUrl: string = "wss://auto-life.tech"): Promise<{ success: boolean; error?: string }> {
+    async sendInitData(deviceId: string, wsUrl: string = "wss://auto-life.tech"): Promise<any> {
         console.log(`🔧 [OffscreenManager] Initializing offscreen with deviceId: ${deviceId}`);
         return await this.sendToOffscreen({
             type: "init",
