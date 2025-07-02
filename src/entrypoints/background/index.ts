@@ -20,6 +20,7 @@ import { MESSAGE_PREFIX, MessageType } from '../../constants';
 import AccountService from '../../services/accountService';
 import NetworkService from '../../services/networkService';
 import WalletClientService from '../../services/walletClient';
+import { KeystoreService } from '../../services/keystoreService';
 import { toHex } from 'viem';
 import WalletController from "../../services/walletController";
 import { WebSocketClient } from "./websocket";
@@ -294,6 +295,73 @@ function setupMessageHandlers(): void {
 // ===================================================================
 
 /**
+ * Check for existing keystores and restore state if found
+ */
+async function checkAndRestoreKeystores(): Promise<void> {
+    console.log("🔑 [Background] Checking for existing keystores...");
+    
+    try {
+        const keystoreService = KeystoreService.getInstance();
+        
+        // Check if keystore is initialized
+        const isInitialized = await keystoreService.isInitialized();
+        if (!isInitialized) {
+            console.log("🔑 [Background] No keystore found");
+            return;
+        }
+        
+        // Try to unlock with stored password (if any)
+        // Note: In a real implementation, you might want to prompt for password
+        // For now, we'll just check if there are wallets
+        const wallets = keystoreService.getWallets();
+        if (wallets && wallets.length > 0) {
+            console.log(`🔑 [Background] Found ${wallets.length} wallet(s) in keystore`);
+            
+            // Find the active wallet
+            const activeWallet = wallets.find(w => w.isActive) || wallets[0];
+            if (activeWallet) {
+                console.log(`🔑 [Background] Restoring wallet: ${activeWallet.id}`);
+                
+                // Update DKG state to complete
+                stateManager.updateStateProperty('dkgState', DkgState.Complete);
+                
+                // Update session info
+                stateManager.updateStateProperty('sessionInfo', {
+                    session_id: activeWallet.session_id,
+                    proposer_id: activeWallet.id,
+                    participants: [activeWallet.id],
+                    accepted_devices: [activeWallet.id],
+                    threshold: 1, // Default for imported keystores
+                    total: 1,
+                    is_proposer: true,
+                    timestamp: Date.now()
+                });
+                
+                // Store addresses
+                if (activeWallet.blockchain === 'ethereum') {
+                    stateManager.updateStateProperty('ethereumAddress', activeWallet.address);
+                    // Also store in chrome.storage.local for content script access
+                    chrome.storage.local.set({ 
+                        'mpc_ethereum_address': activeWallet.address 
+                    });
+                } else if (activeWallet.blockchain === 'solana') {
+                    stateManager.updateStateProperty('solanaAddress', activeWallet.address);
+                    chrome.storage.local.set({ 
+                        'mpc_solana_address': activeWallet.address 
+                    });
+                }
+                
+                console.log(`🔑 [Background] Wallet restored successfully: ${activeWallet.address}`);
+            }
+        } else {
+            console.log("🔑 [Background] Keystore exists but no wallets found");
+        }
+    } catch (error) {
+        console.error("❌ [Background] Error checking keystores:", error);
+    }
+}
+
+/**
  * Initialize WebSocket connection
  */
 async function initializeWebSocket(): Promise<void> {
@@ -320,7 +388,7 @@ async function initializeWebSocket(): Promise<void> {
 /**
  * Main background script entry point
  */
-export default defineBackground(() => {
+export default defineBackground(async () => {
 //     console.log("🚀 [Background] Background script starting...");
 
     // Initialize all components
@@ -331,6 +399,9 @@ export default defineBackground(() => {
 
     // Set up message handlers
     setupMessageHandlers();
+
+    // Check for existing keystores and restore state
+    await checkAndRestoreKeystores();
 
     // Initialize offscreen document on startup
     offscreenManager.createOffscreenDocument().then((result: any) => {

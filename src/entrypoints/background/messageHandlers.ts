@@ -21,6 +21,7 @@ import { WebSocketManager } from "./webSocketManager";
 import { SessionManager } from "./sessionManager";
 import { RpcHandler, UIRequestHandler } from "./rpcHandler";
 import AccountService from "../../services/accountService";
+import { KeystoreService } from "../../services/keystoreService";
 import { DkgState } from "../../types/dkg";
 
 /**
@@ -735,6 +736,66 @@ export class PopupMessageHandler {
                     this.stateManager.appState.groupPublicKey = response.group_public_key;
                 }
                 
+                // Now we need to export the keystore from WASM and save it to KeystoreService
+                console.log("[PopupMessageHandler] Exporting imported keystore for persistence");
+                const exportResponse = await this.offscreenManager.sendToOffscreen({
+                    type: "exportKeystore",
+                    chain: message.chain
+                }, `Export imported keystore for persistence (ID: ${messageId})`);
+                
+                if (exportResponse && exportResponse.success && exportResponse.keystoreData) {
+                    try {
+                        // Save the imported keystore to KeystoreService
+                        const keystoreService = KeystoreService.getInstance();
+                        if (!keystoreService.isUnlocked) {
+                            console.error("[PopupMessageHandler] KeystoreService is locked, cannot save imported keystore");
+                        } else {
+                            // Parse the exported keystore data
+                            const exportedData = JSON.parse(exportResponse.keystoreData);
+                            
+                            // Create key share data from the exported keystore
+                            const keyShareData = {
+                                key_package: exportedData.key_package || '',
+                                group_public_key: exportedData.group_public_key || response.sessionInfo.group_public_key || '',
+                                session_id: response.sessionInfo.session_id,
+                                device_id: response.sessionInfo.device_id,
+                                participant_index: response.sessionInfo.participant_index,
+                                threshold: response.sessionInfo.threshold,
+                                total_participants: response.sessionInfo.total_participants,
+                                participants: [response.sessionInfo.device_id],
+                                curve: response.sessionInfo.curve_type as 'secp256k1' | 'ed25519',
+                                blockchains: response.sessionInfo.blockchains || [],
+                                ethereum_address: response.addresses?.ethereum,
+                                solana_address: response.addresses?.solana,
+                                created_at: Date.now()
+                            };
+                            
+                            // Create wallet metadata
+                            const walletMetadata = {
+                                id: response.sessionInfo.session_id,
+                                name: response.sessionInfo.session_id,
+                                blockchain: message.chain,
+                                address: response.addresses?.[message.chain] || '',
+                                session_id: response.sessionInfo.session_id,
+                                isActive: true,
+                                hasBackup: true
+                            };
+                            
+                            // Save to keystore
+                            await keystoreService.addWallet(
+                                response.sessionInfo.session_id,
+                                keyShareData,
+                                walletMetadata
+                            );
+                            
+                            console.log("[PopupMessageHandler] Successfully saved imported keystore to KeystoreService");
+                        }
+                    } catch (error) {
+                        console.error("[PopupMessageHandler] Failed to save imported keystore:", error);
+                        // Don't fail the import, just log the error
+                    }
+                }
+                
                 // Broadcast state updates to popup
                 this.stateManager.broadcastToPopupPorts({
                     type: "dkgStateUpdate",
@@ -749,9 +810,9 @@ export class PopupMessageHandler {
                 
                 // Store address based on chain
                 if (message.chain === "ethereum") {
-                    this.stateManager.appState.ethereumAddress = response.address;
+                    this.stateManager.appState.ethereumAddress = response.addresses?.ethereum || response.address;
                 } else if (message.chain === "solana") {
-                    this.stateManager.appState.solanaAddress = response.address;
+                    this.stateManager.appState.solanaAddress = response.addresses?.solana || response.address;
                 }
                 
                 sendResponse({ success: true, address: response.address });
