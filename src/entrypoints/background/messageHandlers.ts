@@ -21,6 +21,7 @@ import { WebSocketManager } from "./webSocketManager";
 import { SessionManager } from "./sessionManager";
 import { RpcHandler, UIRequestHandler } from "./rpcHandler";
 import AccountService from "../../services/accountService";
+import { KeystoreService } from "../../services/keystoreService";
 import { DkgState } from "../../types/dkg";
 
 /**
@@ -735,6 +736,39 @@ export class PopupMessageHandler {
                     this.stateManager.appState.groupPublicKey = response.group_public_key;
                 }
                 
+                // Now we need to export the keystore from WASM and save it to KeystoreService
+                console.log("[PopupMessageHandler] Exporting imported keystore for persistence");
+                const exportResponse = await this.offscreenManager.sendToOffscreen({
+                    type: "exportKeystore",
+                    chain: message.chain
+                }, `Export imported keystore for persistence (ID: ${messageId})`);
+                
+                if (exportResponse && exportResponse.success && exportResponse.keystoreData) {
+                    try {
+                        // For now, store the imported keystore data in chrome.storage.local
+                        // In a future update, we should properly integrate with KeystoreService
+                        // which requires proper password management UI
+                        const importedKeystoreData = {
+                            keystoreData: exportResponse.keystoreData,
+                            sessionInfo: response.sessionInfo,
+                            addresses: response.addresses,
+                            chain: message.chain,
+                            importedAt: Date.now()
+                        };
+                        
+                        // Store in chrome.storage.local for persistence
+                        await chrome.storage.local.set({
+                            [`mpc_imported_keystore_${response.sessionInfo.session_id}`]: importedKeystoreData,
+                            'mpc_active_keystore_id': response.sessionInfo.session_id
+                        });
+                        
+                        console.log("[PopupMessageHandler] Successfully saved imported keystore to chrome.storage");
+                    } catch (error) {
+                        console.error("[PopupMessageHandler] Failed to save imported keystore:", error);
+                        // Don't fail the import, just log the error
+                    }
+                }
+                
                 // Broadcast state updates to popup
                 this.stateManager.broadcastToPopupPorts({
                     type: "dkgStateUpdate",
@@ -749,9 +783,9 @@ export class PopupMessageHandler {
                 
                 // Store address based on chain
                 if (message.chain === "ethereum") {
-                    this.stateManager.appState.ethereumAddress = response.address;
+                    this.stateManager.appState.ethereumAddress = response.addresses?.ethereum || response.address;
                 } else if (message.chain === "solana") {
-                    this.stateManager.appState.solanaAddress = response.address;
+                    this.stateManager.appState.solanaAddress = response.addresses?.solana || response.address;
                 }
                 
                 sendResponse({ success: true, address: response.address });

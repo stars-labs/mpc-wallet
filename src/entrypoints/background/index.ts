@@ -20,6 +20,7 @@ import { MESSAGE_PREFIX, MessageType } from '../../constants';
 import AccountService from '../../services/accountService';
 import NetworkService from '../../services/networkService';
 import WalletClientService from '../../services/walletClient';
+import { KeystoreService } from '../../services/keystoreService';
 import { toHex } from 'viem';
 import WalletController from "../../services/walletController";
 import { WebSocketClient } from "./websocket";
@@ -294,6 +295,79 @@ function setupMessageHandlers(): void {
 // ===================================================================
 
 /**
+ * Check for existing keystores and restore state if found
+ */
+async function checkAndRestoreKeystores(): Promise<void> {
+    console.log("🔑 [Background] Checking for existing keystores...");
+    
+    try {
+        // Check chrome.storage.local for imported keystores
+        const result = await chrome.storage.local.get(['mpc_active_keystore_id']);
+        
+        if (!result.mpc_active_keystore_id) {
+            console.log("🔑 [Background] No active keystore found");
+            return;
+        }
+        
+        const activeKeystoreId = result.mpc_active_keystore_id;
+        const keystoreKey = `mpc_imported_keystore_${activeKeystoreId}`;
+        const keystoreResult = await chrome.storage.local.get([keystoreKey]);
+        
+        if (!keystoreResult[keystoreKey]) {
+            console.log("🔑 [Background] Active keystore data not found");
+            return;
+        }
+        
+        const importedKeystore = keystoreResult[keystoreKey];
+        console.log(`🔑 [Background] Found imported keystore: ${activeKeystoreId}`);
+        
+        // Restore the session info and addresses
+        if (importedKeystore.sessionInfo) {
+            // Update DKG state to complete
+            stateManager.updateStateProperty('dkgState', DkgState.Complete);
+            
+            // Update session info
+            stateManager.updateStateProperty('sessionInfo', {
+                session_id: importedKeystore.sessionInfo.session_id,
+                proposer_id: importedKeystore.sessionInfo.device_id,
+                participants: [importedKeystore.sessionInfo.device_id],
+                accepted_devices: [importedKeystore.sessionInfo.device_id],
+                threshold: importedKeystore.sessionInfo.threshold,
+                total: importedKeystore.sessionInfo.total_participants,
+                is_proposer: true,
+                timestamp: Date.now()
+            });
+            
+            // Store addresses
+            if (importedKeystore.addresses) {
+                if (importedKeystore.addresses.ethereum) {
+                    stateManager.updateStateProperty('ethereumAddress', importedKeystore.addresses.ethereum);
+                    chrome.storage.local.set({ 
+                        'mpc_ethereum_address': importedKeystore.addresses.ethereum 
+                    });
+                }
+                if (importedKeystore.addresses.solana) {
+                    stateManager.updateStateProperty('solanaAddress', importedKeystore.addresses.solana);
+                    chrome.storage.local.set({ 
+                        'mpc_solana_address': importedKeystore.addresses.solana 
+                    });
+                }
+            }
+            
+            // Store the active chain's address
+            const address = importedKeystore.addresses?.[importedKeystore.chain] || '';
+            if (address) {
+                stateManager.updateStateProperty('dkgAddress', address);
+            }
+            
+            console.log(`🔑 [Background] Keystore restored successfully`);
+        }
+    } catch (error) {
+        console.error("❌ [Background] Error checking keystores:", error);
+    }
+}
+
+/**
  * Initialize WebSocket connection
  */
 async function initializeWebSocket(): Promise<void> {
@@ -320,7 +394,7 @@ async function initializeWebSocket(): Promise<void> {
 /**
  * Main background script entry point
  */
-export default defineBackground(() => {
+export default defineBackground(async () => {
 //     console.log("🚀 [Background] Background script starting...");
 
     // Initialize all components
@@ -331,6 +405,9 @@ export default defineBackground(() => {
 
     // Set up message handlers
     setupMessageHandlers();
+
+    // Check for existing keystores and restore state
+    await checkAndRestoreKeystores();
 
     // Initialize offscreen document on startup
     offscreenManager.createOffscreenDocument().then((result: any) => {
