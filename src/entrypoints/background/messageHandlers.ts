@@ -745,51 +745,24 @@ export class PopupMessageHandler {
                 
                 if (exportResponse && exportResponse.success && exportResponse.keystoreData) {
                     try {
-                        // Save the imported keystore to KeystoreService
-                        const keystoreService = KeystoreService.getInstance();
-                        if (!keystoreService.isUnlocked) {
-                            console.error("[PopupMessageHandler] KeystoreService is locked, cannot save imported keystore");
-                        } else {
-                            // Parse the exported keystore data
-                            const exportedData = JSON.parse(exportResponse.keystoreData);
-                            
-                            // Create key share data from the exported keystore
-                            const keyShareData = {
-                                key_package: exportedData.key_package || '',
-                                group_public_key: exportedData.group_public_key || response.sessionInfo.group_public_key || '',
-                                session_id: response.sessionInfo.session_id,
-                                device_id: response.sessionInfo.device_id,
-                                participant_index: response.sessionInfo.participant_index,
-                                threshold: response.sessionInfo.threshold,
-                                total_participants: response.sessionInfo.total_participants,
-                                participants: [response.sessionInfo.device_id],
-                                curve: response.sessionInfo.curve_type as 'secp256k1' | 'ed25519',
-                                blockchains: response.sessionInfo.blockchains || [],
-                                ethereum_address: response.addresses?.ethereum,
-                                solana_address: response.addresses?.solana,
-                                created_at: Date.now()
-                            };
-                            
-                            // Create wallet metadata
-                            const walletMetadata = {
-                                id: response.sessionInfo.session_id,
-                                name: response.sessionInfo.session_id,
-                                blockchain: message.chain,
-                                address: response.addresses?.[message.chain] || '',
-                                session_id: response.sessionInfo.session_id,
-                                isActive: true,
-                                hasBackup: true
-                            };
-                            
-                            // Save to keystore
-                            await keystoreService.addWallet(
-                                response.sessionInfo.session_id,
-                                keyShareData,
-                                walletMetadata
-                            );
-                            
-                            console.log("[PopupMessageHandler] Successfully saved imported keystore to KeystoreService");
-                        }
+                        // For now, store the imported keystore data in chrome.storage.local
+                        // In a future update, we should properly integrate with KeystoreService
+                        // which requires proper password management UI
+                        const importedKeystoreData = {
+                            keystoreData: exportResponse.keystoreData,
+                            sessionInfo: response.sessionInfo,
+                            addresses: response.addresses,
+                            chain: message.chain,
+                            importedAt: Date.now()
+                        };
+                        
+                        // Store in chrome.storage.local for persistence
+                        await chrome.storage.local.set({
+                            [`mpc_imported_keystore_${response.sessionInfo.session_id}`]: importedKeystoreData,
+                            'mpc_active_keystore_id': response.sessionInfo.session_id
+                        });
+                        
+                        console.log("[PopupMessageHandler] Successfully saved imported keystore to chrome.storage");
                     } catch (error) {
                         console.error("[PopupMessageHandler] Failed to save imported keystore:", error);
                         // Don't fail the import, just log the error

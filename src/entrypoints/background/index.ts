@@ -301,60 +301,66 @@ async function checkAndRestoreKeystores(): Promise<void> {
     console.log("🔑 [Background] Checking for existing keystores...");
     
     try {
-        const keystoreService = KeystoreService.getInstance();
+        // Check chrome.storage.local for imported keystores
+        const result = await chrome.storage.local.get(['mpc_active_keystore_id']);
         
-        // Check if keystore is initialized
-        const isInitialized = await keystoreService.isInitialized();
-        if (!isInitialized) {
-            console.log("🔑 [Background] No keystore found");
+        if (!result.mpc_active_keystore_id) {
+            console.log("🔑 [Background] No active keystore found");
             return;
         }
         
-        // Try to unlock with stored password (if any)
-        // Note: In a real implementation, you might want to prompt for password
-        // For now, we'll just check if there are wallets
-        const wallets = keystoreService.getWallets();
-        if (wallets && wallets.length > 0) {
-            console.log(`🔑 [Background] Found ${wallets.length} wallet(s) in keystore`);
+        const activeKeystoreId = result.mpc_active_keystore_id;
+        const keystoreKey = `mpc_imported_keystore_${activeKeystoreId}`;
+        const keystoreResult = await chrome.storage.local.get([keystoreKey]);
+        
+        if (!keystoreResult[keystoreKey]) {
+            console.log("🔑 [Background] Active keystore data not found");
+            return;
+        }
+        
+        const importedKeystore = keystoreResult[keystoreKey];
+        console.log(`🔑 [Background] Found imported keystore: ${activeKeystoreId}`);
+        
+        // Restore the session info and addresses
+        if (importedKeystore.sessionInfo) {
+            // Update DKG state to complete
+            stateManager.updateStateProperty('dkgState', DkgState.Complete);
             
-            // Find the active wallet
-            const activeWallet = wallets.find(w => w.isActive) || wallets[0];
-            if (activeWallet) {
-                console.log(`🔑 [Background] Restoring wallet: ${activeWallet.id}`);
-                
-                // Update DKG state to complete
-                stateManager.updateStateProperty('dkgState', DkgState.Complete);
-                
-                // Update session info
-                stateManager.updateStateProperty('sessionInfo', {
-                    session_id: activeWallet.session_id,
-                    proposer_id: activeWallet.id,
-                    participants: [activeWallet.id],
-                    accepted_devices: [activeWallet.id],
-                    threshold: 1, // Default for imported keystores
-                    total: 1,
-                    is_proposer: true,
-                    timestamp: Date.now()
-                });
-                
-                // Store addresses
-                if (activeWallet.blockchain === 'ethereum') {
-                    stateManager.updateStateProperty('ethereumAddress', activeWallet.address);
-                    // Also store in chrome.storage.local for content script access
+            // Update session info
+            stateManager.updateStateProperty('sessionInfo', {
+                session_id: importedKeystore.sessionInfo.session_id,
+                proposer_id: importedKeystore.sessionInfo.device_id,
+                participants: [importedKeystore.sessionInfo.device_id],
+                accepted_devices: [importedKeystore.sessionInfo.device_id],
+                threshold: importedKeystore.sessionInfo.threshold,
+                total: importedKeystore.sessionInfo.total_participants,
+                is_proposer: true,
+                timestamp: Date.now()
+            });
+            
+            // Store addresses
+            if (importedKeystore.addresses) {
+                if (importedKeystore.addresses.ethereum) {
+                    stateManager.updateStateProperty('ethereumAddress', importedKeystore.addresses.ethereum);
                     chrome.storage.local.set({ 
-                        'mpc_ethereum_address': activeWallet.address 
-                    });
-                } else if (activeWallet.blockchain === 'solana') {
-                    stateManager.updateStateProperty('solanaAddress', activeWallet.address);
-                    chrome.storage.local.set({ 
-                        'mpc_solana_address': activeWallet.address 
+                        'mpc_ethereum_address': importedKeystore.addresses.ethereum 
                     });
                 }
-                
-                console.log(`🔑 [Background] Wallet restored successfully: ${activeWallet.address}`);
+                if (importedKeystore.addresses.solana) {
+                    stateManager.updateStateProperty('solanaAddress', importedKeystore.addresses.solana);
+                    chrome.storage.local.set({ 
+                        'mpc_solana_address': importedKeystore.addresses.solana 
+                    });
+                }
             }
-        } else {
-            console.log("🔑 [Background] Keystore exists but no wallets found");
+            
+            // Store the active chain's address
+            const address = importedKeystore.addresses?.[importedKeystore.chain] || '';
+            if (address) {
+                stateManager.updateStateProperty('dkgAddress', address);
+            }
+            
+            console.log(`🔑 [Background] Keystore restored successfully`);
         }
     } catch (error) {
         console.error("❌ [Background] Error checking keystores:", error);

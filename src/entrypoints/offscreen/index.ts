@@ -288,6 +288,52 @@ chrome.runtime.onMessage.addListener((message: { type?: string; payload?: any },
                     }
                 });
 
+                // Check if there's an imported keystore to reload
+                (async () => {
+                    try {
+                        const result = await chrome.storage.local.get(['mpc_active_keystore_id']);
+                        if (result.mpc_active_keystore_id) {
+                            const keystoreKey = `mpc_imported_keystore_${result.mpc_active_keystore_id}`;
+                            const keystoreResult = await chrome.storage.local.get([keystoreKey]);
+                            
+                            if (keystoreResult[keystoreKey]) {
+                                const importedKeystore = keystoreResult[keystoreKey];
+                                console.log("Offscreen: Found imported keystore to reload");
+                                
+                                // Import the keystore into WASM
+                                if (importedKeystore.keystoreData) {
+                                    const { FrostDkgSecp256k1, FrostDkgEd25519 } = await import("../../wasm/mpc_wallet_wasm.js");
+                                    
+                                    // Determine curve type from session info
+                                    const curveType = importedKeystore.sessionInfo?.curve_type || 
+                                        (importedKeystore.chain === 'ethereum' ? 'secp256k1' : 'ed25519');
+                                    
+                                    let dkgInstance;
+                                    if (curveType === 'secp256k1') {
+                                        dkgInstance = new FrostDkgSecp256k1();
+                                    } else {
+                                        dkgInstance = new FrostDkgEd25519();
+                                    }
+                                    
+                                    try {
+                                        dkgInstance.import_keystore(importedKeystore.keystoreData);
+                                        console.log("Offscreen: Successfully reloaded imported keystore into WASM");
+                                        
+                                        // Store the instance for later use (signing)
+                                        // Note: In a real implementation, this should be integrated with WebRTCManager
+                                        (globalThis as any).__importedDkgInstance = dkgInstance;
+                                        (globalThis as any).__importedKeystoreCurveType = curveType;
+                                    } catch (error) {
+                                        console.error("Offscreen: Failed to reload keystore into WASM:", error);
+                                    }
+                                }
+                            }
+                        }
+                    } catch (error) {
+                        console.error("Offscreen: Error checking for imported keystore:", error);
+                    }
+                })();
+                
                 sendResponse({ success: true, message: "Offscreen initialized with WebRTCManager." });
             } else {
                 console.error("Offscreen: LocaldeviceId is falsy after assignment:", localdeviceId);
