@@ -1,5 +1,5 @@
 import { Account } from '../types/account';
-import { getKeystoreService } from './keystoreService';
+import { KeystoreManager } from './keystoreManager';
 import type { NewAccountSession } from '../types/keystore';
 
 type AccountChangeCallback = (account: Account | null) => void;
@@ -324,16 +324,17 @@ class AccountService {
             }
             
             // Save key share to keystore
-            const keystore = getKeystoreService();
-            if (!keystore.isLocked()) {
-                await keystore.addWallet(account.id, keyShareData, {
+            const keystoreManager = KeystoreManager.getInstance();
+            if (!keystoreManager.isLocked()) {
+                await keystoreManager.addWallet(account.id, keyShareData, {
                     id: account.id,
                     name: account.name,
                     blockchain: account.blockchain,
                     address: account.address,
-                    sessionId: sessionId,
+                    session_id: sessionId,
                     isActive: true,
-                    hasBackup: false
+                    hasBackup: false,
+                    createdAt: Date.now()
                 });
             }
             

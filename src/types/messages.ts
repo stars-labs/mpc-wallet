@@ -267,6 +267,13 @@ export const MESSAGE_TYPES = {
     ACCEPT_SIGNING: "acceptSigning",
     SIGNING_COMPLETE: "signingComplete",
     SIGNING_ERROR: "signingError",
+    // Keystore management
+    UNLOCK_KEYSTORE: "unlockKeystore",
+    LOCK_KEYSTORE: "lockKeystore",
+    CREATE_KEYSTORE: "createKeystore",
+    GET_KEYSTORE_STATUS: "getKeystoreStatus",
+    SWITCH_WALLET: "switchWallet",
+    MIGRATE_KEYSTORES: "migrateKeystores",
     // Legacy support
     ACCOUNT_MANAGEMENT: "ACCOUNT_MANAGEMENT",
     NETWORK_MANAGEMENT: "NETWORK_MANAGEMENT",

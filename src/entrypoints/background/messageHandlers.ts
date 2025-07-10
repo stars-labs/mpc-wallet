@@ -19,8 +19,10 @@ import { StateManager } from "./stateManager";
 import { OffscreenManager } from "./offscreenManager";
 import { WebSocketManager } from "./webSocketManager";
 import { SessionManager } from "./sessionManager";
+import { checkAndRestoreKeystores } from "./index";
 import { RpcHandler, UIRequestHandler } from "./rpcHandler";
 import AccountService from "../../services/accountService";
+import { KeystoreManager } from "../../services/keystoreManager";
 import { DkgState } from "../../types/dkg";
 
 /**
@@ -206,6 +208,41 @@ export class PopupMessageHandler {
                 case "exportKeystore":
                     console.log("📤 [PopupMessageHandler] EXPORT_KEYSTORE: Exporting keystore file");
                     await this.handleExportKeystoreMessage(message, sendResponse);
+                    break;
+
+                case MESSAGE_TYPES.UNLOCK_KEYSTORE:
+                    console.log("🔓 [PopupMessageHandler] UNLOCK_KEYSTORE: Unlocking keystore");
+                    await this.handleUnlockKeystoreMessage(message, sendResponse);
+                    break;
+
+                case MESSAGE_TYPES.LOCK_KEYSTORE:
+                    console.log("🔒 [PopupMessageHandler] LOCK_KEYSTORE: Locking keystore");
+                    await this.handleLockKeystoreMessage(sendResponse);
+                    break;
+
+                case MESSAGE_TYPES.CREATE_KEYSTORE:
+                    console.log("🔑 [PopupMessageHandler] CREATE_KEYSTORE: Creating new keystore");
+                    await this.handleCreateKeystoreMessage(message, sendResponse);
+                    break;
+
+                case MESSAGE_TYPES.GET_KEYSTORE_STATUS:
+                    console.log("📊 [PopupMessageHandler] GET_KEYSTORE_STATUS: Getting keystore status");
+                    await this.handleGetKeystoreStatusMessage(sendResponse);
+                    break;
+
+                case MESSAGE_TYPES.SWITCH_WALLET:
+                    console.log("🔄 [PopupMessageHandler] SWITCH_WALLET: Switching active wallet");
+                    await this.handleSwitchWalletMessage(message, sendResponse);
+                    break;
+
+                case MESSAGE_TYPES.MIGRATE_KEYSTORES:
+                    console.log("📦 [PopupMessageHandler] MIGRATE_KEYSTORES: Migrating keystores");
+                    await this.handleMigrateKeystoresMessage(message, sendResponse);
+                    break;
+
+                case "getActiveKeystore":
+                    console.log("🔑 [PopupMessageHandler] GET_ACTIVE_KEYSTORE: Getting active keystore");
+                    await this.handleGetActiveKeystoreMessage(sendResponse);
                     break;
 
                 default:
@@ -735,6 +772,85 @@ export class PopupMessageHandler {
                     this.stateManager.appState.groupPublicKey = response.group_public_key;
                 }
                 
+                // Now we need to export the keystore from WASM and save it to KeystoreService
+                console.log("[PopupMessageHandler] Exporting imported keystore for persistence");
+                const exportResponse = await this.offscreenManager.sendToOffscreen({
+                    type: "exportKeystore",
+                    chain: message.chain
+                }, `Export imported keystore for persistence (ID: ${messageId})`);
+                
+                if (exportResponse && exportResponse.success && exportResponse.keystoreData) {
+                    try {
+                        // Check if keystore is unlocked
+                        const keystoreManager = KeystoreManager.getInstance();
+                        
+                        if (keystoreManager.isLocked()) {
+                            // Store temporarily in chrome.storage for migration later
+                            const importedKeystoreData = {
+                                keystoreData: exportResponse.keystoreData,
+                                sessionInfo: response.sessionInfo,
+                                addresses: response.addresses,
+                                chain: message.chain,
+                                importedAt: Date.now()
+                            };
+                            
+                            await chrome.storage.local.set({
+                                [`mpc_imported_keystore_${response.sessionInfo.session_id}`]: importedKeystoreData,
+                                'mpc_pending_import': true
+                            });
+                            
+                            console.log("[PopupMessageHandler] Keystore locked - stored for later migration");
+                        } else {
+                            // Parse the exported keystore data
+                            const exportedData = JSON.parse(exportResponse.keystoreData);
+                            
+                            // Create key share data from the exported keystore
+                            const keyShareData = {
+                                key_package: exportedData.key_package || '',
+                                group_public_key: exportedData.group_public_key || response.sessionInfo.group_public_key || '',
+                                session_id: response.sessionInfo.session_id,
+                                device_id: response.sessionInfo.device_id,
+                                participant_index: response.sessionInfo.participant_index,
+                                threshold: response.sessionInfo.threshold,
+                                total_participants: response.sessionInfo.total_participants,
+                                participants: [response.sessionInfo.device_id],
+                                curve: response.sessionInfo.curve_type as 'secp256k1' | 'ed25519',
+                                blockchains: response.sessionInfo.blockchains || [],
+                                ethereum_address: response.addresses?.ethereum,
+                                solana_address: response.addresses?.solana,
+                                created_at: Date.now()
+                            };
+                            
+                            // Create wallet metadata
+                            const walletMetadata = {
+                                id: response.sessionInfo.session_id,
+                                name: response.sessionInfo.session_id,
+                                blockchain: message.chain,
+                                address: response.addresses?.[message.chain] || '',
+                                session_id: response.sessionInfo.session_id,
+                                isActive: true,
+                                hasBackup: true
+                            };
+                            
+                            // Save to keystore
+                            const saved = await keystoreManager.addWallet(
+                                response.sessionInfo.session_id,
+                                keyShareData,
+                                walletMetadata
+                            );
+                            
+                            if (saved) {
+                                console.log("[PopupMessageHandler] Successfully saved imported keystore to KeystoreManager");
+                            } else {
+                                console.error("[PopupMessageHandler] Failed to save imported keystore");
+                            }
+                        }
+                    } catch (error) {
+                        console.error("[PopupMessageHandler] Failed to save imported keystore:", error);
+                        // Don't fail the import, just log the error
+                    }
+                }
+                
                 // Broadcast state updates to popup
                 this.stateManager.broadcastToPopupPorts({
                     type: "dkgStateUpdate",
@@ -749,9 +865,9 @@ export class PopupMessageHandler {
                 
                 // Store address based on chain
                 if (message.chain === "ethereum") {
-                    this.stateManager.appState.ethereumAddress = response.address;
+                    this.stateManager.appState.ethereumAddress = response.addresses?.ethereum || response.address;
                 } else if (message.chain === "solana") {
-                    this.stateManager.appState.solanaAddress = response.address;
+                    this.stateManager.appState.solanaAddress = response.addresses?.solana || response.address;
                 }
                 
                 sendResponse({ success: true, address: response.address });
@@ -809,6 +925,209 @@ export class PopupMessageHandler {
             }
         } catch (error) {
             console.error("[PopupMessageHandler] Error exporting keystore:", error);
+            sendResponse({ success: false, error: (error as Error).message });
+        }
+    }
+
+    /**
+     * Handle unlock keystore request
+     */
+    private async handleUnlockKeystoreMessage(message: any, sendResponse: (response: any) => void): Promise<void> {
+        console.log("[PopupMessageHandler] Processing unlock keystore request");
+        
+        try {
+            if (!message.password) {
+                sendResponse({ success: false, error: "Password required" });
+                return;
+            }
+            
+            const keystoreManager = KeystoreManager.getInstance();
+            const success = await keystoreManager.unlock(message.password, message.rememberDuration);
+            
+            if (success) {
+                // Get active wallet info
+                const activeWallet = keystoreManager.getActiveWallet();
+                sendResponse({ 
+                    success: true, 
+                    activeWallet,
+                    wallets: keystoreManager.getWallets()
+                });
+                
+                // Restore wallet state if available
+                await checkAndRestoreKeystores();
+            } else {
+                sendResponse({ success: false, error: "Invalid password" });
+            }
+        } catch (error) {
+            console.error("[PopupMessageHandler] Error unlocking keystore:", error);
+            sendResponse({ success: false, error: (error as Error).message });
+        }
+    }
+
+    /**
+     * Handle lock keystore request
+     */
+    private async handleLockKeystoreMessage(sendResponse: (response: any) => void): Promise<void> {
+        console.log("[PopupMessageHandler] Processing lock keystore request");
+        
+        try {
+            const keystoreManager = KeystoreManager.getInstance();
+            await keystoreManager.lock();
+            
+            // Clear sensitive state
+            this.stateManager.updateStateProperty('dkgState', DkgState.Idle);
+            this.stateManager.updateStateProperty('sessionInfo', null);
+            this.stateManager.updateStateProperty('ethereumAddress', null);
+            this.stateManager.updateStateProperty('solanaAddress', null);
+            
+            sendResponse({ success: true });
+        } catch (error) {
+            console.error("[PopupMessageHandler] Error locking keystore:", error);
+            sendResponse({ success: false, error: (error as Error).message });
+        }
+    }
+
+    /**
+     * Handle create keystore request
+     */
+    private async handleCreateKeystoreMessage(message: any, sendResponse: (response: any) => void): Promise<void> {
+        console.log("[PopupMessageHandler] Processing create keystore request");
+        
+        try {
+            if (!message.password) {
+                sendResponse({ success: false, error: "Password required" });
+                return;
+            }
+            
+            const keystoreManager = KeystoreManager.getInstance();
+            const deviceId = this.stateManager.getState().deviceId || 'mpc-2';
+            
+            await keystoreManager.createKeystore(message.password, deviceId);
+            
+            sendResponse({ success: true });
+        } catch (error) {
+            console.error("[PopupMessageHandler] Error creating keystore:", error);
+            sendResponse({ success: false, error: (error as Error).message });
+        }
+    }
+
+    /**
+     * Handle get keystore status request
+     */
+    private async handleGetKeystoreStatusMessage(sendResponse: (response: any) => void): Promise<void> {
+        console.log("[PopupMessageHandler] Processing get keystore status request");
+        
+        try {
+            const keystoreManager = KeystoreManager.getInstance();
+            
+            const status = {
+                initialized: await keystoreManager.isInitialized(),
+                locked: keystoreManager.isLocked(),
+                wallets: keystoreManager.getWallets(),
+                activeWallet: keystoreManager.getActiveWallet()
+            };
+            
+            sendResponse({ success: true, status });
+        } catch (error) {
+            console.error("[PopupMessageHandler] Error getting keystore status:", error);
+            sendResponse({ success: false, error: (error as Error).message });
+        }
+    }
+
+    /**
+     * Handle switch wallet request
+     */
+    private async handleSwitchWalletMessage(message: any, sendResponse: (response: any) => void): Promise<void> {
+        console.log("[PopupMessageHandler] Processing switch wallet request");
+        
+        try {
+            if (!message.walletId) {
+                sendResponse({ success: false, error: "Wallet ID required" });
+                return;
+            }
+            
+            const keystoreManager = KeystoreManager.getInstance();
+            
+            if (keystoreManager.isLocked()) {
+                sendResponse({ success: false, error: "Keystore is locked" });
+                return;
+            }
+            
+            const success = await keystoreManager.setActiveWallet(message.walletId);
+            
+            if (success) {
+                // Restore the new active wallet
+                await checkAndRestoreKeystores();
+                sendResponse({ success: true });
+            } else {
+                sendResponse({ success: false, error: "Failed to switch wallet" });
+            }
+        } catch (error) {
+            console.error("[PopupMessageHandler] Error switching wallet:", error);
+            sendResponse({ success: false, error: (error as Error).message });
+        }
+    }
+
+    /**
+     * Handle migrate keystores request
+     */
+    private async handleMigrateKeystoresMessage(message: any, sendResponse: (response: any) => void): Promise<void> {
+        console.log("[PopupMessageHandler] Processing migrate keystores request");
+        
+        try {
+            if (!message.password) {
+                sendResponse({ success: false, error: "Password required" });
+                return;
+            }
+            
+            const keystoreManager = KeystoreManager.getInstance();
+            const migratedCount = await keystoreManager.migrateFromChromeStorage(message.password);
+            
+            sendResponse({ 
+                success: true, 
+                migratedCount,
+                wallets: keystoreManager.getWallets()
+            });
+            
+            // Restore wallet state after migration
+            if (migratedCount > 0) {
+                await checkAndRestoreKeystores();
+            }
+        } catch (error) {
+            console.error("[PopupMessageHandler] Error migrating keystores:", error);
+            sendResponse({ success: false, error: (error as Error).message });
+        }
+    }
+    
+    /**
+     * Handle get active keystore request
+     */
+    private async handleGetActiveKeystoreMessage(sendResponse: (response: any) => void): Promise<void> {
+        console.log("[PopupMessageHandler] Processing get active keystore request");
+        
+        try {
+            const keystoreManager = KeystoreManager.getInstance();
+            
+            if (keystoreManager.isLocked()) {
+                sendResponse({ success: false, error: "Keystore is locked" });
+                return;
+            }
+            
+            const activeWallet = keystoreManager.getActiveWallet();
+            if (!activeWallet) {
+                sendResponse({ success: false, error: "No active wallet" });
+                return;
+            }
+            
+            const keyShare = await keystoreManager.getKeyShare(activeWallet.id);
+            if (!keyShare) {
+                sendResponse({ success: false, error: "Failed to get key share" });
+                return;
+            }
+            
+            sendResponse({ success: true, keyShare });
+        } catch (error) {
+            console.error("[PopupMessageHandler] Error getting active keystore:", error);
             sendResponse({ success: false, error: (error as Error).message });
         }
     }

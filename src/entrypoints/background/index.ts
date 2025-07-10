@@ -20,6 +20,7 @@ import { MESSAGE_PREFIX, MessageType } from '../../constants';
 import AccountService from '../../services/accountService';
 import NetworkService from '../../services/networkService';
 import WalletClientService from '../../services/walletClient';
+import { KeystoreManager } from '../../services/keystoreManager';
 import { toHex } from 'viem';
 import WalletController from "../../services/walletController";
 import { WebSocketClient } from "./websocket";
@@ -294,6 +295,77 @@ function setupMessageHandlers(): void {
 // ===================================================================
 
 /**
+ * Check for existing keystores and restore state if found
+ */
+export async function checkAndRestoreKeystores(): Promise<void> {
+    console.log("🔑 [Background] Checking for existing keystores...");
+    
+    try {
+        const keystoreManager = KeystoreManager.getInstance();
+        
+        // Initialize with device ID
+        const deviceId = stateManager.getState().deviceId || 'mpc-2';
+        await keystoreManager.initialize(deviceId);
+        
+        // Check if keystore is initialized
+        if (!await keystoreManager.isInitialized()) {
+            console.log("🔑 [Background] No keystore found");
+            return;
+        }
+        
+        // Check if keystore is locked
+        if (keystoreManager.isLocked()) {
+            console.log("🔑 [Background] Keystore is locked - password required");
+            // The popup will handle password prompt
+            return;
+        }
+        
+        // Get active wallet
+        const activeWallet = keystoreManager.getActiveWallet();
+        if (!activeWallet) {
+            console.log("🔑 [Background] No active wallet found");
+            return;
+        }
+        
+        console.log(`🔑 [Background] Restoring wallet: ${activeWallet.id}`);
+        
+        // Update DKG state to complete
+        stateManager.updateStateProperty('dkgState', DkgState.Complete);
+        
+        // Update session info
+        stateManager.updateStateProperty('sessionInfo', {
+            session_id: activeWallet.session_id,
+            proposer_id: activeWallet.id,
+            participants: [activeWallet.id],
+            accepted_devices: [activeWallet.id],
+            threshold: 1, // Default for imported keystores
+            total: 1,
+            is_proposer: true,
+            timestamp: Date.now()
+        });
+        
+        // Store addresses based on active wallet's blockchain
+        if (activeWallet.blockchain === 'ethereum' && activeWallet.address) {
+            stateManager.updateStateProperty('ethereumAddress', activeWallet.address);
+            chrome.storage.local.set({ 
+                'mpc_ethereum_address': activeWallet.address 
+            });
+        } else if (activeWallet.blockchain === 'solana' && activeWallet.address) {
+            stateManager.updateStateProperty('solanaAddress', activeWallet.address);
+            chrome.storage.local.set({ 
+                'mpc_solana_address': activeWallet.address 
+            });
+        }
+        
+        stateManager.updateStateProperty('dkgAddress', activeWallet.address);
+        
+        console.log(`🔑 [Background] Wallet restored successfully: ${activeWallet.address}`);
+    } catch (error) {
+        console.error("❌ [Background] Error checking keystores:", error);
+    }
+}
+
+/**
  * Initialize WebSocket connection
  */
 async function initializeWebSocket(): Promise<void> {
@@ -320,7 +392,7 @@ async function initializeWebSocket(): Promise<void> {
 /**
  * Main background script entry point
  */
-export default defineBackground(() => {
+export default defineBackground(async () => {
 //     console.log("🚀 [Background] Background script starting...");
 
     // Initialize all components
@@ -331,6 +403,9 @@ export default defineBackground(() => {
 
     // Set up message handlers
     setupMessageHandlers();
+
+    // Check for existing keystores and restore state
+    await checkAndRestoreKeystores();
 
     // Initialize offscreen document on startup
     offscreenManager.createOffscreenDocument().then((result: any) => {
