@@ -1,0 +1,40 @@
+[package]
+name = "mpc-wallet-frost-core"
+version = "0.1.0"
+edition = "2024"
+description = "Core FROST implementation for MPC Wallet"
+license = "Apache-2.0"
+
+[dependencies]
+# FROST dependencies
+frost-core = { version = "2.1.0", features = ["serde"] }
+frost-secp256k1 = { version = "2.1.0", features = ["serde"] }
+frost-ed25519 = { version = "2.1.0", features = ["serde"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+hex = "0.4"
+base64 = "0.21"
+
+# Cryptography
+sha2 = "0.10"
+sha3 = "0.10"
+k256 = "0.13"
+ed25519-dalek = "2.1"
+rand = "0.8"
+getrandom = { version = "0.2", features = ["js"] }
+
+# Encryption for keystore
+aes-gcm = "0.10"
+argon2 = { version = "0.5", features = ["password-hash"] }
+pbkdf2 = { version = "0.12", features = ["simple"] }
+hmac = "0.12"
+password-hash = "0.5"
+
+# Other
+bs58 = "0.5"
+thiserror = "1.0"
+
+[dev-dependencies]
+tempfile = "3.8"

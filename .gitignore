@@ -18,6 +18,14 @@ stats.html
 stats-*.json
 web-ext.config.ts
 
+# Monorepo build artifacts
+apps/*/dist/
+apps/*/target/
+apps/*/.wxt/
+packages/*/dist/
+packages/*/pkg/
+packages/*/target/
+
 # Coverage reports
 coverage/
 *.lcov

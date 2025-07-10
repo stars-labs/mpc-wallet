@@ -1,0 +1,25 @@
+{
+  "name": "@mpc-wallet/core-wasm",
+  "version": "0.1.0",
+  "description": "FROST MPC WASM bindings for MPC Wallet",
+  "type": "module",
+  "main": "./pkg/mpc_wallet_core_wasm.js",
+  "types": "./pkg/mpc_wallet_core_wasm.d.ts",
+  "exports": {
+    ".": {
+      "import": "./pkg/mpc_wallet_core_wasm.js",
+      "types": "./pkg/mpc_wallet_core_wasm.d.ts"
+    }
+  },
+  "files": [
+    "pkg"
+  ],
+  "scripts": {
+    "build": "wasm-pack build --target web --out-dir pkg",
+    "build:dev": "wasm-pack build --dev --target web --out-dir pkg",
+    "clean": "rm -rf pkg target"
+  },
+  "devDependencies": {
+    "wasm-pack": "^0.13.1"
+  }
+}

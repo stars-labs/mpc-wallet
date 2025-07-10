@@ -4,77 +4,121 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-MPC Wallet is a browser extension that implements Multi-Party Computation for blockchain wallets using the FROST (Flexible Round-Optimized Schnorr Threshold) signature scheme. It enables distributed key generation and signing operations where no single party holds the complete private key. The extension supports both Ethereum (secp256k1) and Solana (ed25519) blockchains.
+MPC Wallet is a monorepo containing a browser extension, CLI node, and WebRTC signaling servers that implement Multi-Party Computation for blockchain wallets using the FROST (Flexible Round-Optimized Schnorr Threshold) signature scheme. It enables distributed key generation and signing operations where no single party holds the complete private key. The system supports both Ethereum (secp256k1) and Solana (ed25519) blockchains.
+
+### Monorepo Structure
+
+```
+apps/
+├── browser-extension/    # Chrome/Firefox extension with UI
+├── cli-node/            # Rust CLI for MPC node operations
+└── signal-server/       # WebRTC signaling infrastructure
+    ├── server/          # Standard WebSocket server
+    └── cloudflare-worker/ # Edge deployment
+
+packages/@mpc-wallet/
+├── frost-core/         # Shared FROST Rust library (NEW)
+├── core-wasm/          # FROST WebAssembly bindings (thin wrapper)
+└── types/              # Shared TypeScript types
+```
 
 ## Architecture
 
 The extension follows Chrome Extension Manifest V3 architecture with four main contexts:
 
-1. **Background Service Worker** (`src/entrypoints/background/`): Central message router managing WebSocket connections to a signaling server and coordinating communication between components.
+1. **Background Service Worker** (`apps/browser-extension/src/entrypoints/background/`): Central message router managing WebSocket connections to a signaling server and coordinating communication between components.
    
-2. **Popup Page** (`src/entrypoints/popup/`): User interface for wallet operations built with Svelte.
+2. **Popup Page** (`apps/browser-extension/src/entrypoints/popup/`): User interface for wallet operations built with Svelte.
    
-3. **Offscreen Document** (`src/entrypoints/offscreen/`): Handles WebRTC connections for peer-to-peer communication and cryptographic operations using Rust/WebAssembly.
+3. **Offscreen Document** (`apps/browser-extension/src/entrypoints/offscreen/`): Handles WebRTC connections for peer-to-peer communication and cryptographic operations using Rust/WebAssembly.
    
-4. **Content Script** (`src/entrypoints/content/`): Injects wallet provider API into web pages.
+4. **Content Script** (`apps/browser-extension/src/entrypoints/content/`): Injects wallet provider API into web pages.
 
 ### Key Components
 
-- **WebRTC System** (`src/entrypoints/offscreen/webrtc.ts`): Manages peer-to-peer connections and coordinates the MPC protocol.
+- **WebRTC System** (`apps/browser-extension/src/entrypoints/offscreen/webrtc.ts`): Manages peer-to-peer connections and coordinates the MPC protocol.
   
-- **Rust/WebAssembly Core** (`src/lib.rs`): Implements the cryptographic operations for the FROST protocol, including keystore import/export functionality for CLI compatibility.
+- **Shared FROST Core** (`packages/@mpc-wallet/frost-core/`): Shared Rust library implementing core FROST cryptographic operations, keystore management, and encryption. Used by both WASM and CLI to eliminate code duplication.
+
+- **Rust/WebAssembly Core** (`packages/@mpc-wallet/core-wasm/src/lib.rs`): Thin wrapper around frost-core providing WASM bindings for browser usage.
   
-- **Message System** (`src/types/messages.ts`): Strongly-typed messages for communication between extension components.
+- **Shared Types** (`packages/@mpc-wallet/types/`): Centralized TypeScript type definitions shared across all applications. Includes messages, state, session, DKG, keystore, and network types.
+  
+- **Message System** (`packages/@mpc-wallet/types/src/messages.ts`): Strongly-typed messages for communication between extension components.
 
-- **Keystore Service** (`src/services/keystoreService.ts`): Manages secure storage of FROST key shares with encryption and backup capabilities.
+- **Keystore Service** (`apps/browser-extension/src/services/keystoreService.ts`): Manages secure storage of FROST key shares with encryption and backup capabilities.
 
-- **DKG Manager** (`src/entrypoints/offscreen/dkgManager.ts`): Handles the complete Distributed Key Generation lifecycle across multiple rounds.
+- **DKG Manager** (`apps/browser-extension/src/entrypoints/offscreen/dkgManager.ts`): Handles the complete Distributed Key Generation lifecycle across multiple rounds.
 
 ## Build and Development Commands
 
-### Setup and Installation
+### Prerequisites
 
 ```bash
-# Install dependencies
-bun install
+# Install Bun runtime
+curl -fsSL https://bun.sh/install | bash
 
-# Build WebAssembly modules from Rust code
-bun run build:wasm
+# Install Rust toolchain
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+# Install wasm-pack
+curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 ```
 
 ### Development
 
 ```bash
+# Install dependencies
+bun install
+
+# Build WASM (required before running dev)
+bun run build:wasm          # Production WASM build
+bun run build:wasm:dev      # Development WASM build (faster, larger)
+
 # Start development server with hot reloading
-bun run dev
+bun run dev                 # Auto-rebuilds WASM on changes
 
 # Run development for specific browsers
 bun run dev:firefox
 bun run dev:edge
 
+# Type checking
+bun run check               # Svelte type checking
+
 # Clean build artifacts
-bun run clean
+bun run clean              # Remove dist and .wxt directories
 ```
 
 ### Testing
 
 ```bash
-# Run all tests
+# Run all tests with setup preload
 bun test
 
-# Run specific test suites
-bun run test:services    # Test service layer
-bun run test:webrtc      # Test WebRTC simple tests
-bun run test:webrtc:all  # Run all WebRTC tests
-bun run test:dkg         # Test DKG functionality
+# Run specific test categories
+bun run test:unit          # Unit tests only (services, components, config)
+bun run test:integration   # Integration tests only
+bun run test:services      # Service layer tests
+bun run test:webrtc        # WebRTC tests (simple)
+bun run test:webrtc:all    # All WebRTC tests
+bun run test:dkg           # DKG functionality tests
+
+# Run with options
+bun test --watch           # Watch mode
+bun test --coverage        # Generate coverage reports
 
 # Test keystore functionality
-bun test tests/keystore-import.test.ts     # Test keystore import/export
-bun test tests/wasm-keystore-import.test.ts # Test WASM keystore functions
-bun test tests/cli-keystore-decryption.test.ts # Test CLI format compatibility
+bun test tests/keystore-import.test.ts         # Keystore import/export
+bun test tests/wasm-keystore-import.test.ts    # WASM keystore functions
+bun test tests/cli-keystore-decryption.test.ts # CLI format compatibility
 
 # Run a single test file
 bun test path/to/test.ts
+
+# Run test scripts
+./scripts/test/run-all-tests.sh   # Categorized test suites
+./scripts/test/run-tests.sh       # Exclude import issues
+./scripts/test-dkg-ui.sh          # Validate DKG UI
 ```
 
 ### Production Build
@@ -89,21 +133,29 @@ bun run build:edge
 
 # Create extension ZIP
 bun run zip
+
+# Utility scripts
+./scripts/build/fix-all-syntax-errors.sh  # Fix syntax errors
+./scripts/build/remove-debug-logs.sh      # Clean debug logs
 ```
 
-### Type Checking
+### Performance and Benchmarking
 
 ```bash
-# Run Svelte type checking
-bun run check
+# Performance monitoring
+bun scripts/performance.ts   # Build performance tracking
+bun scripts/benchmark.ts     # Runtime benchmarking
 ```
 
 ## Development Workflow
 
 1. Start the development server: `bun run dev`
 2. Load the extension into Chrome/Edge from the `dist/` directory
-3. Monitor logs using the browser's developer console
-4. For changes to the Rust code, rebuild WebAssembly: `bun run build:wasm`
+3. Monitor logs using the browser's developer console:
+   - Background: chrome://extensions → Service Worker "Inspect"
+   - Popup: Right-click popup → Inspect
+   - Offscreen: Check background console for offscreen logs
+4. For changes to the Rust code, the dev server auto-rebuilds WASM
 
 ## Message Flow Architecture
 
@@ -114,6 +166,43 @@ Popup → Background → Offscreen → WebRTC Peers
 ```
 
 All messages are routed through the background service worker, which acts as the central coordinator. The message types are defined in `src/types/messages.ts` and follow a strict pattern-based routing system.
+
+## Test Organization
+
+```
+tests/
+├── components/          # UI component tests
+├── config/             # Configuration tests
+├── entrypoints/        # Extension-specific tests
+│   ├── background/     # Service worker tests
+│   └── offscreen/      # WebRTC and FROST tests
+├── integration/        # End-to-end integration tests
+├── services/           # Service layer tests
+├── __mocks__/          # Test mocks and stubs
+└── legacy/             # Legacy test files (reference only)
+```
+
+Test coverage is automatically generated in `coverage/index.html` when running with `--coverage`.
+
+## Configuration Files
+
+- `bunfig.toml` - Bun test and coverage settings
+- `wxt.config.ts` - Extension manifest and build configuration
+- `tsconfig.json` - TypeScript configuration
+- `tailwind.config.js` - Styling configuration
+- `flake.nix` - Nix dependency management
+
+## WebSocket Server
+
+- Default: `wss://auto-life.tech`
+- Local development server available in `webrtc-signal-server/`
+- Cloudflare Worker implementation in `webrtc-signal-server-cloudflare-worker/`
+
+## Multi-Chain Configuration
+
+Chain support is configured in `src/config/chains.ts`. The extension provides a unified wallet interface across:
+- Ethereum (secp256k1 curve)
+- Solana (ed25519 curve)
 
 ## Keystore Import/Export
 
@@ -155,43 +244,42 @@ The extension supports importing and exporting FROST keystore data for interoper
 
 ### Debugging Tips
 
-- Use the browser's developer tools to debug different extension contexts:
-  - Background: chrome://extensions → Service Worker "Inspect"
-  - Popup: Right-click popup → Inspect
-  - Offscreen: Check background console for offscreen logs
+- Use the browser's developer tools to debug different extension contexts
 - For WebAssembly debugging, use `console.log` calls from the JavaScript side
 - Enable verbose logging by checking console output in all contexts
 - For keystore debugging, export keystores from both CLI and extension to compare data structures
 - Use the test suite to validate keystore functionality: `bun test tests/keystore-*.test.ts`
+- Check test coverage reports in `coverage/index.html`
 
 ## Technology Stack
 
-- **Build System**: Bun + wasm-pack
-- **UI Framework**: Svelte 5
+- **Runtime**: Bun (fast JavaScript runtime)
+- **Build System**: Bun + wasm-pack + WXT
+- **UI Framework**: Svelte 5 with TailwindCSS
 - **Extension Framework**: WXT (Web Extension Tools)
 - **Cryptography**: FROST threshold signatures (implemented in Rust)
-- **P2P Communication**: WebRTC
-- **Signaling**: WebSocket
-- **Blockchain Libraries**: viem (Ethereum)
+- **P2P Communication**: WebRTC with WebSocket signaling
+- **Blockchain Libraries**: viem (Ethereum interactions)
 - **Storage**: Browser extension storage API with AES-256-GCM encryption
 - **Key Derivation**: PBKDF2-SHA256 (extension), Argon2id compatibility (CLI import)
-- **Testing**: Bun test runner with comprehensive keystore test coverage
+- **Testing**: Bun test runner with comprehensive test coverage
+- **Development Environment**: NixOS with Nix flake for dependencies
 
-## File Structure
+## AI Development Cycle
 
-```
-src/
-├── entrypoints/
-│   ├── background/          # Background service worker
-│   ├── popup/              # Popup UI (Svelte)
-│   ├── offscreen/          # WebRTC and WASM integration
-│   └── content/            # Content script for web page injection
-├── services/
-│   └── keystoreService.ts  # Keystore management and encryption
-├── types/
-│   ├── messages.ts         # Message type definitions
-│   ├── keystore.ts         # Keystore data structures
-│   └── dkg.ts             # DKG state management
-├── lib.rs                 # Rust/WASM FROST implementation
-└── tests/                 # Test suite including keystore tests
-```
+The project uses a memory bank system for AI assistance. When working with AI tools:
+
+1. **Session Initialization**: Review existing knowledge base and project context
+2. **Context Preservation**: Capture architectural decisions and implementation progress
+3. **Cross-Session Continuity**: Document outcomes and update task complexity
+4. **Project Lifecycle**: Use structured project phases and requirement tracking
+
+Memory categories:
+- `architecture` - Core system design decisions
+- `implementation` - Technical details and code insights
+- `debugging` - Problem resolution patterns
+- `performance` - Optimization discoveries
+- `integration` - Cross-component interactions
+- `testing` - Test strategies and validation
+
+Working directory: `/home/freeman.xiong/Documents/github/hecoinfo/mpc-wallet`

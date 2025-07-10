@@ -1,51 +1,29 @@
 {
-  "name": "wxt-svelte-starter",
-  "description": "manifest.json description",
+  "name": "@mpc-wallet/monorepo",
+  "description": "MPC Wallet Monorepo - Multi-Party Computation wallet with FROST signatures",
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/@mpc-wallet/*"
+  ],
   "scripts": {
-    "dev": "wxt",
-    "dev:firefox": "wxt -b firefox",
-    "dev:edge": "wxt -b edge",
-    "build": "wxt build",
-    "build:firefox": "wxt build -b firefox",
-    "build:edge": "wxt build -b edge",
-    "build:wasm": "wasm-pack build --target web --out-dir wasm-pack --out-name index",
-    "zip": "wxt zip",
-    "zip:firefox": "wxt zip -b firefox",
-    "zip:edge": "wxt zip -b edge",
-    "check": "svelte-check --tsconfig ./tsconfig.json",
-    "test": "bun test --preload ./tests/setup-bun.ts",
-    "test:watch": "bun test --watch --preload ./tests/setup-bun.ts",
-    "test:coverage": "bun test --coverage --preload ./tests/setup-bun.ts",
-    "test:unit": "bun test tests/services tests/components tests/config --preload ./tests/setup-bun.ts",
-    "test:integration": "bun test tests/integration --preload ./tests/setup-bun.ts",
-    "test:webrtc": "bun test tests/entrypoints/offscreen/webrtc.*.test.ts --preload ./tests/setup-bun.ts",
-    "clean": "rm -rf dist .wxt",
-    "postinstall": "wxt prepare"
+    "dev": "bun run dev:extension",
+    "dev:extension": "cd apps/browser-extension && bun run dev",
+    "dev:all": "bun run build:wasm && run-p dev:*",
+    "build": "./scripts/build-all.sh",
+    "build:extension": "cd apps/browser-extension && bun run build",
+    "build:wasm": "cd packages/@mpc-wallet/core-wasm && bun run build",
+    "build:wasm:dev": "cd packages/@mpc-wallet/core-wasm && bun run build:dev",
+    "test": "./scripts/test-all.sh",
+    "test:extension": "cd apps/browser-extension && bun test",
+    "clean": "./scripts/clean-all.sh",
+    "format": "prettier --write .",
+    "lint": "bun workspaces run lint"
   },
   "devDependencies": {
-    "@tsconfig/svelte": "^5.0.4",
-    "@types/bun": "^1.2.17",
-    "@types/chrome": "^0.0.326",
-    "@types/node": "^24.0.4",
-    "@types/uuid": "^10.0.0",
-    "@wxt-dev/module-svelte": "^2.0.3",
-    "svelte": "^5.34.8",
-    "svelte-check": "^4.2.2",
-    "tslib": "^2.8.1",
-    "typescript": "^5.8.3",
-    "wxt": "^0.20.7"
-  },
-  "dependencies": {
-    "@tailwindcss/vite": "^4.1.10",
-    "tailwindcss": "^4.1.10",
-    "tonkotsu": "^1.0.17",
-    "ts-pattern": "^5.7.1",
-    "uuid": "^11.1.0",
-    "viem": "^2.31.4",
-    "vite-plugin-top-level-await": "^1.5.0",
-    "vite-plugin-wasm": "^3.4.1"
+    "npm-run-all": "^4.1.5",
+    "prettier": "^3.4.2"
   }
 }

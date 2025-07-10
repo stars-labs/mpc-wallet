@@ -1,0 +1,29 @@
+[package]
+name = "webrtc-signal-server"
+version = "0.1.1"
+edition = "2024"
+authors = ["xiongchenyu6@gmail.com>"]
+description = "General WebRTC signal server For Device to Device Communication"
+repository = "https://github.com/stars-labs/cypto-rust-tools"
+license = "MIT OR Apache-2.0"
+keywords = ["webrtc", "signal", "server", "device-to-device", "communication"]
+categories = [
+    "asynchronous",
+    "web-programming::websocket",
+    "network-programming",
+]
+
+[dependencies]
+serde_json = "1.0.140"
+serde = { version = "1.0.219", features = ["derive"] }
+tokio = { version = "1.44.2", features = ["full"] }
+tokio-tungstenite = "0.26.2"
+futures-util = "0.3"
+
+[lib]
+name = "webrtc_signal_server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "webrtc-signal-server"
+path = "src/main.rs"

@@ -1,0 +1,16 @@
+name = "webrtc-signal-server-cloudflare-worker"
+main = "build/worker/shim.mjs"
+compatibility_date = "2025-05-08"
+account_id = "2764ae0fd9a5cb92c9ac67708620e54c"
+
+[build]
+command = "worker-build --release"
+
+[durable_objects]
+bindings = [
+  { name = "Devices", class_name = "Devices" }
+]
+
+[[migrations]]
+tag = "v2"  # Incremental tag, different from previous deployments
+renamed_classes = [{ from = "Peers", to = "Devices" }]

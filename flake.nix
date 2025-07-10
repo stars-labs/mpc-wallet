@@ -30,6 +30,20 @@
           devShells.default = pkgs.mkShell.override { stdenv = pkgs.clangStdenv; } {
             RUST_SRC_PATH = "${pkgs.rust.packages.stable.rustPlatform.rustLibSrc}";
             RUST_BACKTRACE = 1;
+            
+            # Wayland and graphics environment variables
+            LD_LIBRARY_PATH = lib.makeLibraryPath (with pkgs; [
+              wayland
+              libxkbcommon
+              vulkan-loader
+              libGL
+              xorg.libX11
+              xorg.libXcursor
+              xorg.libXrandr
+              xorg.libXi
+              fontconfig
+              freetype
+            ]);
             nativeBuildInputs = with pkgs; [
               nixfmt-rfc-style
               nixd
@@ -45,6 +59,24 @@
               wasm-bindgen-cli
               clang
               lld
+              
+              # Wayland dependencies for native node GUI
+              wayland
+              libxkbcommon
+              wayland-protocols
+              libGL
+              
+              # X11 fallback dependencies
+              xorg.libX11
+              xorg.libXcursor
+              xorg.libXrandr
+              xorg.libXi
+              
+              # Additional graphics dependencies
+              vulkan-loader
+              mesa
+              fontconfig
+              freetype
             ];
           };
         };

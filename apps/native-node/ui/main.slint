@@ -1,0 +1,419 @@
+import { Button, VerticalBox, HorizontalBox, LineEdit, TextEdit, ListView, StandardButton, GroupBox, GridBox, ComboBox, TabWidget, Palette } from "std-widgets.slint";
+
+// Global style settings for better font rendering
+global Style {
+    in property <length> default-font-size: 16px;
+    in property <int> default-font-weight: 400;
+    in property <brush> text-color: #333333;
+    in property <brush> secondary-text-color: #666666;
+}
+
+// Session component for creating/joining sessions
+component SessionView inherits VerticalBox {
+    in property <string> device-id: "Device-001";
+    in property <[string]> connected-devices: [];
+    in property <[string]> session-invites: [];
+    
+    callback create-session(string, int, int);
+    callback join-session(string);
+    callback connect-websocket();
+    
+    spacing: 10px;
+    padding: 20px;
+    
+    GroupBox {
+        title: "Device Information";
+        
+        HorizontalBox {
+            spacing: 10px;
+            Text {
+                text: "Device ID:";
+                vertical-alignment: center;
+                font-size: Style.default-font-size;
+                font-weight: Style.default-font-weight;
+            }
+            Text {
+                text: device-id;
+                font-weight: 600;
+                vertical-alignment: center;
+                font-size: Style.default-font-size;
+            }
+            Rectangle { }  // Spacer
+            Button {
+                text: "Connect to Server";
+                primary: true;
+                clicked => { connect-websocket(); }
+            }
+        }
+    }
+    
+    GroupBox {
+        title: "Create New Session";
+        
+        GridBox {
+            spacing: 10px;
+            
+            Row {
+                Text { 
+                    text: "Session ID:"; 
+                    vertical-alignment: center;
+                    font-size: Style.default-font-size;
+                    font-weight: Style.default-font-weight;
+                }
+                LineEdit {
+                    placeholder-text: "Enter session ID";
+                    text <=> session-id-input;
+                }
+            }
+            Row {
+                Text { text: "Participants:"; vertical-alignment: center; }
+                LineEdit {
+                    placeholder-text: "3";
+                    text <=> participants-input;
+                }
+            }
+            Row {
+                Text { text: "Threshold:"; vertical-alignment: center; }
+                LineEdit {
+                    placeholder-text: "2";
+                    text <=> threshold-input;
+                }
+            }
+            Row {
+                Rectangle { } // Empty cell
+                Button {
+                    text: "Create Session";
+                    primary: true;
+                    clicked => {
+                        create-session(
+                            session-id-input,
+                            round(participants-input.to-float()),
+                            round(threshold-input.to-float())
+                        );
+                    }
+                }
+            }
+        }
+    }
+    
+    GroupBox {
+        title: "Session Invites";
+        min-height: 150px;
+        
+        ListView {
+            for invite in session-invites: HorizontalBox {
+                padding: 5px;
+                spacing: 10px;
+                
+                Text {
+                    text: invite;
+                    vertical-alignment: center;
+                }
+                Rectangle { } // Spacer
+                Button {
+                    text: "Join";
+                    clicked => { join-session(invite); }
+                }
+            }
+        }
+    }
+    
+    property <string> session-id-input: "";
+    property <string> participants-input: "3";
+    property <string> threshold-input: "2";
+}
+
+// DKG (Distributed Key Generation) component
+component DkgView inherits VerticalBox {
+    in property <string> dkg-state: "Idle";
+    in property <[string]> dkg-participants: [];
+    in property <int> round1-progress: 0;
+    in property <int> round2-progress: 0;
+    in property <string> generated-address: "";
+    
+    callback start-dkg();
+    callback export-keystore();
+    
+    spacing: 10px;
+    padding: 20px;
+    
+    GroupBox {
+        title: "DKG Status";
+        
+        VerticalBox {
+            spacing: 10px;
+            
+            HorizontalBox {
+                Text { text: "Current State:"; }
+                Text {
+                    text: dkg-state;
+                    font-weight: 600;
+                    color: dkg-state == "Complete" ? #4CAF50 : 
+                           dkg-state == "Failed" ? #F44336 : 
+                           Palette.foreground;
+                }
+            }
+            
+            if dkg-state != "Idle" && dkg-state != "Complete": VerticalBox {
+                spacing: 10px;
+                
+                Text { text: "Round 1 Progress:"; }
+                Rectangle {
+                    height: 20px;
+                    background: #E0E0E0;
+                    Rectangle {
+                        width: parent.width * round1-progress / 100;
+                        height: parent.height;
+                        background: #2196F3;
+                    }
+                }
+                
+                Text { text: "Round 2 Progress:"; }
+                Rectangle {
+                    height: 20px;
+                    background: #E0E0E0;
+                    Rectangle {
+                        width: parent.width * round2-progress / 100;
+                        height: parent.height;
+                        background: #2196F3;
+                    }
+                }
+            }
+            
+            if dkg-state == "Complete": VerticalBox {
+                spacing: 10px;
+                
+                Text { text: "Generated Address:"; }
+                HorizontalBox {
+                    spacing: 10px;
+                    LineEdit {
+                        text: generated-address;
+                        read-only: true;
+                    }
+                    Button {
+                        text: "Export";
+                        clicked => { export-keystore(); }
+                    }
+                }
+            }
+        }
+    }
+    
+    GroupBox {
+        title: "Participants";
+        min-height: 100px;
+        
+        ListView {
+            for participant in dkg-participants: HorizontalBox {
+                padding: 5px;
+                Text {
+                    text: participant;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+    
+    HorizontalBox {
+        spacing: 10px;
+        Rectangle { } // Spacer
+        Button {
+            text: "Start DKG";
+            primary: true;
+            enabled: dkg-state == "Idle" && dkg-participants.length >= 2;
+            clicked => { start-dkg(); }
+        }
+    }
+}
+
+// Signing component
+component SigningView inherits VerticalBox {
+    in property <string> signing-state: "Idle";
+    in property <string> transaction-data: "";
+    in property <[string]> available-signers: [];
+    
+    callback initiate-signing(string, string);
+    callback accept-signing(string);
+    
+    spacing: 10px;
+    padding: 20px;
+    
+    GroupBox {
+        title: "Sign Transaction";
+        
+        VerticalBox {
+            spacing: 10px;
+            
+            Text { text: "Transaction Data:"; }
+            TextEdit {
+                text <=> tx-data-input;
+                min-height: 100px;
+            }
+            
+            HorizontalBox {
+                spacing: 10px;
+                Text { text: "Blockchain:"; vertical-alignment: center; }
+                ComboBox {
+                    model: ["ethereum", "solana"];
+                    current-value <=> selected-blockchain;
+                }
+                Rectangle { } // Spacer
+                Button {
+                    text: "Sign Transaction";
+                    primary: true;
+                    enabled: tx-data-input != "";
+                    clicked => {
+                        initiate-signing(tx-data-input, selected-blockchain);
+                    }
+                }
+            }
+        }
+    }
+    
+    if signing-state != "Idle": GroupBox {
+        title: "Signing Status";
+        
+        VerticalBox {
+            spacing: 10px;
+            
+            HorizontalBox {
+                Text { text: "State:"; }
+                Text {
+                    text: signing-state;
+                    font-weight: 600;
+                    color: signing-state == "Complete" ? #4CAF50 : 
+                           signing-state == "Failed" ? #F44336 : 
+                           Palette.foreground;
+                }
+            }
+            
+            if signing-state == "AwaitingAcceptances": VerticalBox {
+                spacing: 10px;
+                Text { text: "Waiting for signers to accept..."; }
+                ListView {
+                    for signer in available-signers: Text {
+                        text: signer;
+                        padding: 5px;
+                    }
+                }
+            }
+        }
+    }
+    
+    property <string> tx-data-input: "";
+    property <string> selected-blockchain: "ethereum";
+}
+
+// Main application window
+export component MainWindow inherits Window {
+    title: "MPC Wallet Native Node";
+    min-width: 800px;
+    min-height: 600px;
+    
+    // Properties that will be bound from Rust
+    in property <string> device-id: "Device-001";
+    in property <bool> websocket-connected: false;
+    in property <[string]> log-messages: [];
+    in property <string> current-tab: "session";
+    in property <int> current-participants: 1;
+    
+    // Callbacks to Rust
+    callback connect-websocket();
+    callback create-session(string, int, int);
+    callback join-session(string);
+    callback start-dkg();
+    callback export-keystore();
+    callback initiate-signing(string, string);
+    
+    VerticalBox {
+        padding: 0px;
+        
+        // Header
+        Rectangle {
+            height: 50px;
+            background: #1976D2;
+            
+            HorizontalBox {
+                padding: 10px;
+                spacing: 20px;
+                
+                Text {
+                    text: "MPC Wallet";
+                    color: white;
+                    font-size: 20px;
+                    font-weight: 700;
+                    vertical-alignment: center;
+                }
+                
+                Rectangle { } // Spacer
+                
+                HorizontalBox {
+                    spacing: 10px;
+                    Text {
+                        text: "Status:";
+                        color: white;
+                        vertical-alignment: center;
+                    }
+                    Rectangle {
+                        width: 10px;
+                        height: 10px;
+                        border-radius: 5px;
+                        background: websocket-connected ? #4CAF50 : #F44336;
+                    }
+                    Text {
+                        text: websocket-connected ? "Connected" : "Disconnected";
+                        color: white;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+        
+        // Main content
+        TabWidget {
+            Tab {
+                title: "Session";
+                SessionView {
+                    device-id: device-id;
+                    connect-websocket => { root.connect-websocket(); }
+                    create-session(id, total, threshold) => { 
+                        root.create-session(id, total, threshold); 
+                    }
+                    join-session(id) => { root.join-session(id); }
+                }
+            }
+            
+            Tab {
+                title: "DKG";
+                DkgView {
+                    start-dkg => { root.start-dkg(); }
+                    export-keystore => { root.export-keystore(); }
+                }
+            }
+            
+            Tab {
+                title: "Signing";
+                SigningView {
+                    initiate-signing(data, blockchain) => { 
+                        root.initiate-signing(data, blockchain); 
+                    }
+                }
+            }
+            
+            Tab {
+                title: "Logs";
+                VerticalBox {
+                    padding: 10px;
+                    
+                    ListView {
+                        for message in log-messages: Text {
+                            text: message;
+                            font-size: 12px;
+                            padding: 2px;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
