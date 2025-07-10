@@ -20,7 +20,7 @@ import { MESSAGE_PREFIX, MessageType } from '../../constants';
 import AccountService from '../../services/accountService';
 import NetworkService from '../../services/networkService';
 import WalletClientService from '../../services/walletClient';
-import { KeystoreService } from '../../services/keystoreService';
+import { KeystoreManager } from '../../services/keystoreManager';
 import { toHex } from 'viem';
 import WalletController from "../../services/walletController";
 import { WebSocketClient } from "./websocket";
@@ -297,71 +297,69 @@ function setupMessageHandlers(): void {
 /**
  * Check for existing keystores and restore state if found
  */
-async function checkAndRestoreKeystores(): Promise<void> {
+export async function checkAndRestoreKeystores(): Promise<void> {
     console.log("🔑 [Background] Checking for existing keystores...");
     
     try {
-        // Check chrome.storage.local for imported keystores
-        const result = await chrome.storage.local.get(['mpc_active_keystore_id']);
+        const keystoreManager = KeystoreManager.getInstance();
         
-        if (!result.mpc_active_keystore_id) {
-            console.log("🔑 [Background] No active keystore found");
+        // Initialize with device ID
+        const deviceId = stateManager.getState().deviceId || 'mpc-2';
+        await keystoreManager.initialize(deviceId);
+        
+        // Check if keystore is initialized
+        if (!await keystoreManager.isInitialized()) {
+            console.log("🔑 [Background] No keystore found");
             return;
         }
         
-        const activeKeystoreId = result.mpc_active_keystore_id;
-        const keystoreKey = `mpc_imported_keystore_${activeKeystoreId}`;
-        const keystoreResult = await chrome.storage.local.get([keystoreKey]);
-        
-        if (!keystoreResult[keystoreKey]) {
-            console.log("🔑 [Background] Active keystore data not found");
+        // Check if keystore is locked
+        if (keystoreManager.isLocked()) {
+            console.log("🔑 [Background] Keystore is locked - password required");
+            // The popup will handle password prompt
             return;
         }
         
-        const importedKeystore = keystoreResult[keystoreKey];
-        console.log(`🔑 [Background] Found imported keystore: ${activeKeystoreId}`);
+        // Get active wallet
+        const activeWallet = keystoreManager.getActiveWallet();
+        if (!activeWallet) {
+            console.log("🔑 [Background] No active wallet found");
+            return;
+        }
         
-        // Restore the session info and addresses
-        if (importedKeystore.sessionInfo) {
-            // Update DKG state to complete
-            stateManager.updateStateProperty('dkgState', DkgState.Complete);
-            
-            // Update session info
-            stateManager.updateStateProperty('sessionInfo', {
-                session_id: importedKeystore.sessionInfo.session_id,
-                proposer_id: importedKeystore.sessionInfo.device_id,
-                participants: [importedKeystore.sessionInfo.device_id],
-                accepted_devices: [importedKeystore.sessionInfo.device_id],
-                threshold: importedKeystore.sessionInfo.threshold,
-                total: importedKeystore.sessionInfo.total_participants,
-                is_proposer: true,
-                timestamp: Date.now()
+        console.log(`🔑 [Background] Restoring wallet: ${activeWallet.id}`);
+        
+        // Update DKG state to complete
+        stateManager.updateStateProperty('dkgState', DkgState.Complete);
+        
+        // Update session info
+        stateManager.updateStateProperty('sessionInfo', {
+            session_id: activeWallet.session_id,
+            proposer_id: activeWallet.id,
+            participants: [activeWallet.id],
+            accepted_devices: [activeWallet.id],
+            threshold: 1, // Default for imported keystores
+            total: 1,
+            is_proposer: true,
+            timestamp: Date.now()
+        });
+        
+        // Store addresses based on active wallet's blockchain
+        if (activeWallet.blockchain === 'ethereum' && activeWallet.address) {
+            stateManager.updateStateProperty('ethereumAddress', activeWallet.address);
+            chrome.storage.local.set({ 
+                'mpc_ethereum_address': activeWallet.address 
             });
-            
-            // Store addresses
-            if (importedKeystore.addresses) {
-                if (importedKeystore.addresses.ethereum) {
-                    stateManager.updateStateProperty('ethereumAddress', importedKeystore.addresses.ethereum);
-                    chrome.storage.local.set({ 
-                        'mpc_ethereum_address': importedKeystore.addresses.ethereum 
-                    });
-                }
-                if (importedKeystore.addresses.solana) {
-                    stateManager.updateStateProperty('solanaAddress', importedKeystore.addresses.solana);
-                    chrome.storage.local.set({ 
-                        'mpc_solana_address': importedKeystore.addresses.solana 
-                    });
-                }
-            }
-            
-            // Store the active chain's address
-            const address = importedKeystore.addresses?.[importedKeystore.chain] || '';
-            if (address) {
-                stateManager.updateStateProperty('dkgAddress', address);
-            }
-            
-            console.log(`🔑 [Background] Keystore restored successfully`);
+        } else if (activeWallet.blockchain === 'solana' && activeWallet.address) {
+            stateManager.updateStateProperty('solanaAddress', activeWallet.address);
+            chrome.storage.local.set({ 
+                'mpc_solana_address': activeWallet.address 
+            });
         }
+        
+        stateManager.updateStateProperty('dkgAddress', activeWallet.address);
+        
+        console.log(`🔑 [Background] Wallet restored successfully: ${activeWallet.address}`);
     } catch (error) {
         console.error("❌ [Background] Error checking keystores:", error);
     }

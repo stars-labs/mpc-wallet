@@ -10,6 +10,9 @@
     import Settings from "../../components/Settings.svelte";
     import AccountManager from "../../components/AccountManager.svelte";
     import SignatureRequest from "../../components/SignatureRequest.svelte";
+    import PasswordPrompt from "./components/PasswordPrompt.svelte";
+    import WalletSelector from "./components/WalletSelector.svelte";
+    import { MESSAGE_TYPES } from "../../types/messages";
 
     // Application state (consolidated from background) - the single source of truth
     let appState: AppState = { ...INITIAL_APP_STATE };
@@ -28,6 +31,25 @@
         origin: string;
         fromAddress: string;
     }> = [];
+    
+    // Keystore state
+    let keystoreStatus = {
+        initialized: false,
+        locked: true,
+        wallets: [],
+        activeWallet: null,
+        pendingImport: false
+    };
+    
+    // Password prompt state
+    let showPasswordPrompt = false;
+    let passwordPromptConfig = {
+        title: "Unlock Keystore",
+        message: "Enter your password to unlock the wallet",
+        confirmMode: false,
+        onSubmit: null,
+        onCancel: null
+    };
 
     // Local storage for UI preferences persistence (not real-time connection state)
     const UI_STATE_KEY = "mpc_wallet_ui_preferences";
@@ -214,6 +236,9 @@
 
                 // Save the current UI preferences immediately after loading to ensure persistence
                 saveUIState();
+                
+                // Check keystore status after initial state is loaded
+                checkKeystoreStatus();
 
                 // NOTE: No need for fresh state update - all real-time state comes from background automatically
                 // WebSocket updates, device lists, etc. are pushed via port messages, not pulled via getState
@@ -859,6 +884,163 @@
             requiredSigners
         });
     }
+    
+    // Keystore management functions
+    async function checkKeystoreStatus() {
+        chrome.runtime.sendMessage({ type: MESSAGE_TYPES.GET_KEYSTORE_STATUS }, (response) => {
+            if (chrome.runtime.lastError) {
+                console.error("[UI] Error getting keystore status:", chrome.runtime.lastError.message);
+                return;
+            }
+            if (response && response.success) {
+                keystoreStatus = response.status;
+                console.log("[UI] Keystore status:", keystoreStatus);
+                
+                // Check if we need to prompt for password
+                if (keystoreStatus.initialized && keystoreStatus.locked) {
+                    showUnlockPrompt();
+                }
+                
+                // Check for pending imports
+                checkPendingImports();
+            }
+        });
+    }
+    
+    function showUnlockPrompt() {
+        passwordPromptConfig = {
+            title: "Unlock Wallet",
+            message: "Enter your password to unlock the wallet",
+            confirmMode: false,
+            onSubmit: handleUnlockPassword,
+            onCancel: () => { showPasswordPrompt = false; }
+        };
+        showPasswordPrompt = true;
+    }
+    
+    function showCreateKeystorePrompt() {
+        passwordPromptConfig = {
+            title: "Create Wallet",
+            message: "Create a password to secure your wallet",
+            confirmMode: true,
+            onSubmit: handleCreateKeystore,
+            onCancel: () => { showPasswordPrompt = false; }
+        };
+        showPasswordPrompt = true;
+    }
+    
+    async function handleUnlockPassword(event: CustomEvent) {
+        const password = event.detail.password;
+        showPasswordPrompt = false;
+        
+        chrome.runtime.sendMessage({ 
+            type: MESSAGE_TYPES.UNLOCK_KEYSTORE,
+            password,
+            rememberDuration: 15 * 60 * 1000 // 15 minutes
+        }, (response) => {
+            if (chrome.runtime.lastError) {
+                console.error("[UI] Error unlocking keystore:", chrome.runtime.lastError.message);
+                return;
+            }
+            if (response && response.success) {
+                keystoreStatus.locked = false;
+                keystoreStatus.wallets = response.wallets;
+                keystoreStatus.activeWallet = response.activeWallet;
+                console.log("[UI] Keystore unlocked successfully");
+                
+                // Check for pending imports after unlock
+                checkPendingImports();
+            } else {
+                console.error("[UI] Failed to unlock keystore:", response?.error);
+                // Show error and prompt again
+                setTimeout(() => showUnlockPrompt(), 500);
+            }
+        });
+    }
+    
+    async function handleCreateKeystore(event: CustomEvent) {
+        const password = event.detail.password;
+        showPasswordPrompt = false;
+        
+        chrome.runtime.sendMessage({ 
+            type: MESSAGE_TYPES.CREATE_KEYSTORE,
+            password
+        }, (response) => {
+            if (chrome.runtime.lastError) {
+                console.error("[UI] Error creating keystore:", chrome.runtime.lastError.message);
+                return;
+            }
+            if (response && response.success) {
+                keystoreStatus.initialized = true;
+                keystoreStatus.locked = false;
+                console.log("[UI] Keystore created successfully");
+                checkKeystoreStatus();
+            } else {
+                console.error("[UI] Failed to create keystore:", response?.error);
+            }
+        });
+    }
+    
+    async function checkPendingImports() {
+        const result = await chrome.storage.local.get(['mpc_pending_import']);
+        if (result.mpc_pending_import && !keystoreStatus.locked) {
+            // Prompt for migration
+            if (confirm("You have imported keystores waiting to be migrated. Would you like to migrate them now?")) {
+                migrateKeystores();
+            }
+        }
+    }
+    
+    async function migrateKeystores() {
+        chrome.runtime.sendMessage({ 
+            type: MESSAGE_TYPES.MIGRATE_KEYSTORES,
+            password: "" // Will be prompted in background if needed
+        }, (response) => {
+            if (chrome.runtime.lastError) {
+                console.error("[UI] Error migrating keystores:", chrome.runtime.lastError.message);
+                return;
+            }
+            if (response && response.success) {
+                console.log(`[UI] Migrated ${response.migratedCount} keystores`);
+                keystoreStatus.wallets = response.wallets;
+                chrome.storage.local.remove(['mpc_pending_import']);
+            } else {
+                console.error("[UI] Failed to migrate keystores:", response?.error);
+            }
+        });
+    }
+    
+    function handleWalletSelect(event: CustomEvent) {
+        const wallet = event.detail;
+        chrome.runtime.sendMessage({ 
+            type: MESSAGE_TYPES.SWITCH_WALLET,
+            walletId: wallet.id
+        }, (response) => {
+            if (chrome.runtime.lastError) {
+                console.error("[UI] Error switching wallet:", chrome.runtime.lastError.message);
+                return;
+            }
+            if (response && response.success) {
+                keystoreStatus.activeWallet = wallet;
+                console.log("[UI] Switched to wallet:", wallet.id);
+            } else {
+                console.error("[UI] Failed to switch wallet:", response?.error);
+            }
+        });
+    }
+    
+    function lockKeystore() {
+        chrome.runtime.sendMessage({ type: MESSAGE_TYPES.LOCK_KEYSTORE }, (response) => {
+            if (chrome.runtime.lastError) {
+                console.error("[UI] Error locking keystore:", chrome.runtime.lastError.message);
+                return;
+            }
+            if (response && response.success) {
+                keystoreStatus.locked = true;
+                console.log("[UI] Keystore locked");
+            }
+        });
+    }
 </script>
 
 <main class="p-4 max-w-2xl mx-auto">
@@ -896,6 +1078,19 @@
             </svg>
         </button>
     </div>
+    
+    <!-- Wallet Selector -->
+    {#if keystoreStatus.initialized && !keystoreStatus.locked && keystoreStatus.wallets.length > 0}
+        <div class="mb-4">
+            <WalletSelector
+                wallets={keystoreStatus.wallets}
+                activeWallet={keystoreStatus.activeWallet}
+                on:select={handleWalletSelect}
+                on:add={() => console.log("[UI] Add wallet clicked")}
+                on:manage={() => console.log("[UI] Manage wallets clicked")}
+            />
+        </div>
+    {/if}
 
     {#if appState.showSettings}
         <Settings
@@ -913,6 +1108,18 @@
                 appState = { ...appState };
             }}
         />
+    {:else if !keystoreStatus.initialized}
+        <!-- Keystore not initialized -->
+        <div class="text-center py-8">
+            <h2 class="text-xl font-semibold mb-4">Welcome to MPC Wallet</h2>
+            <p class="text-gray-600 mb-6">Create a secure keystore to get started</p>
+            <button
+                class="bg-blue-500 hover:bg-blue-600 text-white px-6 py-3 rounded-lg font-medium"
+                on:click={showCreateKeystorePrompt}
+            >
+                Create Keystore
+            </button>
+        </div>
     {:else}
         <!-- Wallet Status Banner -->
         <div class="mb-4 p-3 border rounded">
@@ -1546,6 +1753,17 @@
         </div>
     {/if}
 </main>
+
+<!-- Password Prompt Modal -->
+{#if showPasswordPrompt}
+    <PasswordPrompt
+        title={passwordPromptConfig.title}
+        message={passwordPromptConfig.message}
+        confirmMode={passwordPromptConfig.confirmMode}
+        on:submit={passwordPromptConfig.onSubmit}
+        on:cancel={passwordPromptConfig.onCancel}
+    />
+{/if}
 
 <style>
     :global(body) {
