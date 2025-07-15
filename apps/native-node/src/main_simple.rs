@@ -4,7 +4,7 @@ use cli_node::{AppRunner, UIProvider};
 use cli_node::protocal::signal::SessionInfo;
 use cli_node::utils::state::{PendingSigningRequest, InternalCommand};
 use frost_secp256k1::Secp256K1Sha256;
-use slint::{ModelRc, ComponentHandle, Model};
+use slint::{ModelRc, ComponentHandle};
 use std::sync::Arc;
 use tracing::{info, Level};
 use tracing_subscriber;
@@ -12,67 +12,31 @@ use tracing_subscriber;
 slint::include_modules!();
 
 /// Simple UI provider that updates global state
-struct SimpleUIProvider {
-    window: slint::Weak<MainWindow>,
-}
+struct SimpleUIProvider;
 
 impl SimpleUIProvider {
-    fn new(window: slint::Weak<MainWindow>) -> Self {
-        Self { window }
+    fn new() -> Self {
+        Self
     }
 }
 
 #[async_trait]
 impl UIProvider for SimpleUIProvider {
     async fn set_connection_status(&self, connected: bool) {
-        info!("UIProvider::set_connection_status called with: {}", connected);
+        info!("Setting connection status to: {}", connected);
         
-        let window = self.window.clone();
-        let result = slint::invoke_from_event_loop(move || {
-            if let Some(window) = window.upgrade() {
-                let app_state = window.global::<AppState>();
-                app_state.set_websocket_connected(connected);
-                info!("Successfully updated websocket_connected in AppState to: {}", connected);
-                
-                // Also add a log message
-                let current_logs = app_state.get_log_messages();
-                let mut logs: Vec<slint::SharedString> = Vec::new();
-                
-                for i in 0..current_logs.row_count() {
-                    if let Some(log) = current_logs.row_data(i) {
-                        logs.push(log);
-                    }
-                }
-                
-                let status_msg = if connected {
-                    "✓ Connected to WebSocket server"
-                } else {
-                    "✗ Disconnected from WebSocket server"
-                };
-                logs.push(status_msg.into());
-                
-                if logs.len() > 100 {
-                    logs.drain(0..logs.len() - 100);
-                }
-                
-                app_state.set_log_messages(ModelRc::new(slint::VecModel::from(logs)));
-            } else {
-                info!("Failed to upgrade window weak reference");
-            }
+        // Use run_in_event_loop to ensure we're on the UI thread
+        let _ = slint::invoke_from_event_loop(move || {
+            let app_state = AppState::get(&slint::Window::new().unwrap());
+            app_state.set_websocket_connected(connected);
+            info!("Updated websocket_connected in AppState to: {}", connected);
         });
-        
-        if result.is_err() {
-            info!("Failed to invoke from event loop");
-        }
     }
     
     async fn set_device_id(&self, device_id: String) {
-        let window = self.window.clone();
         let _ = slint::invoke_from_event_loop(move || {
-            if let Some(window) = window.upgrade() {
-                let app_state = window.global::<AppState>();
-                app_state.set_device_id(device_id.into());
-            }
+            let app_state = AppState::get(&slint::Window::new().unwrap());
+            app_state.set_device_id(device_id.into());
         });
     }
     
@@ -81,12 +45,9 @@ impl UIProvider for SimpleUIProvider {
     async fn update_device_status(&self, _device_id: String, _status: String) {}
     
     async fn update_session_status(&self, status: String) {
-        let window = self.window.clone();
         let _ = slint::invoke_from_event_loop(move || {
-            if let Some(window) = window.upgrade() {
-                let app_state = window.global::<AppState>();
-                app_state.set_session_status(status.into());
-            }
+            let app_state = AppState::get(&slint::Window::new().unwrap());
+            app_state.set_session_status(status.into());
         });
     }
     
@@ -107,12 +68,9 @@ impl UIProvider for SimpleUIProvider {
     
     async fn set_generated_address(&self, address: Option<String>) {
         if let Some(address) = address {
-            let window = self.window.clone();
             let _ = slint::invoke_from_event_loop(move || {
-                if let Some(window) = window.upgrade() {
-                    let app_state = window.global::<AppState>();
-                    app_state.set_generated_address(address.into());
-                }
+                let app_state = AppState::get(&slint::Window::new().unwrap());
+                app_state.set_generated_address(address.into());
             });
         }
     }
@@ -120,14 +78,11 @@ impl UIProvider for SimpleUIProvider {
     async fn set_group_public_key(&self, _key: Option<String>) {}
     
     async fn add_signing_request(&self, request: PendingSigningRequest) {
-        let window = self.window.clone();
         let _ = slint::invoke_from_event_loop(move || {
-            if let Some(window) = window.upgrade() {
-                let _app_state = window.global::<AppState>();
-                // Note: This UI doesn't have pending_signing_requests property
-                // Just log it for now
-                let _ = request;
-            }
+            let app_state = AppState::get(&slint::Window::new().unwrap());
+            let mut requests = app_state.get_pending_signing_requests().to_vec();
+            requests.push(format!("ID: {} from {}", request.signing_id, request.from_device).into());
+            app_state.set_pending_signing_requests(ModelRc::new(slint::VecModel::from(requests)));
         });
     }
     
@@ -144,46 +99,24 @@ impl UIProvider for SimpleUIProvider {
     async fn set_selected_wallet(&self, _wallet_id: Option<String>) {}
     
     async fn add_log(&self, message: String) {
-        let window = self.window.clone();
         let _ = slint::invoke_from_event_loop(move || {
-            if let Some(window) = window.upgrade() {
-                let app_state = window.global::<AppState>();
-                
-                // Get current logs
-                let current_logs = app_state.get_log_messages();
-                let mut logs: Vec<slint::SharedString> = Vec::new();
-                
-                // Convert ModelRc to Vec
-                for i in 0..current_logs.row_count() {
-                    if let Some(log) = current_logs.row_data(i) {
-                        logs.push(log);
-                    }
-                }
-                
-                // Add new message
-                logs.push(message.into());
-                
-                // Keep only last 100
-                if logs.len() > 100 {
-                    logs.drain(0..logs.len() - 100);
-                }
-                
-                // Update
-                app_state.set_log_messages(ModelRc::new(slint::VecModel::from(logs)));
+            let app_state = AppState::get(&slint::Window::new().unwrap());
+            let mut logs = app_state.get_log_messages().to_vec();
+            logs.push(message.into());
+            if logs.len() > 100 {
+                logs.drain(0..logs.len() - 100);
             }
+            app_state.set_log_messages(ModelRc::new(slint::VecModel::from(logs)));
         });
     }
     
     async fn set_logs(&self, logs: Vec<String>) {
-        let window = self.window.clone();
         let _ = slint::invoke_from_event_loop(move || {
-            if let Some(window) = window.upgrade() {
-                let app_state = window.global::<AppState>();
-                let messages: Vec<slint::SharedString> = logs.into_iter()
-                    .map(|s| s.into())
-                    .collect();
-                app_state.set_log_messages(ModelRc::new(slint::VecModel::from(messages)));
-            }
+            let app_state = AppState::get(&slint::Window::new().unwrap());
+            let messages: Vec<slint::SharedString> = logs.into_iter()
+                .map(|s| s.into())
+                .collect();
+            app_state.set_log_messages(ModelRc::new(slint::VecModel::from(messages)));
         });
     }
     
@@ -220,12 +153,9 @@ async fn main() -> Result<()> {
     let app_state = ui.global::<AppState>();
     app_state.set_websocket_connected(false);
     app_state.set_device_id("".into());
-    app_state.set_log_messages(ModelRc::new(slint::VecModel::from(Vec::<slint::SharedString>::new())));
     
-    let ui_weak = ui.as_weak();
-    
-    // Create simple UI provider with window reference
-    let ui_provider = Arc::new(SimpleUIProvider::new(ui_weak.clone()));
+    // Create simple UI provider
+    let ui_provider = Arc::new(SimpleUIProvider::new());
     
     // Create app runner
     let app_runner = AppRunner::<Secp256K1Sha256>::new(
@@ -239,19 +169,11 @@ async fn main() -> Result<()> {
     // Setup UI callbacks
     {
         let tx = cmd_sender.clone();
-        let ui_provider = ui_provider.clone();
         ui.on_connect_websocket(move |device_id| {
             info!("Connect button clicked with device ID: {}", device_id);
             let device_id = device_id.to_string();
             let tx = tx.clone();
-            let provider = ui_provider.clone();
-            
             tokio::spawn(async move {
-                // Update UI immediately
-                provider.set_device_id(device_id.clone()).await;
-                provider.add_log(format!("Connecting with device ID: {}", device_id)).await;
-                
-                // Send command
                 let _ = tx.send(InternalCommand::SendToServer(
                     webrtc_signal_server::ClientMsg::Register { device_id }
                 ));
@@ -259,12 +181,28 @@ async fn main() -> Result<()> {
         });
     }
     
-    // Note: main_simple.slint doesn't have create_session callback
+    {
+        let tx = cmd_sender.clone();
+        ui.on_create_session(move |session_id, total, threshold| {
+            let session_id = session_id.to_string();
+            let total = total as u16;
+            let threshold = threshold as u16;
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                let participants: Vec<String> = (1..=total).map(|i| format!("device-{}", i)).collect();
+                let _ = tx.send(InternalCommand::ProposeSession {
+                    session_id,
+                    total,
+                    threshold,
+                    participants,
+                });
+            });
+        });
+    }
     
     {
         let tx = cmd_sender.clone();
         ui.on_start_dkg(move || {
-            info!("Start DKG button clicked");
             let tx = tx.clone();
             tokio::spawn(async move {
                 let _ = tx.send(InternalCommand::TriggerDkgRound1);
@@ -272,7 +210,21 @@ async fn main() -> Result<()> {
         });
     }
     
-    // Note: main_simple.slint doesn't have initiate_signing callback
+    {
+        let tx = cmd_sender.clone();
+        ui.on_initiate_signing(move |tx_data, blockchain| {
+            let tx_data = tx_data.to_string();
+            let blockchain = blockchain.to_string();
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                let _ = tx.send(InternalCommand::InitiateSigning {
+                    transaction_data: tx_data,
+                    blockchain,
+                    chain_id: None,
+                });
+            });
+        });
+    }
     
     // Run the app logic
     tokio::spawn(async move {

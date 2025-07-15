@@ -51,6 +51,8 @@ argon2 = "0.5.2"
 dirs = "5.0.1"
 base64 = "0.21"
 pbkdf2 = "0.12"
+async-trait = "0.1"
+tracing = "0.1"
 
 
 [dev-dependencies]

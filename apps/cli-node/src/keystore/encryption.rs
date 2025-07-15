@@ -44,20 +44,6 @@ impl KeyDerivation {
     }
 }
 
-/// Encrypts data with a password using AES-256-GCM with PBKDF2 key derivation.
-///
-/// The output format is: `salt (16 bytes) + nonce (12 bytes) + ciphertext`
-/// Uses PBKDF2 for browser compatibility with Chrome extensions.
-pub fn encrypt_data(data: &[u8], password: &str) -> crate::keystore::Result<Vec<u8>> {
-    encrypt_data_with_method(data, password, KeyDerivation::Pbkdf2)
-}
-
-/// Encrypts data for browser compatibility using PBKDF2-SHA256 key derivation.
-///
-/// The output format is: `salt (16 bytes) + nonce (12 bytes) + ciphertext`
-pub fn encrypt_data_browser_compat(data: &[u8], password: &str) -> crate::keystore::Result<Vec<u8>> {
-    encrypt_data_with_method(data, password, KeyDerivation::Pbkdf2)
-}
 
 /// Encrypts data with a password using AES-256-GCM with the specified key derivation method.
 ///

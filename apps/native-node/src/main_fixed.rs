@@ -4,7 +4,7 @@ use cli_node::{AppRunner, UIProvider};
 use cli_node::protocal::signal::SessionInfo;
 use cli_node::utils::state::{PendingSigningRequest, InternalCommand};
 use frost_secp256k1::Secp256K1Sha256;
-use slint::{ModelRc, ComponentHandle, Model};
+use slint::{ModelRc, ComponentHandle};
 use std::sync::Arc;
 use tracing::{info, Level};
 use tracing_subscriber;
@@ -25,45 +25,16 @@ impl SimpleUIProvider {
 #[async_trait]
 impl UIProvider for SimpleUIProvider {
     async fn set_connection_status(&self, connected: bool) {
-        info!("UIProvider::set_connection_status called with: {}", connected);
+        info!("Setting connection status to: {}", connected);
         
         let window = self.window.clone();
-        let result = slint::invoke_from_event_loop(move || {
+        let _ = slint::invoke_from_event_loop(move || {
             if let Some(window) = window.upgrade() {
                 let app_state = window.global::<AppState>();
                 app_state.set_websocket_connected(connected);
-                info!("Successfully updated websocket_connected in AppState to: {}", connected);
-                
-                // Also add a log message
-                let current_logs = app_state.get_log_messages();
-                let mut logs: Vec<slint::SharedString> = Vec::new();
-                
-                for i in 0..current_logs.row_count() {
-                    if let Some(log) = current_logs.row_data(i) {
-                        logs.push(log);
-                    }
-                }
-                
-                let status_msg = if connected {
-                    "✓ Connected to WebSocket server"
-                } else {
-                    "✗ Disconnected from WebSocket server"
-                };
-                logs.push(status_msg.into());
-                
-                if logs.len() > 100 {
-                    logs.drain(0..logs.len() - 100);
-                }
-                
-                app_state.set_log_messages(ModelRc::new(slint::VecModel::from(logs)));
-            } else {
-                info!("Failed to upgrade window weak reference");
+                info!("Updated websocket_connected to: {}", connected);
             }
         });
-        
-        if result.is_err() {
-            info!("Failed to invoke from event loop");
-        }
     }
     
     async fn set_device_id(&self, device_id: String) {
@@ -119,17 +90,7 @@ impl UIProvider for SimpleUIProvider {
     
     async fn set_group_public_key(&self, _key: Option<String>) {}
     
-    async fn add_signing_request(&self, request: PendingSigningRequest) {
-        let window = self.window.clone();
-        let _ = slint::invoke_from_event_loop(move || {
-            if let Some(window) = window.upgrade() {
-                let _app_state = window.global::<AppState>();
-                // Note: This UI doesn't have pending_signing_requests property
-                // Just log it for now
-                let _ = request;
-            }
-        });
-    }
+    async fn add_signing_request(&self, _request: PendingSigningRequest) {}
     
     async fn remove_signing_request(&self, _signing_id: String) {}
     
@@ -211,7 +172,7 @@ async fn main() -> Result<()> {
         .with_max_level(Level::INFO)
         .init();
     
-    info!("Starting MPC Wallet Native Node (Simple Reactive)");
+    info!("Starting MPC Wallet Native Node (Fixed Reactive)");
     
     // Create UI
     let ui = MainWindow::new()?;
@@ -224,7 +185,7 @@ async fn main() -> Result<()> {
     
     let ui_weak = ui.as_weak();
     
-    // Create simple UI provider with window reference
+    // Create simple UI provider
     let ui_provider = Arc::new(SimpleUIProvider::new(ui_weak.clone()));
     
     // Create app runner
@@ -259,8 +220,6 @@ async fn main() -> Result<()> {
         });
     }
     
-    // Note: main_simple.slint doesn't have create_session callback
-    
     {
         let tx = cmd_sender.clone();
         ui.on_start_dkg(move || {
@@ -271,8 +230,6 @@ async fn main() -> Result<()> {
             });
         });
     }
-    
-    // Note: main_simple.slint doesn't have initiate_signing callback
     
     // Run the app logic
     tokio::spawn(async move {
