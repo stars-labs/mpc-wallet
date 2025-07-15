@@ -11,7 +11,8 @@ MPC Wallet is a monorepo containing a browser extension, CLI node, and WebRTC si
 ```
 apps/
 ├── browser-extension/    # Chrome/Firefox extension with UI
-├── cli-node/            # Rust CLI for MPC node operations
+├── cli-node/            # Rust CLI for MPC node operations (also used as library)
+├── native-node/         # Native desktop app with Slint UI (shares CLI node core)
 └── signal-server/       # WebRTC signaling infrastructure
     ├── server/          # Standard WebSocket server
     └── cloudflare-worker/ # Edge deployment
@@ -38,9 +39,13 @@ The extension follows Chrome Extension Manifest V3 architecture with four main c
 
 - **WebRTC System** (`apps/browser-extension/src/entrypoints/offscreen/webrtc.ts`): Manages peer-to-peer connections and coordinates the MPC protocol.
   
-- **Shared FROST Core** (`packages/@mpc-wallet/frost-core/`): Shared Rust library implementing core FROST cryptographic operations, keystore management, and encryption. Used by both WASM and CLI to eliminate code duplication.
+- **Shared FROST Core** (`packages/@mpc-wallet/frost-core/`): Shared Rust library implementing core FROST cryptographic operations, keystore management, and encryption. Used by WASM, CLI, and native applications to eliminate code duplication.
 
 - **Rust/WebAssembly Core** (`packages/@mpc-wallet/core-wasm/src/lib.rs`): Thin wrapper around frost-core providing WASM bindings for browser usage.
+
+- **CLI Node Library** (`apps/cli-node/src/lib.rs`): The CLI node exposes its core functionality as a Rust library, allowing the native desktop app to reuse all the WebSocket, WebRTC, DKG, and signing logic without duplication.
+
+- **Native Desktop App** (`apps/native-node/`): Desktop application with Slint UI that uses the CLI node as a library. Features an adapter pattern to bridge UI events to the CLI's command system.
   
 - **Shared Types** (`packages/@mpc-wallet/types/`): Centralized TypeScript type definitions shared across all applications. Includes messages, state, session, DKG, keystore, and network types.
   
@@ -149,6 +154,7 @@ bun scripts/benchmark.ts     # Runtime benchmarking
 
 ## Development Workflow
 
+### Browser Extension
 1. Start the development server: `bun run dev`
 2. Load the extension into Chrome/Edge from the `dist/` directory
 3. Monitor logs using the browser's developer console:
@@ -156,6 +162,13 @@ bun scripts/benchmark.ts     # Runtime benchmarking
    - Popup: Right-click popup → Inspect
    - Offscreen: Check background console for offscreen logs
 4. For changes to the Rust code, the dev server auto-rebuilds WASM
+
+### Native Desktop Application
+1. Build and run: `cd apps/native-node && cargo run`
+2. The native app shares the CLI node's core functionality via library imports
+3. UI is built with Slint framework for native performance
+4. Uses the same WebSocket/WebRTC infrastructure as CLI and browser extension
+5. Keystore files are compatible between all three applications
 
 ## Message Flow Architecture
 
@@ -253,17 +266,21 @@ The extension supports importing and exporting FROST keystore data for interoper
 
 ## Technology Stack
 
-- **Runtime**: Bun (fast JavaScript runtime)
-- **Build System**: Bun + wasm-pack + WXT
-- **UI Framework**: Svelte 5 with TailwindCSS
+- **Runtime**: Bun (fast JavaScript runtime) for web, Rust for native
+- **Build System**: Bun + wasm-pack + WXT for web, Cargo for native
+- **UI Frameworks**: 
+  - Browser Extension: Svelte 5 with TailwindCSS
+  - Native Desktop: Slint UI framework (Rust-native GUI)
+  - CLI: Ratatui for terminal UI
 - **Extension Framework**: WXT (Web Extension Tools)
 - **Cryptography**: FROST threshold signatures (implemented in Rust)
 - **P2P Communication**: WebRTC with WebSocket signaling
-- **Blockchain Libraries**: viem (Ethereum interactions)
+- **Blockchain Libraries**: viem (Ethereum interactions), ethers-rs, solana-sdk
 - **Storage**: Browser extension storage API with AES-256-GCM encryption
 - **Key Derivation**: PBKDF2-SHA256 (extension), Argon2id compatibility (CLI import)
 - **Testing**: Bun test runner with comprehensive test coverage
 - **Development Environment**: NixOS with Nix flake for dependencies
+- **Code Sharing**: CLI node exposes lib.rs for reuse in native desktop app
 
 ## AI Development Cycle
 

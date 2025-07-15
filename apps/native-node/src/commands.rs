@@ -34,6 +34,20 @@ pub enum InternalCommand {
         message: DirectMessage,
     },
     
+    // WebRTC state updates
+    UpdateWebRTCState {
+        device_id: String,
+        state: crate::state::WebRTCConnectionState,
+    },
+    SendWebSocketRelay {
+        target_device: String,
+        message: serde_json::Value,
+    },
+    ProcessDirectMessage {
+        from_device: String,
+        message: DirectMessage,
+    },
+    
     // DKG commands
     CheckAndTriggerDkg,
     TriggerDkgRound1,

@@ -5,7 +5,6 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::keystore::KEYSTORE_VERSION;
 
 /// Gets the current Unix timestamp in seconds
 fn current_timestamp() -> u64 {
@@ -306,51 +305,3 @@ pub struct KeystoreIndex {
     pub devices: Vec<DeviceInfo>,
 }
 
-impl KeystoreIndex {
-    /// Creates a new, empty keystore index
-    pub fn new() -> Self {
-        Self {
-            version: KEYSTORE_VERSION,
-            wallets: Vec::new(),
-            devices: Vec::new(),
-        }
-    }
-
-    /// Adds or updates a wallet in the index
-    pub fn add_wallet(&mut self, wallet: WalletInfo) {
-        // Replace if wallet ID already exists, otherwise add
-        if let Some(idx) = self
-            .wallets
-            .iter()
-            .position(|w| w.wallet_id == wallet.wallet_id)
-        {
-            self.wallets[idx] = wallet;
-        } else {
-            self.wallets.push(wallet);
-        }
-    }
-
-    /// Adds or updates a device in the index
-    pub fn add_device(&mut self, device: DeviceInfo) {
-        // Replace if device ID already exists, otherwise add
-        if let Some(idx) = self
-            .devices
-            .iter()
-            .position(|d| d.device_id == device.device_id)
-        {
-            self.devices[idx] = device;
-        } else {
-            self.devices.push(device);
-        }
-    }
-
-    /// Gets a wallet by ID
-    pub fn get_wallet(&self, wallet_id: &str) -> Option<&WalletInfo> {
-        self.wallets.iter().find(|w| w.wallet_id == wallet_id)
-    }
-
-    /// Gets a device by ID
-    pub fn get_device(&self, device_id: &str) -> Option<&DeviceInfo> {
-        self.devices.iter().find(|d| d.device_id == device_id)
-    }
-}

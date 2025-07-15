@@ -233,10 +233,6 @@ impl Keystore {
         self.save_wallet_file_v2_with_method(wallet_id, data, password, metadata, crate::keystore::encryption::KeyDerivation::Pbkdf2)
     }
 
-    /// Saves encrypted wallet data to a file using browser-compatible encryption
-    fn save_wallet_file_v2_browser_compat(&self, wallet_id: &str, data: &[u8], password: &str, metadata: &WalletMetadata) -> Result<()> {
-        self.save_wallet_file_v2_with_method(wallet_id, data, password, metadata, crate::keystore::encryption::KeyDerivation::Pbkdf2)
-    }
 
     /// Saves encrypted wallet data to a file with embedded metadata (v2 format) using specified encryption method
     fn save_wallet_file_v2_with_method(&self, wallet_id: &str, data: &[u8], password: &str, metadata: &WalletMetadata, method: crate::keystore::encryption::KeyDerivation) -> Result<()> {

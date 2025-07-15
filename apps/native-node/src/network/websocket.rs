@@ -73,16 +73,40 @@ async fn process_server_message(
         }
         
         ServerMessage::Relay { from_device, to_device: _, message } => {
-            // Parse the relayed message
-            if let Ok(signal) = serde_json::from_value::<crate::commands::WebRTCSignal>(message.clone()) {
-                // Handle WebRTC signal
-                command_tx.send(InternalCommand::SendWebRTCSignal {
-                    target_device: from_device,
-                    signal,
-                }).await?;
-            } else if let Ok(direct_msg) = serde_json::from_value::<crate::commands::DirectMessage>(message) {
-                // Handle direct message
-                handle_direct_message(direct_msg, from_device, state, command_tx).await?;
+            // Check message type first
+            if let Some(msg_type) = message.get("type").and_then(|t| t.as_str()) {
+                match msg_type {
+                    "Offer" => {
+                        if let Some(sdp) = message.get("sdp").and_then(|s| s.as_str()) {
+                            command_tx.send(InternalCommand::SendWebRTCSignal {
+                                target_device: from_device,
+                                signal: crate::commands::WebRTCSignal::Offer { sdp: sdp.to_string() },
+                            }).await?;
+                        }
+                    }
+                    "Answer" => {
+                        if let Some(sdp) = message.get("sdp").and_then(|s| s.as_str()) {
+                            command_tx.send(InternalCommand::SendWebRTCSignal {
+                                target_device: from_device,
+                                signal: crate::commands::WebRTCSignal::Answer { sdp: sdp.to_string() },
+                            }).await?;
+                        }
+                    }
+                    "IceCandidate" => {
+                        if let Some(candidate) = message.get("candidate").and_then(|c| c.as_str()) {
+                            command_tx.send(InternalCommand::SendWebRTCSignal {
+                                target_device: from_device,
+                                signal: crate::commands::WebRTCSignal::IceCandidate { candidate: candidate.to_string() },
+                            }).await?;
+                        }
+                    }
+                    _ => {
+                        // Try to parse as direct message
+                        if let Ok(direct_msg) = serde_json::from_value::<crate::commands::DirectMessage>(message) {
+                            handle_direct_message(direct_msg, from_device, state, command_tx).await?;
+                        }
+                    }
+                }
             }
         }
         

@@ -366,6 +366,9 @@ pub trait DkgStateDisplay {
     fn is_completed(&self) -> bool;
 }
 
+// Export DkgStateDisplay as a type alias for use in other modules
+pub type DkgStateDisplayString = String;
+
 // Implement the trait for the imported DkgState
 impl DkgStateDisplay for DkgState {
     fn display_status(&self) -> String {
@@ -456,6 +459,45 @@ pub struct AppState<C: Ciphersuite> {
     pub offline_mode: bool,
     // pub offline_config: crate::offline::OfflineConfig,
     // pub offline_sessions: HashMap<String, crate::offline::OfflineSession>,
+}
+
+impl<C: Ciphersuite> AppState<C> {
+    pub fn new() -> Self {
+        Self {
+            device_id: String::new(),
+            devices: Vec::new(),
+            log: Vec::new(),
+            log_scroll: 0,
+            session: None,
+            invites: Vec::new(),
+            device_connections: Arc::new(Mutex::new(HashMap::new())),
+            device_statuses: HashMap::new(),
+            reconnection_tracker: ReconnectionTracker::new(),
+            making_offer: HashMap::new(),
+            pending_ice_candidates: HashMap::new(),
+            dkg_state: DkgState::Idle,
+            identifier_map: None,
+            dkg_part1_public_package: None,
+            dkg_part1_secret_package: None,
+            received_dkg_packages: BTreeMap::new(),
+            round2_secret_package: None,
+            received_dkg_round2_packages: BTreeMap::new(),
+            key_package: None,
+            group_public_key: None,
+            data_channels: HashMap::new(),
+            solana_public_key: None,
+            etherum_public_key: None,
+            blockchain_addresses: Vec::new(),
+            mesh_status: MeshStatus::Incomplete,
+            pending_mesh_ready_signals: Vec::new(),
+            own_mesh_ready_sent: false,
+            keystore: None,
+            current_wallet_id: None,
+            signing_state: SigningState::Idle,
+            pending_signing_requests: Vec::new(),
+            offline_mode: false,
+        }
+    }
 }
 
 // --- Reconnection Tracker ---
