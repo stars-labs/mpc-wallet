@@ -173,7 +173,7 @@ async fn main() {
                                                     session_id, session.active_participants);
                                                 
                                                 // Update the stored session_info to include accepted_devices
-                                                if let Some(existing_participants) = session.session_info.get("participants").and_then(|v| v.as_array()) {
+                                                if session.session_info.get("participants").and_then(|v| v.as_array()).is_some() {
                                                     // Only update if we have participants info, otherwise preserve original session_info
                                                     let mut updated_info = session.session_info.clone();
                                                     updated_info.as_object_mut().unwrap().insert("accepted_devices".to_string(), serde_json::Value::Array(accepted_devices.clone()));
