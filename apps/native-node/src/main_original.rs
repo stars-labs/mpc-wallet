@@ -1,8 +1,8 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use cli_node::{AppRunner, UIProvider};
-use cli_node::protocal::signal::SessionInfo;
-use cli_node::utils::state::PendingSigningRequest;
+use tui_node::{AppRunner, UIProvider};
+use tui_node::protocal::signal::SessionInfo;
+use tui_node::utils::state::PendingSigningRequest;
 use frost_secp256k1::Secp256K1Sha256;
 use slint::{ModelRc, Timer, TimerMode};
 use std::sync::Arc;
@@ -206,7 +206,7 @@ async fn main() -> Result<()> {
             let device_id = device_id.to_string();
             let tx = tx.clone();
             tokio::spawn(async move {
-                let _ = tx.send(cli_node::utils::state::InternalCommand::SendToServer(
+                let _ = tx.send(tui_node::utils::state::InternalCommand::SendToServer(
                     webrtc_signal_server::ClientMsg::Register { device_id }
                 ));
             });
@@ -223,7 +223,7 @@ async fn main() -> Result<()> {
             tokio::spawn(async move {
                 // For demo, using device IDs as participants
                 let participants: Vec<String> = (1..=total).map(|i| format!("device-{}", i)).collect();
-                let _ = tx.send(cli_node::utils::state::InternalCommand::ProposeSession {
+                let _ = tx.send(tui_node::utils::state::InternalCommand::ProposeSession {
                     session_id,
                     total,
                     threshold,
@@ -238,7 +238,7 @@ async fn main() -> Result<()> {
         ui.on_start_dkg(move || {
             let tx = tx.clone();
             tokio::spawn(async move {
-                let _ = tx.send(cli_node::utils::state::InternalCommand::TriggerDkgRound1);
+                let _ = tx.send(tui_node::utils::state::InternalCommand::TriggerDkgRound1);
             });
         });
     }
@@ -250,7 +250,7 @@ async fn main() -> Result<()> {
             let blockchain = blockchain.to_string();
             let tx = tx.clone();
             tokio::spawn(async move {
-                let _ = tx.send(cli_node::utils::state::InternalCommand::InitiateSigning {
+                let _ = tx.send(tui_node::utils::state::InternalCommand::InitiateSigning {
                     transaction_data: tx_data,
                     blockchain,
                     chain_id: None,
@@ -269,7 +269,7 @@ async fn main() -> Result<()> {
                 if let Some(from_start) = request_str.find(" from ") {
                     let signing_id = request_str[id_start + 4..from_start].to_string();
                     tokio::spawn(async move {
-                        let _ = tx.send(cli_node::utils::state::InternalCommand::AcceptSigning {
+                        let _ = tx.send(tui_node::utils::state::InternalCommand::AcceptSigning {
                             signing_id,
                         });
                     });

@@ -1,8 +1,8 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use cli_node::{AppRunner, UIProvider};
-use cli_node::protocal::signal::SessionInfo;
-use cli_node::utils::state::{PendingSigningRequest, InternalCommand};
+use tui_node::{AppRunner, UIProvider};
+use tui_node::protocal::signal::SessionInfo;
+use tui_node::utils::state::{PendingSigningRequest, InternalCommand};
 use frost_secp256k1::Secp256K1Sha256;
 use slint::{ModelRc, ComponentHandle};
 use std::sync::Arc;

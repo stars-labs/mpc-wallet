@@ -11,7 +11,7 @@ slint = { version = "1.12.1", features = ["backend-winit", "backend-winit-x11", 
 
 # MPC Wallet dependencies
 mpc-wallet-frost-core = { path = "../../packages/@mpc-wallet/frost-core" }
-cli-node = { path = "../cli-node" }
+tui-node = { path = "../tui-node" }
 
 # Frost dependencies for Ciphersuite types
 frost-core = { version = "2.1.0", features = ["serde"] }

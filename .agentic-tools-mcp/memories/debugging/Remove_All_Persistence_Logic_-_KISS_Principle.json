@@ -1,8 +1,0 @@
-{
-  "id": "9fbcedd9-f9b1-45c5-8f43-1c2c5ac1d295",
-  "title": "Remove All Persistence Logic - KISS Principle",
-  "details": "**USER REQUEST**: Remove ALL persistence logic causing session state bugs and auto-acceptance issues.\n\n**PRINCIPLE**: KISS (Keep It Simple, Stupid) - make core logic simple and working.\n\n**PERSISTENCE ISSUES**:\n1. SessionPersistenceManager causes sessions to be restored incorrectly\n2. StateManager persistence doesn't handle invites properly\n3. Session restoration logic triggers auto-acceptance behaviors\n4. Extension restart state handling is buggy\n\n**SOLUTION**: Remove ALL persistence logic:\n- Remove SessionPersistenceManager class entirely\n- Remove StateManager.persistState() and loadState() methods\n- Remove session restoration in background script\n- Remove chrome.storage.local usage for session state\n- Keep only in-memory state management\n\n**EXPECTED RESULT**: \n- Sessions will be lost on extension restart (acceptable trade-off)\n- No more auto-acceptance bugs\n- Clean, simple state management\n- UI will properly show invites vs active sessions",
-  "category": "debugging",
-  "dateCreated": "2025-06-15T13:02:06.212Z",
-  "dateUpdated": "2025-06-15T13:02:06.212Z"
-}

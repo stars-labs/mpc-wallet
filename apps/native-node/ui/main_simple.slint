@@ -7,6 +7,13 @@ export global AppState {
     in-out property <string> session-status: "No active session";
     in-out property <string> generated-address: "";
     in-out property <[string]> log-messages: [];
+    in-out property <[SessionInvite]> session-invites: [];
+}
+
+// Struct for session invitations
+export struct SessionInvite {
+    session_id: string,
+    from_device: string,
 }
 
 // Main application window using global state
@@ -19,6 +26,8 @@ export component MainWindow inherits Window {
     // Callbacks
     callback connect-websocket(string);
     callback create-session(string, int, int);
+    callback accept-session(string);
+    callback reject-session(string);
     callback start-dkg();
     callback initiate-signing(string, string);
     
@@ -116,6 +125,32 @@ export component MainWindow inherits Window {
                         padding: 20px;
                         spacing: 12px;
                         
+                        LineEdit {
+                            placeholder-text: "Session ID";
+                            text <=> session-id-input;
+                        }
+                        LineEdit {
+                            placeholder-text: "Participants";
+                            text <=> participants-input;
+                        }
+                        LineEdit {
+                            placeholder-text: "Threshold";
+                            text <=> threshold-input;
+                        }
+                        
+                        Button {
+                            text: "Create Session";
+                            primary: true;
+                            enabled: AppState.websocket-connected;
+                            clicked => {
+                                create-session(
+                                    session-id-input,
+                                    round(participants-input.to-float()),
+                                    round(threshold-input.to-float())
+                                );
+                            }
+                        }
+                        
                         Button {
                             text: "Start DKG";
                             primary: true;
@@ -127,6 +162,24 @@ export component MainWindow inherits Window {
                             text: AppState.session-status;
                             color: #E94560;
                             font-size: 14px;
+                        }
+                    }
+                }
+                
+                // Session Invites
+                GroupBox {
+                    title: "Session Invites";
+                    
+                    VerticalBox {
+                        padding: 20px;
+                        spacing: 12px;
+                        
+                        ListView {
+                            for invite[i] in AppState.session-invites: HorizontalBox {
+                                Text { text: "From: " + invite.from_device + " (" + invite.session_id + ")"; }
+                                Button { text: "Accept"; clicked => { accept-session(invite.session_id); } }
+                                Button { text: "Reject"; clicked => { reject-session(invite.session_id); } }
+                            }
                         }
                     }
                 }
@@ -164,4 +217,8 @@ export component MainWindow inherits Window {
             }
         }
     }
+    
+    property <string> session-id-input: "default-session";
+    property <string> participants-input: "2";
+    property <string> threshold-input: "2";
 }

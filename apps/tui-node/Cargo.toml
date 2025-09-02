@@ -1,0 +1,101 @@
+[package]
+name = "tui-node"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "tui_node"
+path = "src/lib.rs"
+
+[dependencies]
+# Use our shared frost-core library
+mpc-wallet-frost-core = { path = "../../packages/@mpc-wallet/frost-core" }
+
+# Still need these for specific types
+frost-ed25519 = "2.1.0"
+frost-secp256k1 = "2.1.0"
+frost-core = { version = "2.1.0", features = ["serde"] }
+rand = "*"
+solana-sdk = "2.2.2"
+solana-client = "2.2.7"
+bincode = { version = "2.0.1", features = ["serde"] }
+hex = { version = "0.4", features = ["serde"] }
+rand_core = "*"
+curve25519-dalek = "*"
+tokio = { version = "1.44.2", features = ["full"] }
+tokio-tungstenite = { version = "0.26.2", features = ["native-tls"] }
+futures-util = "0.3"
+futures = "0.3"
+itertools = "0.13.0"
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+ratatui = { version = "*", features = ["crossterm"] }
+crossterm = { version = "0.29.0" }
+anyhow = "*"
+url = "*"
+webrtc = "*"
+lazy_static = "*"
+bs58 = "0.5.0"
+sha2 = "0.10"
+sha3 = "0.10"
+ethers-core = "*"
+ethers-providers = "*"
+ethers-signers = "*"
+k256 = "*"
+elliptic-curve = "*"
+clap = { version = "4.5.37", features = ["derive"] }
+chrono = { version = "0.4", features = ["serde"] }
+webrtc-signal-server = { path = "../signal-server/server" }
+thiserror = "1.0"
+uuid = { version = "1.8", features = ["v4", "serde"] }
+
+# Performance optimization dependencies
+dashmap = "6.1"
+crossbeam = "0.8"
+parking_lot = "0.12"
+rayon = "1.10"
+
+# Metrics and profiling (optional, for development)
+aes-gcm = "0.10.3"
+argon2 = "0.5.2"
+dirs = "5.0.1"
+base64 = "0.21"
+pbkdf2 = "0.12"
+async-trait = "0.1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+gethostname = "0.4"
+lru = "0.12"
+
+
+[dev-dependencies]
+tempfile = "3.8"
+criterion = { version = "0.5", features = ["async_tokio", "html_reports"] }
+
+[[bench]]
+name = "performance_bench"
+harness = false
+
+[[bin]]
+name = "mpc-wallet-tui"
+path = "src/bin/mpc-wallet-tui.rs"
+
+[[bin]]
+name = "test-session-creation"
+path = "src/test_session_creation.rs"
+
+[[bin]]
+name = "test-auto-join"
+path = "src/bin/test_auto_join.rs"
+
+[[bin]]
+name = "test-session-discovery"
+path = "src/bin/test_session_discovery.rs"
+
+[[bin]]
+name = "mpc-wallet-stub"  
+path = "src/bin/mpc-wallet-stub.rs"
+
+[[bin]]
+name = "mpc-wallet-stub-simple"  
+path = "src/bin/mpc-wallet-stub-simple.rs"

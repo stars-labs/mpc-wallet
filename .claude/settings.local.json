@@ -19,7 +19,8 @@
       "WebFetch(domain:metamask.github.io)",
       "Bash(bun test:*)",
       "Bash(grep:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(cargo check:*)"
     ],
     "deny": []
   }

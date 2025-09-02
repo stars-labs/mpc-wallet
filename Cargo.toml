@@ -1,6 +1,6 @@
 [workspace]
 members = [
-    "apps/cli-node",
+    "apps/tui-node",
     "apps/native-node",
     "apps/signal-server/server",
     "apps/signal-server/cloudflare-worker",

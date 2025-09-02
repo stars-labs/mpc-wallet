@@ -1,8 +1,0 @@
-{
-  "id": "ff81ac7c-b386-4cd0-888f-eba3bff66bbc",
-  "title": "MPC Wallet Architecture Overview",
-  "details": "## MPC Wallet Chrome Extension - Core Architecture\n\n### Technology Stack\n- **Frontend Framework**: WXT (Web Extension Toolkit) + Svelte\n- **Programming Languages**: TypeScript (frontend), Rust (crypto core)\n- **Crypto Backend**: FROST DKG (Flexible Round-Optimized Schnorr Threshold) compiled to WASM\n- **Development Environment**: NixOS with Nix flake for dependency management\n- **Communication**: WebRTC for P2P connections, WebSocket for signaling\n\n### Key Components\n1. **Background Scripts**: Session management, WebSocket signaling\n2. **Offscreen Document**: WebRTC connections, FROST DKG processing\n3. **Content Scripts**: Web3 provider injection\n4. **Popup Interface**: User interaction, transaction signing\n5. **WASM Module**: Rust-based FROST DKG implementation\n\n### Architecture Patterns\n- Multi-process Chrome extension architecture\n- Event-driven communication between contexts\n- State management with persistence across extension lifecycle\n- Threshold cryptography for distributed key generation and signing\n\n### Supported Blockchains\n- Ethereum (secp256k1 curve)\n- Solana (Ed25519 curve)\n\n### Security Features\n- No single point of failure for private keys\n- Threshold signatures requiring multiple participants\n- Secure P2P communication through WebRTC\n- Browser sandboxing and extension security model",
-  "category": "architecture",
-  "dateCreated": "2025-06-13T10:59:16.830Z",
-  "dateUpdated": "2025-06-13T10:59:16.830Z"
-}

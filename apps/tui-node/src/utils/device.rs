@@ -1,0 +1,623 @@
+// use crate::network::websocket; // Unused
+// use crate::protocal::signal::*; // Unused
+use crate::protocal::signal::{WebRTCMessage, WebRTCSignal};
+use crate::utils::appstate_compat::AppState;
+use crate::utils::state::{DkgState, InternalCommand};
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use tokio::sync::{Mutex, mpsc};
+
+use webrtc::data_channel::RTCDataChannel;
+use webrtc::data_channel::data_channel_message::DataChannelMessage;
+use webrtc::data_channel::data_channel_state::RTCDataChannelState;
+use webrtc::ice_transport::ice_candidate::RTCIceCandidate;
+use webrtc::peer_connection::RTCPeerConnection;
+use webrtc::peer_connection::configuration::RTCConfiguration;
+use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
+
+use frost_core::Ciphersuite;
+
+use webrtc_signal_server::ClientMsg as SharedClientMsg;
+use crate::protocal::signal::{CandidateInfo, WebSocketMessage}; // Updated path
+
+
+pub const DATA_CHANNEL_LABEL: &str = "frost-dkg"; 
+
+pub async fn send_webrtc_message<C>(
+    target_device_id: &str,
+    message: &WebRTCMessage<C>,
+    state_log: Arc<Mutex<AppState<C>>>,
+) -> Result<(), String> where C: Ciphersuite {
+    let data_channel = {
+        let guard = state_log.lock().await;
+        guard.data_channels.get(target_device_id).cloned()
+    };
+
+    if let Some(dc) = data_channel {
+ 
+        if dc.ready_state() == RTCDataChannelState::Open {
+   
+            let msg_json = serde_json::to_string(&message)
+                .map_err(|e| format!("Failed to serialize envelope: {}", e))?;
+
+            if let Err(_e) = dc.send_text(msg_json).await {
+                return Err(format!("Failed to send message: {}", _e));
+            }
+            //         // udpate conncetion status
+            // let mut state_guard = state_log.lock().await;
+            // state_guard.device_statuses.insert(
+            //             target_device_id.to_string(),
+            //             webrtc::device_connection::device_connection_state::RTCDeviceConnectionState::Connected,
+            // );
+
+            Ok(())
+        } else {
+            let err_msg = format!(
+                "Data channel for {} is not open (state: {:?})",
+                target_device_id,
+                dc.ready_state()
+            );
+            Err(err_msg)
+        }
+    } else {
+        let err_msg = format!("Data channel not found for device {}", target_device_id);
+        Err(err_msg)
+    }
+}
+
+pub async fn create_and_setup_device_connection<C>(
+    device_id: String,
+    self_device_id: String, // Pass self_device_id
+    device_connections_arc: Arc<Mutex<HashMap<String, Arc<RTCPeerConnection>>>>,
+    cmd_tx: mpsc::UnboundedSender<InternalCommand<C>>, // Use InternalCommand
+    state_log: Arc<Mutex<AppState<C>>>,
+    api: &'static webrtc::api::API,
+    config: &'static RTCConfiguration,
+) -> Result<Arc<RTCPeerConnection>, String> where C: Ciphersuite + Send + Sync + 'static, 
+<<C as Ciphersuite>::Group as frost_core::Group>::Element: Send + Sync, 
+<<<C as Ciphersuite>::Group as frost_core::Group>::Field as frost_core::Field>::Scalar: Send + Sync,     
+{
+    // Clone variables for use after timeout
+    let device_id_for_timeout = device_id.clone();
+    let _state_log_for_timeout = state_log.clone();
+    
+    // Add timeout to prevent hanging during connection creation
+    let connection_creation = async move {
+        // Double-check pattern with immediate insertion to prevent race conditions
+        let pc_arc = {
+            let mut device_conns = device_connections_arc.lock().await;
+            if let Some(existing_pc) = device_conns.get(&device_id) {
+                return Ok(existing_pc.clone());
+            }
+
+            state_log
+                .lock()
+                .await
+                .log
+                .push(format!("Creating WebRTC connection object for {}", device_id));
+
+            // Use passed-in api and config
+            match api.new_peer_connection(config.clone()).await {
+                Ok(pc) => {
+                    let pc_arc = Arc::new(pc);
+                    // Store immediately to prevent duplicate creation
+                    device_conns.insert(device_id.clone(), pc_arc.clone());
+                    state_log
+                        .lock()
+                        .await
+                        .log
+                        .push(format!("Stored WebRTC connection object for {}", device_id));
+                    pc_arc
+                }
+                Err(_e) => {
+                    let err_msg = format!(
+                        "Error creating device connection object for {}: {}",
+                        device_id, _e
+                    );
+                    return Err(err_msg);
+                }
+            }
+        }; // Release the lock here
+
+        // Now set up callbacks and data channel (outside the lock)
+        if self_device_id < device_id {
+            match pc_arc.create_data_channel(DATA_CHANNEL_LABEL, None).await {
+                Ok(dc) => {
+                    
+                    // Log the initial state of the data channel
+                    let _dc_state = dc.ready_state();
+                    
+                    setup_data_channel_callbacks(
+                        dc,
+                        device_id.clone(),
+                        state_log.clone(),
+                        cmd_tx.clone(),
+                    ).await;
+                }
+                Err(_e) => {
+                }
+            }
+        } else {
+        }
+
+        let device_id_on_ice = device_id.clone();
+        let cmd_tx_on_ice = cmd_tx.clone(); // Clones the sender for internal ClientMsg
+        let state_log_on_ice = state_log.clone();
+        pc_arc.on_ice_candidate(Box::new(move |candidate: Option<RTCIceCandidate>| {
+                    let device_id = device_id_on_ice.clone();
+                    let cmd_tx = cmd_tx_on_ice.clone();
+                    let state_log = state_log_on_ice.clone();
+                    Box::pin(async move {
+                        if let Some(c) = candidate {
+                            // ... existing ICE candidate sending logic ...
+                            match c.to_json() {
+                                Ok(init) => {
+                                    tracing::info!("🧊 ICE candidate generated for {}: {}", device_id, init.candidate);
+                                    let signal = WebRTCSignal::Candidate(CandidateInfo {
+                                        candidate: init.candidate,
+                                        sdp_mid: init.sdp_mid,
+                                        sdp_mline_index: init.sdp_mline_index,
+                                    });
+                                    let websocket_msg = WebSocketMessage::WebRTCSignal(signal);
+                                    match serde_json::to_value(websocket_msg) {
+                                        Ok(json_val) => {
+                                            // Wrap the Relay message inside SendToServer command
+                                            let relay_cmd =
+                                                InternalCommand::SendToServer(SharedClientMsg::Relay {
+                                                    to: device_id.clone(),
+                                                    data: json_val,
+                                                });
+                                            tracing::info!("📮 Sending ICE candidate to {}", device_id);
+                                            let _ = cmd_tx.send(relay_cmd); // Send the internal command
+                                            state_log
+                                                .lock()
+                                                .await
+                                                .log
+                                                .push(format!("Sent ICE candidate to {}", device_id));
+                                        }
+                                        // FIX: Use error variable 'e'
+                                        Err(_e) => {
+                                        }
+                                    }
+                                }
+                                // FIX: Use error variable 'e'
+                                Err(_e) => {
+                                }
+                            }
+                        }
+                    })
+                }));
+
+        // Setup state change handler with DKG trigger logic
+        let state_log_on_state = state_log.clone();
+        let device_id_on_state = device_id.clone();
+        // Fix the setup_device_connection_callbacks function
+        // Clone before moving into closure
+        let pc_arc_for_state = pc_arc.clone();
+        pc_arc.on_peer_connection_state_change(Box::new(move |s: RTCPeerConnectionState| {
+            // Fix: Use pc_arc directly instead of undefined pc_arc_for_state
+            let pc_arc = pc_arc_for_state.clone();
+            
+            // Log both connectionState and iceConnectionState together
+            let ice_state = pc_arc.ice_connection_state();
+            tracing::debug!(
+                "Device {}: connectionState={:?}, iceConnectionState={:?}",
+                device_id, s, ice_state
+            );
+            if let Ok(mut app_state_guard) = state_log.try_lock() {
+                app_state_guard.device_statuses.insert(device_id.clone(), s);
+            }
+
+                // Handle state changes with improved logic
+                match s {
+                    RTCPeerConnectionState::Connected => {
+                        if let Ok(mut guard) = state_log.try_lock() {
+                            // Record successful connection time
+                            guard.reconnection_tracker.insert(device_id.clone(), std::time::Instant::now());
+                            
+                            // Data channel status check
+                            if guard.data_channels.contains_key(&device_id) {
+                                // Data channel exists
+                            } else {
+                                // No data channel yet
+                            }
+                        }
+                    }
+                    RTCPeerConnectionState::Disconnected => {
+                        // Handle disconnection with more aggressive reconnection
+                        if let Ok(mut guard) = state_log.try_lock() {
+                                                        
+                            // Reset DKG state if a device disconnects during DKG
+                            if guard.dkg_state != DkgState::Idle && guard.dkg_state != DkgState::Complete {
+                                guard.dkg_state = DkgState::Failed(format!("Device {} disconnected", device_id));
+                                // Clear intermediate DKG data if needed
+                                guard.dkg_part1_public_package = None;
+                                guard.dkg_part1_secret_package = None;
+                                guard.received_dkg_packages.clear();
+                            }
+                            
+                            // Always attempt immediate reconnection on Disconnected state
+                            if let Some(current_session) = guard.session.clone() {
+                                let _session_id_to_rejoin = current_session.session_id;
+                                // Drop the guard before sending the command
+                                drop(guard);
+                                // No JoinSession message sent
+                            }
+                        }
+                    }
+                    RTCPeerConnectionState::Failed => {
+                        if let Ok(mut guard) = state_log.try_lock() {
+                            
+                            // Reset DKG state if a device disconnects during DKG
+                            if guard.dkg_state != DkgState::Idle && guard.dkg_state != DkgState::Complete {
+                                guard.dkg_state = DkgState::Failed(format!("Device {} connection failed", device_id));
+                                guard.dkg_part1_public_package = None;
+                                guard.dkg_part1_secret_package = None;
+                                guard.received_dkg_packages.clear();
+                            }
+                            
+                            // Check if we should attempt reconnection (simple time-based check)
+                            let should_reconnect = match guard.reconnection_tracker.get(&device_id) {
+                                Some(last_attempt) => last_attempt.elapsed() > std::time::Duration::from_secs(5),
+                                None => true,
+                            };
+                            
+                            if should_reconnect {
+                                // Update last attempt time
+                                guard.reconnection_tracker.insert(device_id.clone(), std::time::Instant::now());
+                                
+                                if let Some(current_session) = guard.session.clone() {
+                                    let _session_id_to_rejoin = current_session.session_id;
+                                    // Drop the guard before any async operations
+                                    drop(guard);
+                                    // Reconnection logic would go here
+                                }
+                            }
+                        }
+                    }
+                    RTCPeerConnectionState::Connecting | RTCPeerConnectionState::New => {
+                        // We don't need special handling for these states,
+                        // they're already logged above when updating device_statuses
+                    }
+                    RTCPeerConnectionState::Closed => {
+                        if let Ok(_guard) = state_log.try_lock() {
+                        }
+                    }
+                    // Handle the Unspecified state to fix the compilation error
+                    RTCPeerConnectionState::Unspecified => {
+                        if let Ok(_guard) = state_log.try_lock() {
+                            // No specific action needed for unspecified state
+                        }
+                    }
+                }
+                Box::pin(async {})
+            }));
+
+            // --- Setup ICE connection monitoring callback ---
+            let state_log_ice = state_log_on_state.clone();
+            let device_id_ice = device_id_on_state.clone();
+            let pc_arc_for_ice = pc_arc.clone();
+            pc_arc.on_ice_connection_state_change(Box::new(move |ice_state| {
+                let state_log = state_log_ice.clone();
+                let device_id = device_id_ice.clone();
+                let pc_arc = pc_arc_for_ice.clone();
+
+                // Log both connectionState and iceConnectionState together
+                let conn_state = pc_arc.connection_state();
+                tracing::debug!(
+                    "Device {}: connectionState={:?}, iceConnectionState={:?}",
+                    device_id, conn_state, ice_state
+                );
+                if let Ok(_guard) = state_log.try_lock() {
+                }
+                // No async work, just return a ready future
+                Box::pin(async {})
+            }));
+
+            // --- Only set up callbacks for the main data channel (responder side) ---
+            let state_log_on_data = state_log_on_state.clone();
+            let device_id_on_data = device_id_on_state.clone();
+            let cmd_tx_on_data = cmd_tx.clone();
+            pc_arc.on_data_channel(Box::new(move |dc: Arc<RTCDataChannel>| {
+                let state_log = state_log_on_data.clone();
+                let device_id = device_id_on_data.clone();
+                let cmd_tx_clone = cmd_tx_on_data.clone();
+
+                Box::pin(async move {
+                    
+                    if dc.label() == DATA_CHANNEL_LABEL {
+                        let _dc_state = dc.ready_state();
+                        setup_data_channel_callbacks(dc, device_id, state_log, cmd_tx_clone).await;
+                    } else {
+                    }
+                })
+            }));
+
+        // Connection already stored in the double-check pattern above
+        Ok(pc_arc)
+    }; // Close the async block
+
+    // Apply timeout to prevent hanging
+    match tokio::time::timeout(std::time::Duration::from_secs(30), connection_creation).await {
+        Ok(result) => {
+            result
+        }
+        Err(_) => {
+            let timeout_msg = format!(
+                "⏰ TIMEOUT: WebRTC connection creation for {} took longer than 30 seconds, aborting",
+                device_id_for_timeout
+            );
+            Err(timeout_msg)
+        }
+    }
+}
+
+pub async fn setup_data_channel_callbacks<C>(
+    dc: Arc<RTCDataChannel>,
+    device_id: String,
+    state: Arc<Mutex<AppState<C>>>,
+    // Update the sender type here
+    cmd_tx: mpsc::UnboundedSender<InternalCommand<C>>, // Use InternalCommand
+) where C: Ciphersuite + Send + Sync + 'static, 
+<<C as Ciphersuite>::Group as frost_core::Group>::Element: Send + Sync, 
+<<<C as Ciphersuite>::Group as frost_core::Group>::Field as frost_core::Field>::Scalar: Send + Sync,     
+ {
+    let dc_arc = dc.clone(); // Clone the Arc for the data channel
+
+    // Log entry to setup_data_channel_callbacks
+
+    // Only store and set up callbacks for the main data channel
+    if dc_arc.label() == DATA_CHANNEL_LABEL {
+        let mut guard = state.lock().await;
+        let channel_count = guard.data_channels.len() + 1; // Calculate before inserting
+        guard.data_channels.insert(device_id.clone(), dc_arc.clone());
+        guard
+            .log
+            .push(format!("💾 Data channel for {} stored in app state (total channels: {})", 
+                device_id, channel_count));
+    }
+
+    let state_log_open = state.clone();
+    let device_id_open = device_id.clone();
+    let dc_clone = dc_arc.clone();
+    let cmd_tx_open = cmd_tx.clone();
+    dc_arc.on_open(Box::new(move || {
+        let _state_log_open = state_log_open.clone();
+        let _device_id_open = device_id_open.clone();
+        let _dc_clone = dc_clone.clone();
+        let cmd_tx_open = cmd_tx_open.clone();
+        Box::pin(async move {
+            
+            // Send ReportChannelOpen command to trigger mesh ready signaling
+            
+            if let Err(_e) = cmd_tx_open.send(InternalCommand::ReportChannelOpen {
+                device_id: _device_id_open.clone(),
+            }) {
+            } else {
+            }
+        })
+    }));
+
+    let state_log_msg = state.clone();
+    let device_id_msg = device_id.clone();
+    let cmd_tx_msg = cmd_tx.clone(); // Clone internal cmd_tx for on_message
+    let dc_arc_msg = dc_arc.clone(); // Clone for use inside async block
+    dc_arc.on_message(Box::new(move |msg: DataChannelMessage| {
+        let device_id = device_id_msg.clone();
+        let state_log = state_log_msg.clone();
+        let cmd_tx = cmd_tx_msg.clone();
+        let dc_arc = dc_arc_msg.clone(); // Use a clone inside the async block
+
+        Box::pin(async move {
+            // Only process messages if this is the main frost-dkg channel
+            if dc_arc.label() != DATA_CHANNEL_LABEL {
+                return;
+            }
+
+            if let Ok(text) = String::from_utf8(msg.data.to_vec()) {
+                // DEBUG: Log the raw message content to see exactly what we're receiving
+                
+                // Parse envelope
+                match serde_json::from_str::<WebRTCMessage<C>>(&text) {
+                    Ok(envelope) => {
+                        match envelope {
+                            WebRTCMessage::DkgRound1Package { package } => {
+                                    let _ = cmd_tx.send(InternalCommand::ProcessDkgRound1 {
+                                        from_device_id: device_id.clone(),
+                                        package,
+                                    });
+                            }
+                            WebRTCMessage::DkgRound2Package { package } => {
+                                // FIX: Add type annotation for from_value
+                                    let _ = cmd_tx.send(InternalCommand::ProcessDkgRound2 {
+                                        from_device_id: device_id.clone(),
+                                        package,
+                                    });
+                            }
+                            WebRTCMessage::SimpleMessage { text: _ } => {
+                            },
+                            WebRTCMessage::ChannelOpen { device_id: _ } => {
+                                // Just log the channel open notification, don't trigger ReportChannelOpen
+                                // to avoid infinite feedback loops
+                            },
+                            WebRTCMessage::MeshReady { session_id: _, device_id } => {
+                                let _ = cmd_tx.send(InternalCommand::ProcessMeshReady {
+                                    device_id: device_id.clone(),
+                                });
+                            },
+                            // Signing message handlers
+                            WebRTCMessage::SigningRequest { signing_id, transaction_data, required_signers: _, blockchain, chain_id } => {
+                                let _ = cmd_tx.send(InternalCommand::ProcessSigningRequest {
+                                    from_device_id: device_id.clone(),
+                                    signing_id,
+                                    transaction_data,
+                                    timestamp: chrono::Utc::now().to_rfc3339(),
+                                    blockchain,
+                                    chain_id,
+                                });
+                            },
+                            WebRTCMessage::SigningAcceptance { signing_id, accepted: _ } => {
+                                let _ = cmd_tx.send(InternalCommand::ProcessSigningAcceptance {
+                                    from_device_id: device_id.clone(),
+                                    signing_id,
+                                    timestamp: chrono::Utc::now().to_rfc3339(),
+                                });
+                            },
+                            WebRTCMessage::SignerSelection { signing_id, selected_signers } => {
+                                let _ = cmd_tx.send(InternalCommand::ProcessSignerSelection {
+                                    from_device_id: device_id.clone(),
+                                    signing_id,
+                                    selected_signers,
+                                });
+                            },
+                            WebRTCMessage::SigningCommitment { signing_id, sender_identifier: _, commitment } => {
+                                let _ = cmd_tx.send(InternalCommand::ProcessSigningCommitment {
+                                    from_device_id: device_id.clone(),
+                                    signing_id,
+                                    commitment,
+                                });
+                            },
+                            WebRTCMessage::SignatureShare { signing_id, sender_identifier: _, share } => {
+                                let _ = cmd_tx.send(InternalCommand::ProcessSignatureShare {
+                                    from_device_id: device_id.clone(),
+                                    signing_id,
+                                    share,
+                                });
+                            },
+                            WebRTCMessage::AggregatedSignature { signing_id, signature } => {
+                                let _ = cmd_tx.send(InternalCommand::ProcessAggregatedSignature {
+                                    from_device_id: device_id.clone(),
+                                    signing_id,
+                                    signature,
+                                });
+                            }
+                        }
+                    }
+                    Err(_e) => {
+                        state_log
+                            .lock()
+                            .await
+                            .log
+                            .push(format!("Failed to parse envelope from {}: {}", device_id, _e));
+                    }
+                }
+            } else {
+                state_log
+                    .lock()
+                    .await
+                    .log
+                    .push(format!("Received non-UTF8 data from {}", device_id));
+            }
+        })
+    }));
+
+    let _state_log_close = state.clone();
+    let _device_id_close = device_id.clone();
+    dc.on_close(Box::new(move || {
+        let _state_log_close = _state_log_close.clone();
+        let _device_id_close = _device_id_close.clone();
+        Box::pin(async move {
+        })
+    }));
+
+    let _state_log_error = state.clone();
+    let _device_id_error = device_id.clone();
+    dc.on_error(Box::new(move |_e| {
+        let _state_log_error = _state_log_error.clone();
+        let _device_id_error = _device_id_error.clone();
+        Box::pin(async move {
+        })
+    }));
+}
+
+// Apply any pending ICE candidates for a device
+pub async fn apply_pending_candidates<C>(
+    device_id: &str,
+    pc: Arc<RTCPeerConnection>,
+    state_log: Arc<Mutex<AppState<C>>>,
+) where C: Ciphersuite {
+    // Take the pending candidates for this device
+    let candidates = {
+        let mut _state_guard = state_log.lock().await;
+        let pending = _state_guard.pending_ice_candidates.remove(device_id);
+        if let Some(candidates) = &pending {
+            if !candidates.is_empty() {
+            }
+        }
+        pending
+    };
+
+    // If there are pending candidates, apply them
+    if let Some(candidates) = candidates {
+        // Apply each candidate
+        for candidate in candidates {
+            match pc.add_ice_candidate(candidate.clone()).await {
+                Ok(_) => {
+                    let mut _state_guard = state_log.lock().await;
+                    _state_guard
+                        .log
+                        .push(format!("Applied stored ICE candidate for {}", device_id));
+                    // apply candidate to the device connection
+                    
+                }
+                Err(_e) => {
+                    let mut _state_guard = state_log.lock().await;
+                }
+            }
+        }
+    }
+}
+
+pub async fn check_and_send_mesh_ready<C>( //all data channels are open and send mesh_ready if needed
+   state: Arc<Mutex<AppState<C>>>,
+    cmd_tx: mpsc::UnboundedSender<InternalCommand<C>>,
+) where C: Ciphersuite + Send + Sync + 'static, 
+<<C as Ciphersuite>::Group as frost_core::Group>::Element: Send + Sync, 
+<<<C as Ciphersuite>::Group as frost_core::Group>::Field as frost_core::Field>::Scalar: Send + Sync,     
+{
+    let mut all_channels_open = false;
+    let mut all_channels_ready = false;
+    let mut already_sent_own_ready = false;
+    let mut session_exists = false;
+
+    {
+        let state_guard = state.lock().await;
+        if let Some(session) = &state_guard.session {
+            session_exists = true;
+            
+            // Simple check: Do we have all required participants?
+            if session.participants.len() < session.total as usize {
+                return; // Wait for more participants
+            }
+            
+            let device_id = state_guard.device_id.clone();
+            let participants_to_check: Vec<String> = session
+                .participants
+                .iter()
+                .filter(|p| **p != device_id)
+                .cloned()
+                .collect();
+            
+
+            all_channels_open = participants_to_check
+                .iter()
+                .all(|p| state_guard.data_channels.contains_key(p));
+
+            // Check if all data channels are open
+            all_channels_ready = participants_to_check
+                .iter()
+                .all(|participant_id| {
+                    state_guard.data_channels.get(participant_id)
+                        .map(|dc| dc.ready_state() == webrtc::data_channel::data_channel_state::RTCDataChannelState::Open)
+                        .unwrap_or(false)
+                });
+            
+            already_sent_own_ready = state_guard.own_mesh_ready_sent;
+        }
+    } // state_guard is dropped
+
+    if session_exists && all_channels_open && all_channels_ready && !already_sent_own_ready {
+        let _ = cmd_tx.send(InternalCommand::SendOwnMeshReadySignal);
+    }
+}

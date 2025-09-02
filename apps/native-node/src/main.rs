@@ -1,10 +1,10 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use cli_node::{AppRunner, UIProvider};
-use cli_node::protocal::signal::SessionInfo;
-use cli_node::utils::state::{PendingSigningRequest, InternalCommand};
+use tui_node::{AppRunner, UIProvider};
+use tui_node::protocal::signal::SessionInfo;
+use tui_node::utils::state::{PendingSigningRequest, InternalCommand};
 use frost_secp256k1::Secp256K1Sha256;
-use slint::{ModelRc, ComponentHandle, Model};
+use slint::{ModelRc, ComponentHandle, Model, VecModel};
 use std::sync::Arc;
 use tracing::{info, Level};
 use tracing_subscriber;
@@ -90,9 +90,32 @@ impl UIProvider for SimpleUIProvider {
         });
     }
     
-    async fn add_session_invite(&self, _invite: SessionInfo) {}
+    async fn add_session_invite(&self, invite: SessionInfo) {
+        let window = self.window.clone();
+        let _ = slint::invoke_from_event_loop(move || {
+            if let Some(window) = window.upgrade() {
+                let app_state = window.global::<AppState>();
+                let mut invites: Vec<SessionInvite> = app_state.get_session_invites().iter().collect();
+                invites.push(SessionInvite {
+                    session_id: invite.session_id.into(),
+                    from_device: invite.proposer_id.into(),
+                });
+                app_state.set_session_invites(ModelRc::new(VecModel::from(invites)));
+            }
+        });
+    }
     
-    async fn remove_session_invite(&self, _session_id: String) {}
+    async fn remove_session_invite(&self, session_id: String) {
+        let window = self.window.clone();
+        let _ = slint::invoke_from_event_loop(move || {
+            if let Some(window) = window.upgrade() {
+                let app_state = window.global::<AppState>();
+                let mut invites: Vec<SessionInvite> = app_state.get_session_invites().iter().collect();
+                invites.retain(|i| i.session_id != session_id);
+                app_state.set_session_invites(ModelRc::new(VecModel::from(invites)));
+            }
+        });
+    }
     
     async fn set_active_session(&self, session: Option<SessionInfo>) {
         if let Some(session) = session {
@@ -221,6 +244,7 @@ async fn main() -> Result<()> {
     app_state.set_websocket_connected(false);
     app_state.set_device_id("".into());
     app_state.set_log_messages(ModelRc::new(slint::VecModel::from(Vec::<slint::SharedString>::new())));
+    app_state.set_session_invites(ModelRc::new(VecModel::from(Vec::<SessionInvite>::new())));
     
     let ui_weak = ui.as_weak();
     
@@ -242,24 +266,67 @@ async fn main() -> Result<()> {
         let ui_provider = ui_provider.clone();
         ui.on_connect_websocket(move |device_id| {
             info!("Connect button clicked with device ID: {}", device_id);
-            let device_id = device_id.to_string();
+            let device_id_str = device_id.to_string();
             let tx = tx.clone();
             let provider = ui_provider.clone();
             
             tokio::spawn(async move {
                 // Update UI immediately
-                provider.set_device_id(device_id.clone()).await;
-                provider.add_log(format!("Connecting with device ID: {}", device_id)).await;
+                provider.set_device_id(device_id_str.clone()).await;
+                provider.add_log(format!("Connecting with device ID: {}", device_id_str)).await;
                 
                 // Send command
                 let _ = tx.send(InternalCommand::SendToServer(
-                    webrtc_signal_server::ClientMsg::Register { device_id }
+                    webrtc_signal_server::ClientMsg::Register { device_id: device_id_str }
                 ));
             });
         });
     }
     
-    // Note: main_simple.slint doesn't have create_session callback
+    {
+        let tx = cmd_sender.clone();
+        ui.on_create_session(move |session_id, participants, threshold| {
+            info!("Create session button clicked");
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                let _ = tx.send(InternalCommand::ProposeSession {
+                    session_id: session_id.to_string(),
+                    total: participants as u16,
+                    threshold: threshold as u16,
+                    participants: vec![], // This will be populated by the server
+                });
+            });
+        });
+    }
+
+    {
+        let tx = cmd_sender.clone();
+        ui.on_accept_session(move |session_id| {
+            info!("Accept session button clicked");
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                let _ = tx.send(InternalCommand::AcceptSessionProposal(session_id.to_string()));
+            });
+        });
+    }
+
+    {
+        let tx = cmd_sender.clone();
+        ui.on_reject_session(move |session_id| {
+            info!("Reject session button clicked");
+            let tx = tx.clone();
+            // For now, just remove the invite from the UI
+            // In the future, this could send a SessionResponse with accepted: false
+            let _ = tx.send(InternalCommand::ProcessSessionResponse {
+                from_device_id: "".to_string(), // Not needed for our own rejection
+                response: tui_node::protocal::signal::SessionResponse {
+                    session_id: session_id.to_string(),
+                    accepted: false,
+                    wallet_status: None,
+                },
+            });
+        });
+    }
     
     {
         let tx = cmd_sender.clone();

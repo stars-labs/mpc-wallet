@@ -51,7 +51,7 @@
               pkg-config
               rustc
               cargo
-              rust-analyzer
+              #rust-analyzer
               clippy
               openssl
               rustfmt          
@@ -71,7 +71,7 @@
               xorg.libXcursor
               xorg.libXrandr
               xorg.libXi
-              
+              worker-build             
               # Additional graphics dependencies
               vulkan-loader
               mesa
