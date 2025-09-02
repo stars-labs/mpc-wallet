@@ -72,26 +72,73 @@ cargo run -p native-node
 
 ## Documentation
 
-### Core Documentation
+### 📚 Documentation Hub
+- [Documentation Center](docs/README.md) - Main documentation hub with complete index
+- [Technical Documentation](MPC_WALLET_TECHNICAL_DOCUMENTATION.md) - Comprehensive technical reference (100+ pages)
+- [Contributing Guidelines](CONTRIBUTING.md) - How to contribute to the project
 
-- [Technical Documentation](MPC_WALLET_TECHNICAL_DOCUMENTATION.md) - Comprehensive technical reference
-- [Architecture Overview](docs/architecture/README.md) - System design and architecture
+### 🏗️ Architecture & Design
+- [Architecture Overview](docs/architecture/README.md) - System design and architectural decisions
+- [Monorepo Architecture](docs/MONOREPO_ARCHITECTURE.md) - Monorepo structure and organization
+- [Wallet-Centric Flow](docs/architecture/WALLET_CENTRIC_FLOW.md) - Wallet-first architecture design
 - [Security Model](docs/security/README.md) - Security considerations and threat model
-- [API Reference](docs/api/README.md) - Complete API documentation
 
-### Application Guides
+### 📖 Application Documentation
 
-- [Browser Extension Guide](apps/browser-extension/docs/README.md)
-- [Terminal UI Guide](apps/tui-node/docs/README.md)
-- [Desktop Application Guide](apps/native-node/docs/README.md)
-- [Signal Server Guide](apps/signal-server/docs/README.md)
+#### Browser Extension
+- [Browser Extension Guide](apps/browser-extension/docs/README.md) - Complete browser extension documentation
+- [Extension Architecture](apps/browser-extension/docs/architecture/) - Extension design patterns
+- [UI Components](apps/browser-extension/docs/ui/README.md) - UI implementation and components
+- [User Guides](apps/browser-extension/docs/guides/) - Step-by-step usage guides
 
-### Development
+#### Terminal UI (TUI)
+- [TUI Documentation](apps/tui-node/docs/README.md) - Terminal UI comprehensive guide
+- [TUI Architecture](apps/tui-node/docs/architecture/ARCHITECTURE.md) - System architecture
+- [DKG Flows](apps/tui-node/docs/architecture/DKG_FLOWS.md) - Distributed key generation flows
+- [User Guide](apps/tui-node/docs/guides/USER_GUIDE.md) - Complete user manual
+- [Keystore Design](apps/tui-node/docs/architecture/01_keystore_design.md) - Keystore implementation
+- [Protocol Specs](apps/tui-node/docs/protocol/) - WebRTC and keystore session protocols
+- [UI Wireframes](apps/tui-node/docs/ui/) - Comprehensive UI specifications and wireframes
+- [Offline Mode](apps/tui-node/docs/guides/offline-mode.md) - Air-gapped operation guide
 
+#### Native Desktop Application
+- [Native App Guide](apps/native-node/docs/README.md) - Desktop application documentation
+- [Architecture](apps/native-node/docs/architecture/) - Native app architecture
+- [UI Guide](apps/native-node/docs/ui/) - Slint UI framework documentation
+
+#### Signal Server
+- [Signal Server Guide](apps/signal-server/docs/README.md) - WebRTC signaling server
+- [Deployment](apps/signal-server/docs/deployment/cloudflare-deployment.md) - Cloudflare deployment guide
+- [Architecture](apps/signal-server/docs/architecture/) - Server architecture and design
+
+### 🔧 Development Resources
 - [Development Guide](docs/development/README.md) - Setup and development workflow
-- [Testing Guide](docs/testing/README.md) - Testing strategies and tools
+- [API Reference](docs/api/README.md) - Complete API documentation
+- [Testing Documentation](docs/testing/README.md) - Testing strategies and tools
+  - [Test Coverage](docs/testing/COVERAGE.md) - Code coverage reports
+  - [E2E Testing](docs/testing/E2E_TEST_SUMMARY.md) - End-to-end test documentation
+  - [Running Tests](docs/testing/RUN_TEST_INSTRUCTIONS.md) - How to run test suites
+
+### 🚀 Deployment & Operations
 - [Deployment Guide](docs/deployment/README.md) - Production deployment instructions
-- [Contributing](CONTRIBUTING.md) - Contribution guidelines
+- [Cloudflare Deployment](docs/deployment/CLOUDFLARE_DEPLOYMENT.md) - Deploy to Cloudflare Workers
+- [TUI Deployment Guide](apps/tui-node/docs/DEPLOYMENT_GUIDE.md) - Deploy TUI application
+
+### 🔍 Implementation Details
+- [Implementation Docs](docs/implementation/) - Feature implementation details
+  - [EIP-6963 Implementation](docs/implementation/EIP-6963-IMPLEMENTATION.md) - Wallet provider discovery
+  - [Multi-Layer2 Support](docs/implementation/MULTI_LAYER2_SUPPORT.md) - Layer 2 chain support
+  - [WebRTC Fix Summary](docs/implementation/WEBRTC_FIX_SUMMARY.md) - P2P connection fixes
+
+### 🐛 Bug Fixes & Solutions
+- [Bug Fix Documentation](docs/fixes/README.md) - Documented bug fixes and solutions
+- [DKG Fixes](docs/fixes/DKG_FIX_SUMMARY.md) - Distributed key generation fixes
+- [Session Discovery](docs/fixes/SESSION_DISCOVERY_FIX.md) - Session management fixes
+- [Complete Fix Summary](docs/fixes/COMPLETE_FIX_SUMMARY.md) - All implemented fixes
+
+### 📝 Additional Resources
+- [Changelog](docs/CHANGELOG.md) - Version history and release notes
+- [Documentation Status](DOCUMENTATION_STATUS.md) - Current state of documentation
 
 ## Project Structure
 

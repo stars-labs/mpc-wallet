@@ -156,7 +156,10 @@ where
 }
 
 /// Start DKG Round 2 - simplified
-pub async fn handle_trigger_dkg_round2<C>(state: Arc<Mutex<AppState<C>>>) 
+pub async fn handle_trigger_dkg_round2<C>(
+    state: Arc<Mutex<AppState<C>>>,
+    _device_id: String,  // Accept device_id parameter for compatibility
+) 
 where
     C: Ciphersuite + Send + Sync + 'static,
 {
@@ -270,6 +273,17 @@ where
     guard.dkg_state = DkgState::Complete;
     
     tracing::info!("DKG finalization completed for device: {}", guard.device_id);
+}
+
+/// Finalize DKG - alias for compatibility
+pub async fn finalize_dkg<C>(
+    state: Arc<Mutex<AppState<C>>>,
+    _device_id: String,  // Accept device_id parameter for compatibility
+) 
+where
+    C: Ciphersuite + Send + Sync + 'static,
+{
+    handle_dkg_finalization(state).await;
 }
 
 /// Check if device is selected as signer - simplified helper
