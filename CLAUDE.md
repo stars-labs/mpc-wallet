@@ -364,7 +364,7 @@ The extension supports importing and exporting FROST keystore data for interoper
 
 ## Technology Stack
 
-- **Runtime**: Bun (fast JavaScript runtime) for web, Rust for native
+- **Runtime**: Bun (fast JavaScript runtime) for web, Rust 2024 edition for native
 - **Build System**: Bun + wasm-pack + WXT for web, Cargo for native
 - **UI Frameworks**: 
   - Browser Extension: Svelte 5 with TailwindCSS
@@ -381,6 +381,8 @@ The extension supports importing and exporting FROST keystore data for interoper
 - **Code Sharing**: TUI node exposes lib.rs for reuse in native desktop app
 
 ## MPC Protocol Workflow
+
+**IMPORTANT**: The TUI now implements **real FROST DKG** using the exact same cryptographic logic as the `dkg.rs` example. The previous insecure implementation that derived group keys from session IDs has been completely removed and replaced with proper FROST threshold cryptography.
 
 The FROST MPC TUI Wallet supports two distinct operational modes to accommodate different security requirements:
 
@@ -476,6 +478,25 @@ For organizations requiring both security and operational flexibility:
 - ⚠️ Slower emergency response
 
 Both modes implement the same cryptographic security (FROST protocol) and share the same secure keystore format, allowing seamless transitions between modes based on operational requirements.
+
+## Code Quality Standards
+
+### Compilation Warnings Policy
+
+**IMPORTANT**: All code must compile without warnings. Warnings accumulate over time and hide real issues.
+
+When working with the codebase:
+1. **Fix all warnings immediately** after making changes
+2. **Use proper prefixes** for intentionally unused variables (prefix with `_`)
+3. **Run `cargo build` regularly** to check for new warnings
+4. **Use `cargo fix`** for automated fixes where appropriate
+5. **Never ignore warnings** - they often indicate bugs or poor practices
+
+Common warning fixes:
+- Unused variables: Prefix with underscore `_variable_name`
+- Unused imports: Remove them
+- Dead code: Remove or mark with `#[allow(dead_code)]` if intentional
+- Mutable variables that don't need to be: Remove `mut`
 
 ## AI Development Cycle
 

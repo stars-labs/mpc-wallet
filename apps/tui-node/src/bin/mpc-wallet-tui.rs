@@ -10,6 +10,7 @@ use std::sync::Arc;
 use tokio::time::Duration;
 use tracing::info;
 use tui_node::{
+    utils::performance::{PerformanceMonitor, profile_key_handling, profile_render},
     ui::{tui::UIMode, NoOpUIProvider, UIProvider},
     AppRunner,
 };
@@ -177,24 +178,52 @@ async fn run_with_tui(device_id: String, signal_server: String) -> anyhow::Resul
     // Command sender and app state are already available
 
     // AppRunner is already running in background (started above)
+    
+    // Create performance monitor (for future use with PERF_MONITORING env var)
+    let _ = PerformanceMonitor::new();
 
-    // TUI event loop
+    // TUI event loop with performance monitoring
     let mut should_quit = false;
+    let mut last_render = std::time::Instant::now();
+    const MIN_RENDER_INTERVAL: Duration = Duration::from_millis(50); // Minimum time between renders
 
     loop {
         // Handle UI updates
         tokio::select! {
             _ = redraw_rx.recv() => {
-                // Redraw requested
-                let state = app_state.lock().await;
-                tui_provider.render(&*state).await;
+                // Redraw requested, but throttle to prevent excessive rendering
+                let now = std::time::Instant::now();
+                if now.duration_since(last_render) >= MIN_RENDER_INTERVAL {
+                    let state = app_state.lock().await;
+                    tui_provider.render(&*state).await;
+                    last_render = now;
+                }
             }
             _ = sleep(Duration::from_millis(100)) => {
-                // Check for keyboard events
+                // Check for keyboard events with performance tracking
                 if event::poll(Duration::from_millis(10))? {
                     if let Event::Key(key) = event::read()? {
+                        // Track key event performance
+                        let key_start = std::time::Instant::now();
+                        
                         // Handle key events
-                        if let Some(command) = tui_provider.handle_key_event(key).await {
+                        let command_result = tui_provider.handle_key_event(key).await;
+                        
+                        // Record key handling time
+                        let key_duration = key_start.elapsed();
+                        profile_key_handling(&format!("{:?}", key.code), key_duration).await;
+                        
+                        // Always render after handling a key event to show UI changes immediately
+                        let render_start = std::time::Instant::now();
+                        let state = app_state.lock().await;
+                        tui_provider.render(&*state).await;
+                        drop(state);
+                        
+                        // Record render time
+                        let render_duration = render_start.elapsed();
+                        profile_render(render_duration).await;
+                        
+                        if let Some(command) = command_result {
                             match command.as_str() {
                                 "quit" => {
                                     should_quit = true;

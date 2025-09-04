@@ -1,7 +1,7 @@
 // DKG command handlers - uses simplified DKG implementation
 use crate::utils::appstate_compat::AppState;
 use crate::utils::state::{InternalCommand, DkgState};
-use crate::protocal::dkg_simple;
+use crate::protocal::dkg;
 use frost_core::Ciphersuite;
 use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc};
@@ -20,7 +20,6 @@ pub async fn handle_check_and_trigger_dkg<C>(
     // Check if we have a session and enough participants
     if let Some(session) = &guard.session {
         if session.participants.len() >= 2 {
-            let device_id = guard.device_id.clone();
             drop(guard);
             
             tracing::info!("Conditions met for DKG, triggering Round 1");
@@ -46,8 +45,8 @@ pub async fn handle_trigger_dkg_round1<C>(
 {
     tracing::info!("Starting DKG Round 1 for device: {}", device_id);
     
-    // Use the simplified DKG implementation
-    dkg_simple::handle_trigger_dkg_round1(state, device_id, internal_cmd_tx).await;
+    // Use the DKG implementation
+    dkg::handle_trigger_dkg_round1(state, device_id, internal_cmd_tx).await;
 }
 
 /// Handle DKG Round 2 trigger - delegates to simplified implementation
@@ -61,8 +60,8 @@ pub async fn handle_trigger_dkg_round2<C>(
 {
     tracing::info!("Starting DKG Round 2 for device: {}", device_id);
     
-    // Use the simplified DKG implementation
-    dkg_simple::handle_trigger_dkg_round2(state, device_id).await;
+    // Use the DKG implementation
+    dkg::handle_trigger_dkg_round2(state, device_id).await;
 }
 
 /// Handle DKG finalization - delegates to simplified implementation
@@ -76,8 +75,8 @@ pub async fn handle_dkg_finalize<C>(
 {
     tracing::info!("Finalizing DKG for device: {}", device_id);
     
-    // Use the simplified DKG implementation
-    dkg_simple::finalize_dkg(state, device_id).await;
+    // Use the DKG implementation
+    dkg::finalize_dkg(state, device_id).await;
 }
 
 /// Handle DKG Round 1 processing
@@ -104,7 +103,6 @@ pub async fn handle_process_dkg_round1<C>(
             if let Some(session) = &guard.session {
                 if guard.dkg_round1_packages.len() == session.participants.len() {
                     tracing::info!("All Round 1 packages received, triggering Round 2");
-                    let device_id = guard.device_id.clone();
                     drop(guard);
                     
                     // Trigger Round 2
@@ -143,7 +141,6 @@ pub async fn handle_process_dkg_round2<C>(
             if let Some(session) = &guard.session {
                 if guard.dkg_round2_packages.len() == session.participants.len() - 1 {
                     tracing::info!("All Round 2 packages received, finalizing DKG");
-                    let device_id = guard.device_id.clone();
                     drop(guard);
                     
                     // Trigger finalization
@@ -172,6 +169,6 @@ pub async fn handle_finalize_dkg<C>(
     
     tracing::info!("Finalizing DKG process");
     
-    // Delegate to the simplified implementation
-    dkg_simple::finalize_dkg(state, device_id).await;
+    // Delegate to the implementation
+    dkg::finalize_dkg(state, device_id).await;
 }

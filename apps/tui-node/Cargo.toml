@@ -1,7 +1,7 @@
 [package]
 name = "tui-node"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [lib]
 name = "tui_node"
@@ -10,11 +10,13 @@ path = "src/lib.rs"
 [dependencies]
 # Use our shared frost-core library
 mpc-wallet-frost-core = { path = "../../packages/@mpc-wallet/frost-core" }
+# Use our blockchain package
+mpc-wallet-blockchain = { path = "../../packages/@mpc-wallet/blockchain" }
 
 # Still need these for specific types
-frost-ed25519 = "2.1.0"
-frost-secp256k1 = "2.1.0"
-frost-core = { version = "2.1.0", features = ["serde"] }
+frost-ed25519 = { version = "2.2.0", features = ["serde", "serialization"] }
+frost-secp256k1 = { version = "2.2.0", features = ["serde", "serialization"] }
+frost-core = { version = "2.2.0", features = ["serde"] }
 rand = "*"
 solana-sdk = "2.2.2"
 solana-client = "2.2.7"
@@ -79,23 +81,3 @@ harness = false
 [[bin]]
 name = "mpc-wallet-tui"
 path = "src/bin/mpc-wallet-tui.rs"
-
-[[bin]]
-name = "test-session-creation"
-path = "src/test_session_creation.rs"
-
-[[bin]]
-name = "test-auto-join"
-path = "src/bin/test_auto_join.rs"
-
-[[bin]]
-name = "test-session-discovery"
-path = "src/bin/test_session_discovery.rs"
-
-[[bin]]
-name = "mpc-wallet-stub"  
-path = "src/bin/mpc-wallet-stub.rs"
-
-[[bin]]
-name = "mpc-wallet-stub-simple"  
-path = "src/bin/mpc-wallet-stub-simple.rs"

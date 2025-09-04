@@ -80,7 +80,7 @@ pub async fn create_and_setup_device_connection<C>(
 {
     // Clone variables for use after timeout
     let device_id_for_timeout = device_id.clone();
-    let _state_log_for_timeout = state_log.clone();
+    // State log cloned for timeout handler (used in error case below)
     
     // Add timeout to prevent hanging during connection creation
     let connection_creation = async move {
@@ -126,7 +126,7 @@ pub async fn create_and_setup_device_connection<C>(
                 Ok(dc) => {
                     
                     // Log the initial state of the data channel
-                    let _dc_state = dc.ready_state();
+                    tracing::debug!("Data channel state: {:?}", dc.ready_state());
                     
                     setup_data_channel_callbacks(
                         dc,
@@ -239,7 +239,7 @@ pub async fn create_and_setup_device_connection<C>(
                             
                             // Always attempt immediate reconnection on Disconnected state
                             if let Some(current_session) = guard.session.clone() {
-                                let _session_id_to_rejoin = current_session.session_id;
+                                tracing::info!("Will attempt to rejoin session: {}", current_session.session_id);
                                 // Drop the guard before sending the command
                                 drop(guard);
                                 // No JoinSession message sent
@@ -268,7 +268,7 @@ pub async fn create_and_setup_device_connection<C>(
                                 guard.reconnection_tracker.insert(device_id.clone(), std::time::Instant::now());
                                 
                                 if let Some(current_session) = guard.session.clone() {
-                                    let _session_id_to_rejoin = current_session.session_id;
+                                    tracing::info!("Will attempt to rejoin session: {}", current_session.session_id);
                                     // Drop the guard before any async operations
                                     drop(guard);
                                     // Reconnection logic would go here
@@ -327,7 +327,7 @@ pub async fn create_and_setup_device_connection<C>(
                 Box::pin(async move {
                     
                     if dc.label() == DATA_CHANNEL_LABEL {
-                        let _dc_state = dc.ready_state();
+                        tracing::debug!("Received data channel state: {:?}", dc.ready_state());
                         setup_data_channel_callbacks(dc, device_id, state_log, cmd_tx_clone).await;
                     } else {
                     }
@@ -378,21 +378,20 @@ pub async fn setup_data_channel_callbacks<C>(
                 device_id, channel_count));
     }
 
-    let state_log_open = state.clone();
+    let _state_log_open = state.clone();  // Reserved for future logging
     let device_id_open = device_id.clone();
-    let dc_clone = dc_arc.clone();
+    let _dc_clone = dc_arc.clone();  // Reserved for future use
     let cmd_tx_open = cmd_tx.clone();
     dc_arc.on_open(Box::new(move || {
-        let _state_log_open = state_log_open.clone();
-        let _device_id_open = device_id_open.clone();
-        let _dc_clone = dc_clone.clone();
+        // Clone for async closure
+        let device_id_open = device_id_open.clone();
         let cmd_tx_open = cmd_tx_open.clone();
         Box::pin(async move {
             
             // Send ReportChannelOpen command to trigger mesh ready signaling
             
             if let Err(_e) = cmd_tx_open.send(InternalCommand::ReportChannelOpen {
-                device_id: _device_id_open.clone(),
+                device_id: device_id_open.clone(),
             }) {
             } else {
             }
@@ -435,7 +434,41 @@ pub async fn setup_data_channel_callbacks<C>(
                                         package,
                                     });
                             }
-                            WebRTCMessage::SimpleMessage { text: _ } => {
+                            WebRTCMessage::SimpleMessage { text } => {
+                                // Parse DKG messages from SimpleMessage format
+                                if text.starts_with("DKG_ROUND1:") {
+                                    if let Some(base64_data) = text.strip_prefix("DKG_ROUND1:") {
+                                        match base64::Engine::decode(&base64::engine::general_purpose::STANDARD, base64_data) {
+                                            Ok(package_bytes) => {
+                                                tracing::info!("Received DKG Round 1 package from {}", device_id);
+                                                let _ = cmd_tx.send(InternalCommand::ProcessSimpleDkgRound1 {
+                                                    from_device_id: device_id.clone(),
+                                                    package_bytes,
+                                                });
+                                            }
+                                            Err(e) => {
+                                                tracing::error!("Failed to decode DKG Round 1 base64 data: {}", e);
+                                            }
+                                        }
+                                    }
+                                } else if text.starts_with("DKG_ROUND2:") {
+                                    if let Some(base64_data) = text.strip_prefix("DKG_ROUND2:") {
+                                        match base64::Engine::decode(&base64::engine::general_purpose::STANDARD, base64_data) {
+                                            Ok(package_bytes) => {
+                                                tracing::info!("Received DKG Round 2 package from {}", device_id);
+                                                let _ = cmd_tx.send(InternalCommand::ProcessSimpleDkgRound2 {
+                                                    from_device_id: device_id.clone(),
+                                                    package_bytes,
+                                                });
+                                            }
+                                            Err(e) => {
+                                                tracing::error!("Failed to decode DKG Round 2 base64 data: {}", e);
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    tracing::debug!("Received unhandled SimpleMessage: {}", text);
+                                }
                             },
                             WebRTCMessage::ChannelOpen { device_id: _ } => {
                                 // Just log the channel open notification, don't trigger ReportChannelOpen
@@ -512,21 +545,15 @@ pub async fn setup_data_channel_callbacks<C>(
         })
     }));
 
-    let _state_log_close = state.clone();
-    let _device_id_close = device_id.clone();
     dc.on_close(Box::new(move || {
-        let _state_log_close = _state_log_close.clone();
-        let _device_id_close = _device_id_close.clone();
         Box::pin(async move {
+            // Closure handler for data channel close event
         })
     }));
 
-    let _state_log_error = state.clone();
-    let _device_id_error = device_id.clone();
-    dc.on_error(Box::new(move |_e| {
-        let _state_log_error = _state_log_error.clone();
-        let _device_id_error = _device_id_error.clone();
+    dc.on_error(Box::new(move |e| {
         Box::pin(async move {
+            tracing::error!("Data channel error: {:?}", e);
         })
     }));
 }

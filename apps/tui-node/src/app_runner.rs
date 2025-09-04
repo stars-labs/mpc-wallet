@@ -28,6 +28,7 @@ pub struct AppRunner<C: Ciphersuite> {
     ws_sink: Arc<Mutex<Option<SplitSink<tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>, WsMessage>>>>,
     shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
     shutdown_rx: Option<tokio::sync::oneshot::Receiver<()>>,
+    last_ui_update: Arc<Mutex<std::time::Instant>>,
 }
 
 impl<C: Ciphersuite + Send + Sync + 'static> AppRunner<C> 
@@ -55,6 +56,7 @@ where
             ws_sink,
             shutdown_tx: Some(shutdown_tx),
             shutdown_rx: Some(shutdown_rx),
+            last_ui_update: Arc::new(Mutex::new(std::time::Instant::now())),
         }
     }
     
@@ -143,10 +145,8 @@ where
         let mut shutdown_rx = self.shutdown_rx.take()
             .ok_or_else(|| anyhow::anyhow!("Shutdown receiver already taken"))?;
         
-        let _app_state = self.app_state.clone();
+        // Clone UI provider for the event loop
         let ui_provider = self.ui_provider.clone();
-        let _websocket_url = self.websocket_url.clone();
-        let _internal_cmd_tx = self.internal_cmd_tx.clone();
         
         // Main event loop
         let mut ws_stream: Option<futures_util::stream::SplitStream<
@@ -154,12 +154,20 @@ where
         >> = None;
         let mut current_device_id = None;
         
+        // Create a periodic UI update interval
+        let mut ui_update_interval = tokio::time::interval(tokio::time::Duration::from_millis(200));
+        
         loop {
             tokio::select! {
                 // Handle shutdown signal
                 _ = &mut shutdown_rx => {
                     info!("Shutdown signal received");
                     break;
+                }
+                // Periodic UI state update to catch any state changes
+                _ = ui_update_interval.tick() => {
+                    // Update UI state periodically to catch DKG completion and other state changes
+                    let _ = self.update_ui_state().await;
                 }
                 // Handle internal commands
                 Some(cmd) = internal_cmd_rx.recv() => {
@@ -338,16 +346,16 @@ where
                 ).await;
             }
             
-            InternalCommand::InitiateSigning { transaction_data, blockchain, chain_id } => {
+            InternalCommand::InitiateSigning { transaction_data, blockchain: _, chain_id } => {
                 signing_commands::handle_initiate_signing(
-                    transaction_data, blockchain, chain_id,
+                    transaction_data, chain_id,
                     self.app_state.clone(), self.internal_cmd_tx.clone()
                 ).await;
             }
             
-            InternalCommand::AcceptSigning { signing_id } => {
+            InternalCommand::AcceptSigning { signing_id: _ } => {
                 signing_commands::handle_accept_signing(
-                    signing_id, self.app_state.clone(), self.internal_cmd_tx.clone()
+                    self.app_state.clone(), self.internal_cmd_tx.clone()
                 ).await;
             }
             
@@ -425,6 +433,24 @@ where
                 ).await;
             }
             
+            InternalCommand::ProcessSimpleDkgRound1 { from_device_id, package_bytes } => {
+                // Process simplified DKG Round 1 package from SimpleMessage format
+                crate::protocal::dkg::process_dkg_round1(
+                    self.app_state.clone(),
+                    from_device_id,
+                    package_bytes,
+                ).await;
+            }
+            
+            InternalCommand::ProcessSimpleDkgRound2 { from_device_id, package_bytes } => {
+                // Process simplified DKG Round 2 package from SimpleMessage format
+                crate::protocal::dkg::process_dkg_round2(
+                    self.app_state.clone(),
+                    from_device_id,
+                    package_bytes,
+                ).await;
+            }
+            
             InternalCommand::ProcessMeshReady { device_id } => {
                 crate::handlers::mesh_commands::handle_process_mesh_ready(
                     device_id,
@@ -446,9 +472,9 @@ where
                 ).await;
             }
             
-            InternalCommand::ProcessSignerSelection { from_device_id, signing_id, selected_signers } => {
+            InternalCommand::ProcessSignerSelection { from_device_id: _, signing_id: _, selected_signers } => {
                 signing_commands::handle_process_signer_selection(
-                    from_device_id, signing_id, selected_signers,
+                    selected_signers,
                     self.app_state.clone(), self.internal_cmd_tx.clone()
                 ).await;
             }
@@ -467,9 +493,9 @@ where
                 ).await;
             }
             
-            InternalCommand::ProcessAggregatedSignature { from_device_id, signing_id, signature } => {
+            InternalCommand::ProcessAggregatedSignature { from_device_id: _, signing_id: _, signature } => {
                 signing_commands::handle_process_aggregated_signature(
-                    from_device_id, signing_id, signature,
+                    signature,
                     self.app_state.clone(), self.internal_cmd_tx.clone()
                 ).await;
             }
@@ -497,9 +523,9 @@ where
                 ).await;
             }
             
-            InternalCommand::InitiateFrostRound1 { signing_id, transaction_data, selected_signers } => {
+            InternalCommand::InitiateFrostRound1 { signing_id, transaction_data: _, selected_signers } => {
                 signing_commands::handle_initiate_frost_round1(
-                    signing_id, transaction_data, selected_signers,
+                    signing_id, selected_signers,
                     self.app_state.clone(), self.internal_cmd_tx.clone()
                 ).await;
             }
@@ -1456,8 +1482,21 @@ where
         Ok(())
     }
     
-    /// Update UI with current state
+    /// Update UI with current state (throttled to prevent excessive updates)
     async fn update_ui_state(&self) -> Result<()> {
+        // Check if we should throttle this update
+        const MIN_UPDATE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(50);
+        let mut last_update = self.last_ui_update.lock().await;
+        let now = std::time::Instant::now();
+        
+        if now.duration_since(*last_update) < MIN_UPDATE_INTERVAL {
+            // Too soon since last update, skip this one
+            return Ok(());
+        }
+        
+        *last_update = now;
+        drop(last_update); // Release the lock early
+        
         let state = self.app_state.lock().await;
         
         // Update device list
@@ -1477,11 +1516,22 @@ where
         // Update DKG status
         self.ui_provider.update_dkg_status(state.dkg_state.display_status()).await;
         
+        // Update group public key hex for UI display
+        if let Some(verifying_key) = &state.group_public_key {
+            // Convert the verifying key to hex string for UI display
+            let key_bytes = verifying_key.serialize().unwrap_or_default();
+            let group_key_hex = hex::encode(&key_bytes);
+            self.ui_provider.set_group_public_key(Some(group_key_hex)).await;
+        }
+        
         // Update generated address
         if !state.blockchain_addresses.is_empty() {
             if let Some(addr) = state.blockchain_addresses.first() {
                 self.ui_provider.set_generated_address(Some(addr.address.clone())).await;
             }
+        } else if let Some(addr) = &state.etherum_public_key {
+            // Fallback to the stored ethereum public key
+            self.ui_provider.set_generated_address(Some(addr.clone())).await;
         }
         
         // Update mesh status

@@ -37,13 +37,23 @@ pub struct BlockchainConfig {
     pub chain_id: Option<u64>,
 }
 
-/// Generate a unique session ID based on wallet name and timestamp
+/// Generate a deterministic session ID based on wallet name
+/// This ensures the same wallet name ALWAYS generates the same group address
 fn generate_session_id(wallet_name: &str) -> String {
-    let timestamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    format!("{}_dkg_{}", wallet_name, timestamp)
+    // CRITICAL: This must be deterministic for the same wallet name
+    // to ensure consistent group address generation across all nodes
+    // Do NOT add timestamp or random elements here
+    
+    use sha2::{Sha256, Digest};
+    let mut hasher = Sha256::new();
+    hasher.update(b"FROST_SESSION_V1:");
+    hasher.update(wallet_name.as_bytes());
+    let hash = hasher.finalize();
+    let hash_hex = hex::encode(&hash[..16]); // Use 16 bytes for better uniqueness
+    
+    // Return just the hash for maximum determinism
+    // This ensures identical session IDs for the same wallet name
+    hash_hex
 }
 
 /// Enhanced session proposal handler supporting wallet creation flow

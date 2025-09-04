@@ -1,7 +1,6 @@
 //! Bitcoin blockchain handler implementation
 
-use super::{BlockchainHandler, ParsedTransaction, SignatureData};
-use crate::keystore::Result;
+use super::{BlockchainHandler, ParsedTransaction, SignatureData, Result, BlockchainError};
 
 pub struct BitcoinHandler {
     network: BitcoinNetwork,
@@ -45,7 +44,7 @@ impl BlockchainHandler for BitcoinHandler {
         
         // Decode hex to bytes
         let raw_bytes = hex::decode(tx_hex)
-            .map_err(|e| crate::keystore::KeystoreError::General(
+            .map_err(|e| BlockchainError::ParseError(
                 format!("Invalid hex transaction: {}", e)
             ))?;
         
@@ -97,7 +96,7 @@ impl BlockchainHandler for BitcoinHandler {
     fn serialize_signature(&self, signature_bytes: &[u8]) -> Result<SignatureData> {
         // Bitcoin uses DER encoding for signatures
         if signature_bytes.len() < 64 {
-            return Err(crate::keystore::KeystoreError::General(
+            return Err(BlockchainError::SignatureError(
                 format!("Invalid signature length: expected at least 64 bytes, got {}", signature_bytes.len())
             ));
         }

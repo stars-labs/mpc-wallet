@@ -1,9 +1,9 @@
-use cli_node::network::webrtc::{WEBRTC_API, WEBRTC_CONFIG};
-use cli_node::network::websocket::handle_websocket_connection;
-use cli_node::protocal::signal::{SessionInfo, SessionType};
+use tui_node::network::webrtc::{WEBRTC_API, WEBRTC_CONFIG};
+use tui_node::network::websocket::handle_websocket_connection;
+use tui_node::protocal::signal::{SessionInfo, SessionType};
 /// Test example for DKG with data channel debugging
 /// Run with: cargo run --example test_dkg_data_channel
-use cli_node::utils::state::{AppState, InternalCommand, MeshStatus};
+use tui_node::utils::state::{AppState, InternalCommand, MeshStatus};
 use frost_core::Ciphersuite;
 use frost_ed25519::Ed25519Sha512;
 use std::collections::{HashMap, HashSet};
@@ -70,7 +70,7 @@ async fn run_node(device_id: String, is_creator: bool) -> anyhow::Result<()> {
         log: vec![],
         received_dkg_packages: HashMap::new(),
         received_dkg_round2_packages: HashMap::new(),
-        dkg_state: cli_node::utils::state::DkgState::Idle,
+        dkg_state: tui_node::utils::state::DkgState::Idle,
         signing_packages: HashMap::new(),
         signing_commitments: HashMap::new(),
         signing_requests: HashMap::new(),
@@ -82,7 +82,7 @@ async fn run_node(device_id: String, is_creator: bool) -> anyhow::Result<()> {
         wallet_keystores: Vec::new(),
         selected_wallet: None,
         received_all_dkg_round1: false,
-        reconnection_tracker: cli_node::utils::state::ReconnectionTracker::new(),
+        reconnection_tracker: tui_node::utils::state::ReconnectionTracker::new(),
         pending_ice_candidates: HashMap::new(),
         identifier_map: None,
         mesh_status: MeshStatus::Incomplete,

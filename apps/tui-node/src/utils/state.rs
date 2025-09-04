@@ -114,6 +114,18 @@ pub enum InternalCommand<C: Ciphersuite> {
     /// Finalize the DKG process
     FinalizeDkg,
 
+    /// Process simple DKG Round 1 data (from SimpleMessage format)
+    ProcessSimpleDkgRound1 {
+        from_device_id: String,
+        package_bytes: Vec<u8>,
+    },
+
+    /// Process simple DKG Round 2 data (from SimpleMessage format)
+    ProcessSimpleDkgRound2 {
+        from_device_id: String,
+        package_bytes: Vec<u8>,
+    },
+
     // --- Signing Commands ---
     /// Initiate a signing process with transaction data
     InitiateSigning {

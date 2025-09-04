@@ -1,7 +1,6 @@
 //! Ethereum blockchain handler implementation
 
-use super::{BlockchainHandler, ParsedTransaction, SignatureData};
-use crate::keystore::Result;
+use super::{BlockchainHandler, ParsedTransaction, SignatureData, Result, BlockchainError};
 
 pub struct EthereumHandler {
     // Can add configuration here if needed
@@ -19,7 +18,7 @@ impl EthereumHandler {
         
         // Basic validation
         if tx_bytes.is_empty() {
-            return Err(crate::keystore::KeystoreError::General(
+            return Err(BlockchainError::InvalidTransaction(
                 "Empty transaction data".to_string()
             ));
         }
@@ -57,7 +56,7 @@ impl BlockchainHandler for EthereumHandler {
         
         // Decode hex to bytes
         let raw_bytes = hex::decode(tx_hex)
-            .map_err(|e| crate::keystore::KeystoreError::General(
+            .map_err(|e| BlockchainError::ParseError(
                 format!("Invalid hex transaction: {}", e)
             ))?;
         
@@ -90,7 +89,7 @@ impl BlockchainHandler for EthereumHandler {
     fn serialize_signature(&self, signature_bytes: &[u8]) -> Result<SignatureData> {
         // FROST signatures are typically 64 bytes (r,s)
         if signature_bytes.len() < 64 {
-            return Err(crate::keystore::KeystoreError::General(
+            return Err(BlockchainError::SignatureError(
                 format!("Invalid signature length: expected at least 64 bytes, got {}", signature_bytes.len())
             ));
         }

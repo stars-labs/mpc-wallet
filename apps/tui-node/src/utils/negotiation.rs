@@ -147,11 +147,12 @@ pub async fn initiate_offers_for_session<C>(
                         Ok(())
                     }.await;
 
-                    let _outcome = if offer_result.is_ok() {
+                    let outcome = if offer_result.is_ok() {
                         "succeeded"
                     } else {
                         "failed"
                     };
+                    tracing::debug!("Offer creation {}", outcome);
                     state_clone
                         .lock()
                         .await

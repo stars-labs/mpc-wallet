@@ -3,7 +3,22 @@
 //! This module provides traits and implementations for blockchain-specific
 //! operations like transaction parsing, message formatting, and signature serialization.
 
-use crate::keystore::Result;
+use thiserror::Error;
+
+/// Blockchain error type
+#[derive(Debug, Error)]
+pub enum BlockchainError {
+    #[error("General error: {0}")]
+    General(String),
+    #[error("Invalid transaction: {0}")]
+    InvalidTransaction(String),
+    #[error("Signature error: {0}")]
+    SignatureError(String),
+    #[error("Parse error: {0}")]
+    ParseError(String),
+}
+
+pub type Result<T> = std::result::Result<T, BlockchainError>;
 
 pub mod ethereum;
 pub mod solana;

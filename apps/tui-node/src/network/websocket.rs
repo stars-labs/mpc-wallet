@@ -141,8 +141,8 @@ pub async fn handle_websocket_message<C>(
                                 ).await;
                             }
                         }
-                        ServerMsg::Error { error: _error } => {
-                            let _state_guard = state.lock().await;
+                        ServerMsg::Error { error } => {
+                            tracing::error!("Server error: {}", error);
                         }
                         ServerMsg::SessionAvailable { session_info } => {
                             // Parse and add to available sessions
@@ -249,9 +249,13 @@ pub async fn handle_websocket_message<C>(
                                             .unwrap_or(false);
                                         
                                         // Prefer the original creator if they're still online
-                                        let _is_original_creator = state_guard.session.as_ref()
+                                        let is_original_creator = state_guard.session.as_ref()
                                             .map(|s| s.proposer_id == state_guard.device_id)
                                             .unwrap_or(false);
+                                        
+                                        if is_original_creator {
+                                            tracing::debug!("Session proposer confirmed");
+                                        }
                                         
                                         if can_handle_join {
                                             // Get the original proposer before logging
@@ -260,7 +264,10 @@ pub async fn handle_websocket_message<C>(
                                                 .unwrap_or_default();
                                             
                                             // We can handle the join request
-                                            let _is_original_creator = original_proposer == state_guard.device_id;
+                                            let is_original_creator = original_proposer == state_guard.device_id;
+                                            if is_original_creator {
+                                                tracing::debug!("Original session proposer handling join request");
+                                            }
                                             
                                             // Get device_id before mutable borrow
                                             let creator_device_id = state_guard.device_id.clone();
@@ -498,7 +505,7 @@ pub async fn handle_websocket_message<C>(
                             // Log removed
                                         } else {
                                             // New session invitation
-                                            let _invite_info = SessionInfo {
+                                            let invite_info = SessionInfo {
                                                 session_id: proposal.session_id.clone(),
                                                 proposer_id: proposal.proposer_device_id.clone(), // Use the proposer_device_id from proposal
                                                 total: proposal.total,
@@ -509,6 +516,7 @@ pub async fn handle_websocket_message<C>(
                                                 curve_type: proposal.curve_type.clone(),
                                                 coordination_type: proposal.coordination_type.clone(),
                                             };
+                                            state_guard.invites.push(invite_info);
                             // Log removed
                                         }
                                         
@@ -559,7 +567,8 @@ pub async fn handle_websocket_message<C>(
                                     let mut state_guard = state.lock().await;
                                     
                                     // Update our session state with the new participant list
-                                    let _self_device_id = state_guard.device_id.clone();
+                                    let self_device_id = state_guard.device_id.clone();
+                                    tracing::debug!("Processing participants update for device: {}", self_device_id);
                                     let has_session = state_guard.session.is_some();
                                     
                                     if has_session {
@@ -569,11 +578,13 @@ pub async fn handle_websocket_message<C>(
                                         
                                         if session_matches {
                                             if let Some(ref mut session) = state_guard.session {
-                                                let _old_count = session.accepted_devices.len();
-                                                let _old_devices = session.accepted_devices.clone();
+                                                let old_count = session.accepted_devices.len();
                                                 session.accepted_devices = update.accepted_devices.clone();
-                                                let _new_count = session.accepted_devices.len();
-                                                let _new_devices = session.accepted_devices.clone();
+                                                let new_count = session.accepted_devices.len();
+                                                
+                                                if new_count != old_count {
+                                                    tracing::info!("Session participants updated: {}/{}", new_count, session.total);
+                                                }
                                                 
                             // Log removed
                                                 
@@ -583,7 +594,10 @@ pub async fn handle_websocket_message<C>(
                                                 }
                                             }
                                         } else {
-                                            let _current_session_id = state_guard.session.as_ref().map(|s| s.session_id.clone());
+                                            // Log current session for debugging
+                                            if let Some(session) = &state_guard.session {
+                                                tracing::debug!("Processing participant update for session: {}", session.session_id);
+                                            }
                             // Log removed
                                         }
                                     } else {

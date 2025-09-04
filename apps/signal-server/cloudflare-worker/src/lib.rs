@@ -86,11 +86,11 @@ impl DurableObject for Devices {
 
         let devices = self.devices.clone();
         let state = self.state.clone();
-        wasm_bindgen_futures::spawn_local({
+        wasm_bindgen_futures::spawn_local(async move {
             let server = server.clone();
             let devices = devices.clone();
             let state = state.clone();
-            async move {
+            {
                 let mut device_id: Option<String> = None;
                 let mut event_stream = server.events().expect("could not open stream");
 
@@ -282,22 +282,24 @@ impl DurableObject for Devices {
                                                         if let Some(key_str) = key_value.as_string() {
                                                             if key_str.starts_with("session:") {
                                                                 if let Ok(mut session_data) = state.storage().get::<serde_json::Value>(&key_str).await {
-                                                            if let Some(info) = session_data.get("session_info") {
-                                                                // Check if device is in participants
-                                                                if let Some(participants) = info.get("participants").and_then(|v| v.as_array()) {
-                                                                    let is_participant = participants.iter()
-                                                                        .any(|p| p.as_str() == Some(dev_id.as_str()));
-                                                                    if is_participant {
-                                                                        // Add to active participants if rejoining
-                                                                        if let Some(active) = session_data.get_mut("active_participants").and_then(|v| v.as_array_mut()) {
-                                                                            let dev_value = serde_json::Value::String(dev_id.clone());
-                                                                            if !active.contains(&dev_value) {
-                                                                                active.push(dev_value);
-                                                                                let _ = state.storage().put(&key_str, &session_data).await;
+                                                                    if let Some(info) = session_data.get("session_info").cloned() {
+                                                                        // Check if device is in participants
+                                                                        if let Some(participants) = info.get("participants").and_then(|v| v.as_array()) {
+                                                                            let is_participant = participants.iter()
+                                                                                .any(|p| p.as_str() == Some(dev_id.as_str()));
+                                                                            if is_participant {
+                                                                                // Add to active participants if rejoining
+                                                                                if let Some(active) = session_data.get_mut("active_participants").and_then(|v| v.as_array_mut()) {
+                                                                                    let dev_value = serde_json::Value::String(dev_id.clone());
+                                                                                    if !active.contains(&dev_value) {
+                                                                                        active.push(dev_value);
+                                                                                        let _ = state.storage().put(&key_str, &session_data).await;
+                                                                                    }
+                                                                                }
+                                                                                my_sessions.push(info);
+                                                                                tracked_sessions.push(key_str.replace("session:", ""));
                                                                             }
                                                                         }
-                                                                        my_sessions.push(info.clone());
-                                                                        tracked_sessions.push(key_str.replace("session:", ""));
                                                                     }
                                                                 }
                                                             }
@@ -340,12 +342,12 @@ impl DurableObject for Devices {
                             if let Some(my_id) = device_id.clone() {
                                 // Remove device from active participants in sessions
                                 let device_sessions_key = format!("device_sessions:{}", my_id);
-                                if let Ok(Some(session_ids)) = state.storage().get::<Vec<String>>(&device_sessions_key).await {
+                                if let Ok(session_ids) = state.storage().get::<Vec<String>>(&device_sessions_key).await {
                                     let mut sessions_to_remove = Vec::new();
                                     
                                     for session_id in &session_ids {
                                         let session_key = format!("session:{}", session_id);
-                                        if let Ok(Some(mut session_data)) = state.storage().get::<serde_json::Value>(&session_key).await {
+                                        if let Ok(mut session_data) = state.storage().get::<serde_json::Value>(&session_key).await {
                                             // Remove from active participants
                                             if let Some(active) = session_data.get_mut("active_participants").and_then(|v| v.as_array_mut()) {
                                                 active.retain(|p| p.as_str() != Some(&my_id));
@@ -401,8 +403,7 @@ impl DurableObject for Devices {
                     }
                 }
             }  // End of while loop
-        }  // End of async move
-        });  // End of spawn_local
+        });  // End of spawn_local (async move)
 
         Response::from_websocket(client)
     }

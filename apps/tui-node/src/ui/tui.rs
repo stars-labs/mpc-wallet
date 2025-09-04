@@ -1862,7 +1862,7 @@ fn draw_dkg_progress<B: Backend, C: Ciphersuite>(f: &mut Frame, app: &AppState<C
     let progress = app.wallet_creation_progress.as_ref();
     let dkg_stage = &app.dkg_state;
     
-    let (progress_ratio, stage_text, stage_color) = if let Some(prog) = progress {
+    let (progress_ratio, _stage_text, stage_color) = if let Some(prog) = progress {
         let ratio = prog.current_step as f64 / prog.total_steps as f64;
         let color = match dkg_stage {
             crate::utils::state::DkgState::Complete => Color::Green,
@@ -1899,11 +1899,7 @@ fn draw_dkg_progress<B: Backend, C: Ciphersuite>(f: &mut Frame, app: &AppState<C
         .label(format!("{:.0}%", progress_ratio * 100.0));
     f.render_widget(progress_bar, progress_chunks[0]);
 
-    let stage_para = Paragraph::new(stage_text)
-        .style(Style::default().fg(stage_color).add_modifier(Modifier::BOLD))
-        .alignment(Alignment::Center)
-        .block(Block::default().borders(Borders::ALL).title("Current Stage"));
-    f.render_widget(stage_para, progress_chunks[1]);
+    // Stage text shown in progress bar label instead of separate section
 
     // Participant status
     if let Some(session) = &app.session {
@@ -1938,23 +1934,139 @@ fn draw_dkg_progress<B: Backend, C: Ciphersuite>(f: &mut Frame, app: &AppState<C
         f.render_widget(no_session, chunks[2]);
     }
 
-    // Progress log
-    let recent_logs: Vec<Line> = app.log.iter()
-        .rev()
-        .take(10)
-        .rev()
-        .map(|entry| Line::from(entry.clone()))
-        .collect();
+    // User-friendly stage display instead of technical logs
+    let stage_content = match dkg_stage {
+        crate::utils::state::DkgState::Idle => {
+            vec![
+                Line::from(""),
+                Line::from(Span::styled("⏳ Waiting to start...", Style::default().fg(Color::Gray))),
+                Line::from(""),
+                Line::from(Span::styled("💡 Tip: Make sure all participants are ready", Style::default().fg(Color::Gray).add_modifier(Modifier::ITALIC))),
+            ]
+        }
+        crate::utils::state::DkgState::Round1InProgress => {
+            vec![
+                Line::from(""),
+                Line::from(Span::styled("🔗 Stage 1: Connecting to participants...", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))),
+                Line::from(""),
+                Line::from(Span::styled("💡 All participants must be online for the process to continue", Style::default().fg(Color::Gray).add_modifier(Modifier::ITALIC))),
+                Line::from(Span::styled("💡 This ensures no single party has control of your wallet", Style::default().fg(Color::Gray).add_modifier(Modifier::ITALIC))),
+            ]
+        }
+        crate::utils::state::DkgState::Round1Complete | crate::utils::state::DkgState::Round2InProgress => {
+            vec![
+                Line::from(""),
+                Line::from(Span::styled("🔑 Stage 2: Exchanging secure key shares...", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))),
+                Line::from(""),
+                Line::from(Span::styled("💡 Your wallet is being secured with threshold cryptography", Style::default().fg(Color::Gray).add_modifier(Modifier::ITALIC))),
+                Line::from(Span::styled("💡 Each participant will hold only a piece of the key", Style::default().fg(Color::Gray).add_modifier(Modifier::ITALIC))),
+            ]
+        }
+        crate::utils::state::DkgState::Round2Complete | crate::utils::state::DkgState::Finalizing => {
+            vec![
+                Line::from(""),
+                Line::from(Span::styled("✨ Stage 3: Finalizing wallet creation...", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))),
+                Line::from(""),
+                Line::from(Span::styled("💡 Generating your wallet addresses...", Style::default().fg(Color::Gray).add_modifier(Modifier::ITALIC))),
+                Line::from(Span::styled("💡 Almost done! Your secure wallet is being prepared", Style::default().fg(Color::Gray).add_modifier(Modifier::ITALIC))),
+            ]
+        }
+        crate::utils::state::DkgState::Complete => {
+            // Show meaningful wallet information
+            let wallet_id = app.current_wallet_id.as_deref().unwrap_or("Generated");
+            let session_info = app.session.as_ref();
+            let threshold_info = session_info
+                .map(|s| format!("{}-of-{}", s.threshold, s.total))
+                .unwrap_or_else(|| "Unknown".to_string());
+            let curve_type = session_info
+                .map(|s| s.curve_type.as_str())
+                .unwrap_or("Unknown");
+            let eth_address = app.etherum_public_key.as_deref()
+                .unwrap_or("Generating...");
+            
+            let mut info_lines = vec![
+                Line::from(""),
+                Line::from(Span::styled("✅ Wallet Created Successfully!", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("🆔 Wallet ID: ", Style::default().fg(Color::Yellow)),
+                    Span::styled(wallet_id, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                ]),
+                Line::from(vec![
+                    Span::styled("🔑 Threshold: ", Style::default().fg(Color::Yellow)),
+                    Span::styled(threshold_info, Style::default().fg(Color::Green)),
+                ]),
+                Line::from(vec![
+                    Span::styled("🔗 Curve: ", Style::default().fg(Color::Yellow)),
+                    Span::styled(curve_type, Style::default().fg(Color::Cyan)),
+                ]),
+            ];
+            
+            // Add session ID for debugging (this determines the group address)
+            if let Some(s) = session_info {
+                info_lines.push(Line::from(vec![
+                    Span::styled("🔍 Session: ", Style::default().fg(Color::Blue)),
+                    Span::styled(
+                        format!("{}...", &s.session_id[..16.min(s.session_id.len())]),
+                        Style::default().fg(Color::Gray)
+                    ),
+                ]));
+            }
+            
+            // Show group public key if available
+            if let Some(verifying_key) = &app.group_public_key {
+                // Convert the verifying key to hex string for display
+                let key_bytes = verifying_key.serialize().unwrap_or_default();
+                let group_key_hex = hex::encode(&key_bytes);
+                info_lines.push(Line::from(vec![
+                    Span::styled("🔐 Group Key: ", Style::default().fg(Color::Magenta)),
+                    Span::styled(
+                        format!("{}...", &group_key_hex[..16.min(group_key_hex.len())]),
+                        Style::default().fg(Color::Gray)
+                    ),
+                ]));
+            }
+            
+            info_lines.extend(vec![
+                Line::from(vec![
+                    Span::styled("📍 Group Address: ", Style::default().fg(Color::Yellow)),
+                    Span::styled(eth_address, Style::default().fg(Color::Magenta)),
+                ]),
+                Line::from(""),
+                Line::from(Span::styled("💡 Press Enter or V to view addresses and export options", Style::default().fg(Color::Gray).add_modifier(Modifier::ITALIC))),
+            ]);
+            
+            info_lines
+        }
+        crate::utils::state::DkgState::Failed(error) => {
+            vec![
+                Line::from(""),
+                Line::from(Span::styled("❌ Wallet creation failed", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))),
+                Line::from(""),
+                Line::from(Span::styled(format!("Error: {}", error), Style::default().fg(Color::Red))),
+                Line::from(""),
+                Line::from(Span::styled("💡 Check that all participants are connected", Style::default().fg(Color::Gray).add_modifier(Modifier::ITALIC))),
+                Line::from(Span::styled("💡 Press 'R' to retry or Esc to return", Style::default().fg(Color::Gray).add_modifier(Modifier::ITALIC))),
+            ]
+        }
+    };
 
-    let log_para = Paragraph::new(recent_logs)
-        .block(Block::default().borders(Borders::ALL).title("Progress Log"))
-        .scroll((0, 0));
-    f.render_widget(log_para, chunks[3]);
+    // Show different title based on state
+    let section_title = match dkg_stage {
+        crate::utils::state::DkgState::Complete => "Wallet Information",
+        crate::utils::state::DkgState::Failed(_) => "Error Details",
+        _ => "Current Stage",
+    };
+    
+    let stage_para = Paragraph::new(stage_content)
+        .block(Block::default().borders(Borders::ALL).title(section_title))
+        .alignment(Alignment::Center);
+    f.render_widget(stage_para, chunks[3]);
 
     // Instructions based on current state
     let instructions = match dkg_stage {
         crate::utils::state::DkgState::Complete => {
-            "✅ Wallet created successfully! Press Enter to view details or Esc to return"
+            "✅ Wallet created successfully! Press Enter or V to view details, D for debug, Esc for menu"
         }
         crate::utils::state::DkgState::Failed(_) => {
             "❌ Wallet creation failed. Press R to retry or Esc to return"
@@ -1971,7 +2083,7 @@ fn draw_dkg_progress<B: Backend, C: Ciphersuite>(f: &mut Frame, app: &AppState<C
     f.render_widget(instr_para, chunks[4]);
 }
 
-/// Wallet completion screen with address display
+/// Wallet completion screen with address display (optimized for performance)
 fn draw_wallet_complete<B: Backend, C: Ciphersuite>(
     f: &mut Frame,
     app: &AppState<C>,
@@ -1979,7 +2091,10 @@ fn draw_wallet_complete<B: Backend, C: Ciphersuite>(
     show_address_details: bool,
 ) {
     let area = f.area();
-    f.render_widget(Clear, area);
+    // Only clear if necessary to reduce flickering
+    if show_address_details {
+        f.render_widget(Clear, area);
+    }
     
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -2061,9 +2176,16 @@ fn draw_wallet_complete<B: Backend, C: Ciphersuite>(
             Line::from(""),
         ];
 
-        // Add addresses from app state
+        // Add addresses from app state (with stable rendering)
         if !app.blockchain_addresses.is_empty() {
-            for addr_info in app.blockchain_addresses.iter().filter(|a| a.enabled) {
+            // Sort addresses by blockchain name for consistent order
+            let mut sorted_addresses: Vec<_> = app.blockchain_addresses
+                .iter()
+                .filter(|a| a.enabled)
+                .collect();
+            sorted_addresses.sort_by(|a, b| a.blockchain.cmp(&b.blockchain));
+            
+            for addr_info in sorted_addresses {
                 address_lines.push(Line::from(vec![
                     Span::styled(format!("{}:", addr_info.blockchain), Style::default().fg(Color::Yellow)),
                 ]));
@@ -2074,17 +2196,133 @@ fn draw_wallet_complete<B: Backend, C: Ciphersuite>(
                 address_lines.push(Line::from(""));
             }
         } else {
-            // Legacy support
-            if let Some(eth_addr) = &app.etherum_public_key {
+            // Show the group public key and addresses based on curve type
+            let curve_type = app.session.as_ref()
+                .map(|s| s.curve_type.as_str())
+                .unwrap_or("Unknown");
+            
+            // Show group public key (this is the main FROST output)
+            if let Some(verifying_key) = &app.group_public_key {
+                // Convert the verifying key to hex string for display
+                let key_bytes = verifying_key.serialize().unwrap_or_default();
+                let group_key_hex = hex::encode(&key_bytes);
                 address_lines.push(Line::from(vec![
-                    Span::styled("Ethereum:", Style::default().fg(Color::Yellow)),
+                    Span::styled("Group Public Key (FROST):", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
                 ]));
+                // Display the key in hex format (truncated for readability)
+                let display_key = if group_key_hex.len() > 64 {
+                    format!("{}...{}", &group_key_hex[..32], &group_key_hex[group_key_hex.len()-32..])
+                } else {
+                    group_key_hex.clone()
+                };
                 address_lines.push(Line::from(vec![
                     Span::raw("  "),
-                    Span::styled(eth_addr, Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+                    Span::styled(display_key, Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
                 ]));
+                address_lines.push(Line::from(""));
             }
+            
+            // Show blockchain addresses based on curve compatibility
+            use crate::blockchain_config::{CurveType, get_compatible_chains, generate_address_for_chain};
+            
+            if let Some(curve) = CurveType::from_string(curve_type) {
+                let compatible_chains = get_compatible_chains(&curve);
+                
+                if !compatible_chains.is_empty() {
+                    address_lines.push(Line::from(vec![
+                        Span::styled(format!("Compatible Blockchains ({} curve):", curve_type), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                    ]));
+                    address_lines.push(Line::from(""));
+                    
+                    // Check if we have cached addresses first to avoid regenerating
+                    if let Some(addr) = &app.etherum_public_key {
+                        // We have a cached address, display it for all compatible Ethereum-style chains
+                        for (chain_id, chain_info) in compatible_chains.iter().take(5) {
+                            if matches!(chain_id.as_ref(), "ethereum" | "bsc" | "polygon" | "avalanche") {
+                                address_lines.push(Line::from(vec![
+                                    Span::styled(format!("{} ({}):", chain_info.name, chain_info.symbol), Style::default().fg(Color::Yellow)),
+                                ]));
+                                address_lines.push(Line::from(vec![
+                                    Span::raw("  "),
+                                    Span::styled(addr.clone(), Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+                                ]));
+                            } else {
+                                // Non-Ethereum chain, show pending
+                                address_lines.push(Line::from(vec![
+                                    Span::styled(format!("{} ({}):", chain_info.name, chain_info.symbol), Style::default().fg(Color::Yellow)),
+                                ]));
+                                address_lines.push(Line::from(vec![
+                                    Span::raw("  "),
+                                    Span::styled("(Address generation pending)", Style::default().fg(Color::Gray).add_modifier(Modifier::ITALIC)),
+                                ]));
+                            }
+                        }
+                    } else if let Some(verifying_key) = &app.group_public_key {
+                        // No cached address, generate them (but this should be rare)
+                        let group_public_key = verifying_key.serialize().unwrap_or_default();
+                        {
+                            // Show addresses for each compatible chain
+                            for (chain_id, chain_info) in compatible_chains.iter().take(5) {
+                                match generate_address_for_chain(&group_public_key, curve_type, chain_id) {
+                                    Ok(address) => {
+                                        address_lines.push(Line::from(vec![
+                                            Span::styled(format!("{} ({}):", chain_info.name, chain_info.symbol), Style::default().fg(Color::Yellow)),
+                                        ]));
+                                        address_lines.push(Line::from(vec![
+                                            Span::raw("  "),
+                                            Span::styled(address, Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+                                        ]));
+                                    }
+                                    Err(_) => {
+                                        // Address generation not implemented for this chain
+                                        address_lines.push(Line::from(vec![
+                                            Span::styled(format!("{} ({}):", chain_info.name, chain_info.symbol), Style::default().fg(Color::Yellow)),
+                                        ]));
+                                        address_lines.push(Line::from(vec![
+                                            Span::raw("  "),
+                                            Span::styled("(Address generation pending)", Style::default().fg(Color::Gray).add_modifier(Modifier::ITALIC)),
+                                        ]));
+                                    }
+                                }
+                            }
+                            
+                            // If there are more compatible chains, mention them
+                            if compatible_chains.len() > 5 {
+                                address_lines.push(Line::from(""));
+                                address_lines.push(Line::from(vec![
+                                    Span::styled(format!("+ {} more compatible chains", compatible_chains.len() - 5), Style::default().fg(Color::Gray)),
+                                ]));
+                            }
+                        }
+                    } else if let Some(addr) = &app.etherum_public_key {
+                        // Fallback to showing just the stored address
+                        let (_chain_id, chain_info) = &compatible_chains[0];
+                        address_lines.push(Line::from(vec![
+                            Span::styled(format!("{} Address:", chain_info.name), Style::default().fg(Color::Yellow)),
+                        ]));
+                        address_lines.push(Line::from(vec![
+                            Span::raw("  "),
+                            Span::styled(addr, Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+                        ]));
+                        address_lines.push(Line::from(""));
+                    }
+                } else {
+                    // No compatible chains for this curve
+                    address_lines.push(Line::from(vec![
+                        Span::styled(format!("⚠️  No blockchain addresses available for {} curve", curve_type), Style::default().fg(Color::Red)),
+                    ]));
+                }
+            }
+            
+            address_lines.push(Line::from(""));
+            address_lines.push(Line::from(vec![
+                Span::styled("ℹ️  This is your threshold wallet", Style::default().fg(Color::Gray).add_modifier(Modifier::ITALIC)),
+            ]));
+            address_lines.push(Line::from(vec![
+                Span::styled("ℹ️  All participants share the same group public key", Style::default().fg(Color::Gray).add_modifier(Modifier::ITALIC)),
+            ]));
             if let Some(sol_addr) = &app.solana_public_key {
+                address_lines.push(Line::from(""));
                 address_lines.push(Line::from(vec![
                     Span::styled("Solana:", Style::default().fg(Color::Yellow)),
                 ]));
@@ -2095,8 +2333,11 @@ fn draw_wallet_complete<B: Backend, C: Ciphersuite>(
             }
         }
 
+        // Use a scrollable paragraph with wrap to prevent overflow
         let addresses_para = Paragraph::new(address_lines)
-            .block(Block::default().borders(Borders::ALL).title("Blockchain Addresses"));
+            .block(Block::default().borders(Borders::ALL).title("Blockchain Addresses"))
+            .wrap(Wrap { trim: false })
+            .scroll((0, 0)); // Fixed scroll position at top
         f.render_widget(addresses_para, chunks[2]);
     } else {
         // Show action menu
@@ -2124,9 +2365,9 @@ fn draw_wallet_complete<B: Backend, C: Ciphersuite>(
 
     // Instructions
     let instructions = if show_address_details {
-        "Esc: Back to actions  q: Main menu  c: Copy address"
+        "Esc/B: Back to actions  Q: Main menu  C: Copy address (not yet implemented)"
     } else {
-        "↑↓: Navigate  Enter: Select  Esc: Main menu"
+        "↑↓: Navigate  Enter: Select  Esc/Q: Main menu"
     };
 
     let instr_para = Paragraph::new(instructions)
@@ -2741,14 +2982,21 @@ pub fn handle_key_event<C>(
         }
 
         UIMode::DkgProgress { allow_cancel } => {
+            tracing::debug!("Key pressed in DkgProgress mode: {:?}, DKG state: {:?}", key.code, app.dkg_state);
             match key.code {
                 KeyCode::Enter => {
+                    tracing::info!("Enter key pressed in DkgProgress mode, DKG state: {:?}", app.dkg_state);
                     // Check if DKG is complete
-                    if let crate::utils::state::DkgState::Complete = app.dkg_state {
+                    if matches!(app.dkg_state, crate::utils::state::DkgState::Complete) {
+                        tracing::info!("DKG is complete, switching to WalletComplete mode");
                         *ui_mode = UIMode::WalletComplete { 
                             selected_action: 0, 
-                            show_address_details: false 
+                            show_address_details: true  // Changed to true to show addresses immediately
                         };
+                        // Force UI redraw
+                        return Ok(true);
+                    } else {
+                        tracing::warn!("Cannot show wallet details - DKG not complete. State: {:?}", app.dkg_state);
                     }
                 }
                 KeyCode::Char('r') | KeyCode::Char('R') => {
@@ -2758,12 +3006,48 @@ pub fn handle_key_event<C>(
                         let _ = cmd_tx.send(InternalCommand::RetryDkg);
                     }
                 }
+                KeyCode::Char('v') | KeyCode::Char('V') => {
+                    tracing::info!("'v' key pressed in DkgProgress mode, DKG state: {:?}", app.dkg_state);
+                    // Alternative key to view wallet details (workaround if Enter doesn't work)
+                    if matches!(app.dkg_state, crate::utils::state::DkgState::Complete) {
+                        tracing::info!("DKG is complete, switching to WalletComplete mode via 'v' key");
+                        *ui_mode = UIMode::WalletComplete { 
+                            selected_action: 0, 
+                            show_address_details: true  // Changed to true to show addresses immediately
+                        };
+                        // Force UI redraw
+                        return Ok(true);
+                    } else {
+                        tracing::warn!("Cannot show wallet details via 'v' - DKG not complete");
+                    }
+                }
                 KeyCode::Esc => {
-                    if *allow_cancel {
+                    // Return to main menu if DKG is complete or if cancellation is allowed
+                    if matches!(app.dkg_state, crate::utils::state::DkgState::Complete) {
+                        tracing::info!("DKG complete, returning to main menu");
+                        *ui_mode = UIMode::Normal;
+                    } else if *allow_cancel {
+                        tracing::info!("Cancelling DKG and returning to main menu");
                         // Cancel DKG and return to main menu
                         let _ = cmd_tx.send(InternalCommand::CancelDkg);
                         *ui_mode = UIMode::PathSelection { selected_index: 0 };
                     }
+                }
+                KeyCode::Char('d') | KeyCode::Char('D') => {
+                    // Debug key to check state
+                    tracing::info!("=== DEBUG INFO ===");
+                    tracing::info!("DKG State: {:?}", app.dkg_state);
+                    tracing::info!("UI Mode: {:?}", ui_mode);
+                    tracing::info!("Ethereum Address: {:?}", app.etherum_public_key);
+                    tracing::info!("Wallet ID: {:?}", app.current_wallet_id);
+                    tracing::info!("Session: {:?}", app.session.as_ref().map(|s| &s.session_id));
+                    tracing::info!("==================");
+                    
+                    // Also show a debug message in the UI
+                    app.log.push(format!("Debug: DKG={:?}, Addr={:?}", 
+                        matches!(app.dkg_state, crate::utils::state::DkgState::Complete),
+                        app.etherum_public_key.as_ref().map(|a| &a[..10.min(a.len())])
+                    ));
                 }
                 _ => {}
             }

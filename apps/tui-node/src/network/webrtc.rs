@@ -316,7 +316,7 @@ pub async fn initiate_webrtc_connections<C>( //bRTC connections with all session
     // Log removed: initiate_webrtc_connections called with participants
     
     // Log who's calling this function for debugging
-    let _session_role = {
+    let session_role = {
         let state_guard = state.lock().await;
         if let Some(ref session) = state_guard.session {
             if session.proposer_id == self_device_id {
@@ -328,6 +328,7 @@ pub async fn initiate_webrtc_connections<C>( //bRTC connections with all session
             "UNKNOWN"
         }
     };
+    tracing::debug!("Session role: {}", session_role);
     
     // Log removed: Role is initiating WebRTC connections
     
@@ -400,12 +401,12 @@ pub async fn initiate_webrtc_connections<C>( //bRTC connections with all session
     
     // Log detailed comparison for debugging
     for other_id in &other_participants {
-        let _comparison = if self_device_id < *other_id {
+        let comparison = if self_device_id < *other_id {
             format!("{} < {} = TRUE (we create offer)", self_device_id, other_id)
         } else {
             format!("{} < {} = FALSE (we wait for offer)", self_device_id, other_id)
         };
-        // Log removed: Comparison result for politeness rule
+        tracing::trace!("Politeness rule: {}", comparison);
     }
 
     if !devices_to_offer_to.is_empty() {

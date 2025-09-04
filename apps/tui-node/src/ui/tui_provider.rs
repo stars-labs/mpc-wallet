@@ -101,7 +101,15 @@ impl<B: Backend + Send + 'static> TuiProvider<B> {
     }
     
     pub async fn handle_key_event(&self, key: KeyEvent) -> Option<String> {
+        // Log every key event for debugging
+        tracing::info!("=== KEY EVENT RECEIVED ===");
+        tracing::info!("Key: {:?}", key);
+        
         let mut state = self.state.lock().await;
+        
+        // Log current UI state
+        tracing::info!("Current UI Mode: {:?}", state.ui_mode);
+        tracing::info!("DKG Status: '{}'", state.dkg_status);
         
         // Store values we might need later
         let wallet_creation_mode = state.wallet_creation_mode;
@@ -492,28 +500,176 @@ impl<B: Backend + Send + 'static> TuiProvider<B> {
             
             // DKG Progress Screen
             UIMode::DkgProgress { allow_cancel } => {
+                let allow_cancel_copy = *allow_cancel;  // Copy the value to avoid borrow issues
+                
+                // Copy values we need before the match to avoid borrow issues
+                let dkg_status_clone = state.dkg_status.clone();
+                let generated_address_clone = state.generated_address.clone();
+                
+                tracing::info!("=== KEY EVENT IN DKG PROGRESS MODE ===");
+                tracing::info!("Key code: {:?}", key.code);
+                tracing::info!("DKG Status: '{}'", dkg_status_clone);
+                tracing::info!("Generated Address: {:?}", generated_address_clone);
+                tracing::info!("Allow Cancel: {}", allow_cancel_copy);
                 match key.code {
-                    KeyCode::Char('r') => {
-                        // Retry DKG if failed
-                        return Some("retry_dkg".to_string());
+                    KeyCode::Enter | KeyCode::Char('v') | KeyCode::Char('V') => {
+                        tracing::info!("Enter/V key detected!");
+                        
+                        // Check for DKG completion - be VERY flexible
+                        let is_complete = state.dkg_status == "DKG Complete" || 
+                                        state.dkg_status.to_lowercase().contains("complete") ||
+                                        state.dkg_status.contains("successfully") ||
+                                        state.generated_address.is_some(); // Also check if we have an address
+                        
+                        tracing::info!("Is DKG complete check: {} (status='{}', has_address={})", 
+                            is_complete, state.dkg_status, state.generated_address.is_some());
+                        
+                        if is_complete {
+                            tracing::info!("✅ Switching to wallet complete view!");
+                            state.ui_mode = UIMode::WalletComplete { 
+                                selected_action: 0, 
+                                show_address_details: true 
+                            };
+                            // Force immediate redraw
+                            drop(state); // Release lock before sending
+                            let _ = self.redraw_tx.send(());
+                            tracing::info!("✅ UI mode changed and redraw requested");
+                            return None; // Don't return a command, just update UI
+                        } else {
+                            tracing::warn!("❌ DKG not complete. Status '{}' doesn't match", state.dkg_status);
+                        }
                     }
-                    KeyCode::Esc if *allow_cancel => {
-                        // Cancel DKG
-                        return Some("cancel_dkg".to_string());
+                    KeyCode::Char('d') | KeyCode::Char('D') => {
+                        // Debug key - log current state
+                        tracing::info!("=== DEBUG KEY PRESSED ===");
+                        tracing::info!("UI Mode: {:?}", state.ui_mode);
+                        tracing::info!("DKG Status: '{}'", state.dkg_status);
+                        tracing::info!("Generated Address: {:?}", state.generated_address);
+                        tracing::info!("Selected Wallet: {:?}", state.selected_wallet);
+                        tracing::info!("Active Session: {:?}", state.active_session.as_ref().map(|s| &s.session_id));
+                        tracing::info!("==================");
+                        
+                        // Show debug info in UI
+                        let debug_msg = format!("DEBUG: Mode={:?}, DKG='{}', Addr={:?}", 
+                            state.ui_mode,
+                            state.dkg_status,
+                            state.generated_address.as_ref().map(|a| &a[..10.min(a.len())])
+                        );
+                        state.logs.push(debug_msg.clone());
+                        tracing::info!("Added to logs: {}", debug_msg);
+                        
+                        // Force redraw
+                        drop(state);
+                        let _ = self.redraw_tx.send(());
+                        tracing::info!("Debug info displayed and redraw requested");
+                        return None;
+                    }
+                    KeyCode::Char('r') | KeyCode::Char('R') => {
+                        // Retry DKG if failed
+                        if state.dkg_status.contains("Failed") || state.dkg_status.contains("Error") {
+                            return Some("retry_dkg".to_string());
+                        }
+                    }
+                    KeyCode::Esc => {
+                        tracing::info!("Esc key pressed. Current DKG status: '{}'", state.dkg_status);
+                        
+                        // Check for DKG completion
+                        let is_complete = state.dkg_status == "DKG Complete" || 
+                                        state.dkg_status == "Complete" ||
+                                        state.dkg_status.contains("Complete") ||
+                                        state.dkg_status.contains("successfully") ||
+                                        state.generated_address.is_some();
+                        
+                        if is_complete {
+                            tracing::info!("DKG complete, returning to main menu");
+                            state.ui_mode = UIMode::MainMenu { selected_index: 0 };
+                            // Force immediate redraw
+                            drop(state);
+                            let _ = self.redraw_tx.send(());
+                            return None;
+                        } else if allow_cancel_copy {
+                            tracing::info!("DKG in progress, cancelling...");
+                            // Cancel DKG if still in progress
+                            return Some("cancel_dkg".to_string());
+                        } else {
+                            tracing::info!("Cannot cancel at this stage");
+                        }
                     }
                     _ => {}
                 }
             }
             
             // Wallet Complete Screen
-            UIMode::WalletComplete { selected_action: _, show_address_details: _ } => {
-                match key.code {
-                    KeyCode::Enter | KeyCode::Esc => {
-                        // Return to main menu
-                        state.ui_mode = UIMode::MainMenu { selected_index: 0 };
-                        let _ = self.redraw_tx.send(());
+            UIMode::WalletComplete { selected_action, show_address_details } => {
+                if *show_address_details {
+                    // When showing address details
+                    match key.code {
+                        KeyCode::Esc | KeyCode::Char('b') | KeyCode::Char('B') => {
+                            // Go back to action menu
+                            *show_address_details = false;
+                            let _ = self.redraw_tx.send(());
+                        }
+                        KeyCode::Char('q') | KeyCode::Char('Q') => {
+                            // Return to main menu
+                            state.ui_mode = UIMode::MainMenu { selected_index: 0 };
+                            let _ = self.redraw_tx.send(());
+                        }
+                        KeyCode::Char('c') | KeyCode::Char('C') => {
+                            // TODO: Copy address to clipboard
+                            state.logs.push("Address copy not yet implemented".to_string());
+                            let _ = self.redraw_tx.send(());
+                        }
+                        _ => {}
                     }
-                    _ => {}
+                } else {
+                    // When showing action menu
+                    match key.code {
+                        KeyCode::Up => {
+                            if *selected_action > 0 {
+                                *selected_action -= 1;
+                                let _ = self.redraw_tx.send(());
+                            }
+                        }
+                        KeyCode::Down => {
+                            if *selected_action < 4 { // 5 actions (0-4)
+                                *selected_action += 1;
+                                let _ = self.redraw_tx.send(());
+                            }
+                        }
+                        KeyCode::Enter => {
+                            match *selected_action {
+                                0 => {
+                                    // View Addresses
+                                    *show_address_details = true;
+                                    let _ = self.redraw_tx.send(());
+                                }
+                                1 => {
+                                    // Export Wallet
+                                    return Some("export_wallet".to_string());
+                                }
+                                2 => {
+                                    // Create Backup
+                                    return Some("create_backup".to_string());
+                                }
+                                3 => {
+                                    // Send Transaction
+                                    return Some("send_transaction".to_string());
+                                }
+                                4 => {
+                                    // Return to Main Menu
+                                    state.ui_mode = UIMode::MainMenu { selected_index: 0 };
+                                    let _ = self.redraw_tx.send(());
+                                }
+                                _ => {}
+                            }
+                        }
+                        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('Q') => {
+                            // Return to main menu
+                            state.ui_mode = UIMode::MainMenu { selected_index: 0 };
+                            let _ = self.redraw_tx.send(());
+                        }
+                        _ => {}
+                    }
                 }
             }
             
@@ -613,12 +769,25 @@ impl<B: Backend + Send + 'static> UIProvider for TuiProvider<B> {
     
     async fn update_dkg_status(&self, status: String) {
         let mut state = self.state.lock().await;
-        state.dkg_status = status;
+        let old_status = state.dkg_status.clone();
+        tracing::info!("Updating DKG status from '{}' to '{}'", old_status, status);
+        state.dkg_status = status.clone();
+        
+        // If DKG just completed, log additional info
+        if status.contains("Complete") && !old_status.contains("Complete") {
+            tracing::info!("🎊 DKG transition to complete detected in UI provider!");
+            tracing::info!("  Generated address: {:?}", state.generated_address);
+            tracing::info!("  Group public key: {:?}", state.group_public_key);
+        }
+        
         self.request_redraw().await;
     }
     
     async fn set_generated_address(&self, address: Option<String>) {
         let mut state = self.state.lock().await;
+        if address != state.generated_address {
+            tracing::info!("Setting generated address: {:?}", address);
+        }
         state.generated_address = address;
         self.request_redraw().await;
     }

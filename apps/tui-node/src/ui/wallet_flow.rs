@@ -393,7 +393,7 @@ pub fn draw_dkg_progress_screen<B: ratatui::backend::Backend, C: Ciphersuite>(
             Constraint::Length(3),  // Title
             Constraint::Length(6),  // Progress bar and stage
             Constraint::Length(8),  // Participant status
-            Constraint::Min(8),     // Progress details/log
+            Constraint::Min(8),     // Stage indicator and tips
             Constraint::Length(3),  // Instructions
         ])
         .split(area);
@@ -409,30 +409,38 @@ pub fn draw_dkg_progress_screen<B: ratatui::backend::Backend, C: Ciphersuite>(
     f.render_widget(title, chunks[0]);
 
     // Progress bar and stage
-    if let Some(progress) = &app.wallet_creation_progress {
-        let progress_ratio = progress.current_step as f64 / progress.total_steps as f64;
-        let progress_bar = Gauge::default()
-            .block(Block::default().borders(Borders::ALL).title("Overall Progress"))
-            .gauge_style(Style::default().fg(Color::Green))
-            .ratio(progress_ratio)
-            .label(format!("{} ({}/{})", progress.message, progress.current_step, progress.total_steps));
-        f.render_widget(progress_bar, chunks[1]);
-    }
+    let (progress_ratio, stage_message, progress_color) = match &app.dkg_state {
+        crate::utils::state::DkgState::Idle => (0.0, "Ready to start".to_string(), Color::Gray),
+        crate::utils::state::DkgState::Round1InProgress => (0.33, "🔗 Connecting to participants...".to_string(), Color::Yellow),
+        crate::utils::state::DkgState::Round1Complete => (0.5, "Round 1 Complete".to_string(), Color::Yellow),
+        crate::utils::state::DkgState::Round2InProgress => (0.66, "🔑 Exchanging secure key shares...".to_string(), Color::Yellow),
+        crate::utils::state::DkgState::Round2Complete => (0.8, "Round 2 Complete".to_string(), Color::Yellow),
+        crate::utils::state::DkgState::Finalizing => (0.9, "✨ Finalizing wallet creation...".to_string(), Color::Yellow),
+        crate::utils::state::DkgState::Complete => (1.0, "✅ Wallet created successfully!".to_string(), Color::Green),
+        crate::utils::state::DkgState::Failed(err) => (0.0, format!("❌ Failed: {}", err), Color::Red),
+    };
+
+    let progress_bar = Gauge::default()
+        .block(Block::default().borders(Borders::ALL).title("Progress"))
+        .gauge_style(Style::default().fg(progress_color))
+        .ratio(progress_ratio)
+        .label(stage_message);
+    f.render_widget(progress_bar, chunks[1]);
 
     // Participant status
     if let Some(session) = &app.session {
         let participant_items: Vec<ListItem> = session.participants.iter().map(|device_id| {
             let status = if device_id == &app.device_id {
-                "✅ You (Ready)"
+                "✅ Ready"
             } else if app.device_statuses.contains_key(device_id) {
                 match app.device_statuses[device_id] {
                     webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState::Connected => "✅ Connected",
-                    webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState::Connecting => "🔄 Connecting",
-                    _ => "⏳ Pending",
+                    webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState::Connecting => "🔄 Connecting...",
+                    webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState::Disconnected => "❌ Disconnected",
+                    _ => "⏳ Waiting...",
                 }
             } else {
-                // Show device ID with waiting status instead of "Unknown"
-                "⏳ Waiting"
+                "⏳ Waiting..."
             };
 
             ListItem::new(format!("👤 {} - {}", device_id, status))
@@ -443,23 +451,102 @@ pub fn draw_dkg_progress_screen<B: ratatui::backend::Backend, C: Ciphersuite>(
         f.render_widget(participant_list, chunks[2]);
     }
 
-    // Progress details from log
-    let recent_logs: Vec<Line> = app.log.iter()
-        .rev()
-        .take(8)
-        .rev()
-        .map(|entry| Line::from(entry.clone()))
-        .collect();
+    // Stage indicator with helpful tips
+    let stage_area = chunks[3];
+    let stage_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(6),  // Stage steps
+            Constraint::Min(2),     // Tips
+        ])
+        .split(stage_area);
 
-    let log_para = Paragraph::new(recent_logs)
-        .block(Block::default().borders(Borders::ALL).title("Progress Log"))
-        .scroll((0, 0));
-    f.render_widget(log_para, chunks[3]);
+    // Stage steps visual indicator
+    let (_current_stage, stage_lines) = match &app.dkg_state {
+        crate::utils::state::DkgState::Idle => (0, vec![
+            Line::from(vec![Span::styled("Stage 1: ", Style::default().fg(Color::Gray)), Span::raw("🔗 Connecting to participants...")]),
+            Line::from(vec![Span::styled("Stage 2: ", Style::default().fg(Color::Gray)), Span::raw("🔑 Exchanging secure key shares...")]),
+            Line::from(vec![Span::styled("Stage 3: ", Style::default().fg(Color::Gray)), Span::raw("✨ Finalizing wallet creation...")]),
+            Line::from(vec![Span::styled("Stage 4: ", Style::default().fg(Color::Gray)), Span::raw("✅ Wallet created successfully!")]),
+        ]),
+        crate::utils::state::DkgState::Round1InProgress => (1, vec![
+            Line::from(vec![Span::styled("Stage 1: ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)), Span::raw("🔗 Connecting to participants... ⏳")]),
+            Line::from(vec![Span::styled("Stage 2: ", Style::default().fg(Color::Gray)), Span::raw("🔑 Exchanging secure key shares...")]),
+            Line::from(vec![Span::styled("Stage 3: ", Style::default().fg(Color::Gray)), Span::raw("✨ Finalizing wallet creation...")]),
+            Line::from(vec![Span::styled("Stage 4: ", Style::default().fg(Color::Gray)), Span::raw("✅ Wallet created successfully!")]),
+        ]),
+        crate::utils::state::DkgState::Round1Complete | crate::utils::state::DkgState::Round2InProgress => (2, vec![
+            Line::from(vec![Span::styled("Stage 1: ", Style::default().fg(Color::Green)), Span::raw("🔗 Connecting to participants... ✓")]),
+            Line::from(vec![Span::styled("Stage 2: ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)), Span::raw("🔑 Exchanging secure key shares... ⏳")]),
+            Line::from(vec![Span::styled("Stage 3: ", Style::default().fg(Color::Gray)), Span::raw("✨ Finalizing wallet creation...")]),
+            Line::from(vec![Span::styled("Stage 4: ", Style::default().fg(Color::Gray)), Span::raw("✅ Wallet created successfully!")]),
+        ]),
+        crate::utils::state::DkgState::Round2Complete | crate::utils::state::DkgState::Finalizing => (3, vec![
+            Line::from(vec![Span::styled("Stage 1: ", Style::default().fg(Color::Green)), Span::raw("🔗 Connecting to participants... ✓")]),
+            Line::from(vec![Span::styled("Stage 2: ", Style::default().fg(Color::Green)), Span::raw("🔑 Exchanging secure key shares... ✓")]),
+            Line::from(vec![Span::styled("Stage 3: ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)), Span::raw("✨ Finalizing wallet creation... ⏳")]),
+            Line::from(vec![Span::styled("Stage 4: ", Style::default().fg(Color::Gray)), Span::raw("✅ Wallet created successfully!")]),
+        ]),
+        crate::utils::state::DkgState::Complete => (4, vec![
+            Line::from(vec![Span::styled("Stage 1: ", Style::default().fg(Color::Green)), Span::raw("🔗 Connecting to participants... ✓")]),
+            Line::from(vec![Span::styled("Stage 2: ", Style::default().fg(Color::Green)), Span::raw("🔑 Exchanging secure key shares... ✓")]),
+            Line::from(vec![Span::styled("Stage 3: ", Style::default().fg(Color::Green)), Span::raw("✨ Finalizing wallet creation... ✓")]),
+            Line::from(vec![Span::styled("Stage 4: ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)), Span::raw("✅ Wallet created successfully! ✓")]),
+        ]),
+        crate::utils::state::DkgState::Failed(_) => (0, vec![
+            Line::from(vec![Span::styled("❌ ", Style::default().fg(Color::Red)), Span::raw("Wallet creation failed")]),
+            Line::from(""),
+            Line::from("Check the error message above and try again."),
+            Line::from("Make sure all participants are online and connected."),
+        ]),
+    };
+
+    let stages_para = Paragraph::new(stage_lines)
+        .block(Block::default().borders(Borders::ALL).title("Creation Stages"))
+        .alignment(Alignment::Left);
+    f.render_widget(stages_para, stage_chunks[0]);
+
+    // Helpful tips based on current stage
+    let tip_lines = match &app.dkg_state {
+        crate::utils::state::DkgState::Idle => vec![
+            Line::from(vec![Span::styled("💡 ", Style::default().fg(Color::Cyan)), Span::raw("Make sure all participants are online before starting")]),
+        ],
+        crate::utils::state::DkgState::Round1InProgress => vec![
+            Line::from(vec![Span::styled("💡 ", Style::default().fg(Color::Cyan)), Span::raw("Participants are establishing secure connections...")]),
+            Line::from(vec![Span::raw("   This ensures no single party can access the complete key")]),
+        ],
+        crate::utils::state::DkgState::Round2InProgress => vec![
+            Line::from(vec![Span::styled("💡 ", Style::default().fg(Color::Cyan)), Span::raw("Key shares are being distributed securely")]),
+            Line::from(vec![Span::raw("   Each participant will receive a unique piece of the wallet")]),
+        ],
+        crate::utils::state::DkgState::Finalizing => vec![
+            Line::from(vec![Span::styled("💡 ", Style::default().fg(Color::Cyan)), Span::raw("Final wallet addresses are being generated...")]),
+            Line::from(vec![Span::raw("   Your wallet is protected by threshold cryptography")]),
+        ],
+        crate::utils::state::DkgState::Complete => vec![
+            Line::from(vec![Span::styled("🎉 ", Style::default().fg(Color::Green)), Span::raw("Success! Your multi-signature wallet is ready to use")]),
+            Line::from(vec![Span::raw("   You can now receive funds and create transactions")]),
+        ],
+        crate::utils::state::DkgState::Failed(_) => vec![
+            Line::from(vec![Span::styled("🔧 ", Style::default().fg(Color::Yellow)), Span::raw("Troubleshooting tips:")]),
+            Line::from(vec![Span::raw("   • Check your internet connection")]),
+            Line::from(vec![Span::raw("   • Ensure all participants are using the same session")]),
+            Line::from(vec![Span::raw("   • Try creating a new session if the issue persists")]),
+        ],
+        _ => vec![
+            Line::from(vec![Span::styled("💡 ", Style::default().fg(Color::Cyan)), Span::raw("Wallet creation in progress...")]),
+        ],
+    };
+
+    let tips_para = Paragraph::new(tip_lines)
+        .block(Block::default().borders(Borders::ALL).title("Tips"))
+        .alignment(Alignment::Left);
+    f.render_widget(tips_para, stage_chunks[1]);
 
     // Instructions
     let instructions = match &app.dkg_state {
         crate::utils::state::DkgState::Complete => {
-            "✅ Wallet created successfully! Press 'q' to return to main menu or 'v' to view wallet details"
+            "✅ Wallet created successfully! Press 'q' to return to main menu"
         }
         crate::utils::state::DkgState::Failed(_) => {
             "❌ Wallet creation failed. Press 'r' to retry or 'q' to return to main menu"

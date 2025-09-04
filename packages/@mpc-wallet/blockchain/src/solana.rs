@@ -1,7 +1,7 @@
 //! Solana blockchain handler implementation
 
-use super::{BlockchainHandler, ParsedTransaction, SignatureData};
-use crate::keystore::Result;
+use super::{BlockchainHandler, ParsedTransaction, SignatureData, Result, BlockchainError};
+use solana_sdk::bs58;
 
 pub struct SolanaHandler {
     // Can add configuration here if needed
@@ -16,7 +16,7 @@ impl SolanaHandler {
     fn parse_solana_transaction(tx_bytes: &[u8]) -> Result<(String, serde_json::Value)> {
         // Basic validation
         if tx_bytes.is_empty() {
-            return Err(crate::keystore::KeystoreError::General(
+            return Err(BlockchainError::InvalidTransaction(
                 "Empty transaction data".to_string()
             ));
         }
@@ -59,7 +59,7 @@ impl BlockchainHandler for SolanaHandler {
             // Try base58 decode
             bs58::decode(tx_hex)
                 .into_vec()
-                .map_err(|e| crate::keystore::KeystoreError::General(
+                .map_err(|e| BlockchainError::ParseError(
                     format!("Invalid transaction encoding: {}", e)
                 ))?
         };
@@ -91,7 +91,7 @@ impl BlockchainHandler for SolanaHandler {
     fn serialize_signature(&self, signature_bytes: &[u8]) -> Result<SignatureData> {
         // Solana expects 64-byte signatures
         if signature_bytes.len() != 64 {
-            return Err(crate::keystore::KeystoreError::General(
+            return Err(BlockchainError::SignatureError(
                 format!("Invalid signature length for Solana: {} bytes", signature_bytes.len())
             ));
         }

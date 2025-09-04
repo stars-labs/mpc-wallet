@@ -252,7 +252,7 @@ async fn main() -> Result<()> {
     let ui_provider = Arc::new(SimpleUIProvider::new(ui_weak.clone()));
     
     // Create app runner
-    let app_runner = AppRunner::<Secp256K1Sha256>::new(
+    let mut app_runner = AppRunner::<Secp256K1Sha256>::new(
         "wss://auto-life.tech".to_string(),
         ui_provider.clone(),
     );
@@ -321,8 +321,10 @@ async fn main() -> Result<()> {
                 from_device_id: "".to_string(), // Not needed for our own rejection
                 response: tui_node::protocal::signal::SessionResponse {
                     session_id: session_id.to_string(),
+                    from_device_id: "".to_string(),
                     accepted: false,
                     wallet_status: None,
+                    reason: Some("User rejected".to_string()),
                 },
             });
         });

@@ -13,6 +13,7 @@ MPC Wallet enables threshold signatures where private keys are split across mult
 
 ### Key Features
 
+- **Real FROST DKG**: Cryptographically secure distributed key generation using proper FROST protocol
 - **Threshold Signatures**: Configurable t-of-n threshold signing
 - **Multi-Platform**: Browser extension, desktop GUI, and terminal UI
 - **Multi-Chain Support**: Ethereum (secp256k1) and Solana (ed25519)

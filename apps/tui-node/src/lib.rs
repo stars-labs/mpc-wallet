@@ -1,12 +1,14 @@
 // Library exports for frost-mpc-cli-node
 
+pub mod blockchain_config;
+#[cfg(test)]
+mod blockchain_config_test;
 pub mod keystore;
 pub mod utils;
 pub mod protocal;
 pub mod handlers;
 pub mod network;
 pub mod offline;
-pub mod blockchain;
 pub mod ui;
 pub mod app_runner;
 pub mod session;
