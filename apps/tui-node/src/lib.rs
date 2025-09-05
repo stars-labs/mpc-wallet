@@ -11,6 +11,7 @@ pub mod network;
 pub mod offline;
 pub mod session;
 pub mod elm;
+pub mod hybrid;
 
 // Re-export commonly used types
 pub use keystore::{Keystore, DeviceInfo};
