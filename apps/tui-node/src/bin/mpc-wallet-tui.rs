@@ -1,19 +1,14 @@
-//! MPC Wallet TUI - Uses AppRunner for consistent architecture
-//! This ensures TUI and tests use the same code paths
-
-#![allow(deprecated)]
+//! MPC Wallet TUI - Terminal User Interface using Elm Architecture
+//! 
+//! This is the main entry point for the MPC Wallet Terminal Interface.
+//! It uses the Elm Architecture pattern for clean, predictable state management.
 
 use clap::Parser;
 use frost_secp256k1::Secp256K1Sha256;
 use std::io::IsTerminal;
 use std::sync::Arc;
-use tokio::time::Duration;
 use tracing::info;
-use tui_node::{
-    utils::performance::{PerformanceMonitor, profile_key_handling, profile_render},
-    ui::{tui::UIMode, NoOpUIProvider, UIProvider},
-    AppRunner,
-};
+use tui_node::elm::ElmApp;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -32,17 +27,15 @@ struct Args {
     #[arg(long = "device-id")]
     device_id: Option<String>,
 
-    /// Run in headless mode (no TUI)
+    /// Run in offline mode (no network connections)
     #[arg(long)]
-    headless: bool,
+    offline: bool,
 
     /// Signal server URL
     /// Example: --signal-server ws://localhost:9000
     #[arg(long, default_value = "wss://auto-life.tech")]
     signal_server: String,
 }
-
-// Signal server URL is now configurable via CLI argument
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -55,349 +48,122 @@ async fn main() -> anyhow::Result<()> {
             .unwrap_or_else(|_| "default-node".to_string())
     });
 
-    if args.headless {
-        // Setup logging only for headless mode
-        tracing_subscriber::fmt()
-            .with_env_filter(args.log_level)
-            .init();
+    // Setup logging to file (since TUI takes over terminal)
+    let log_filename = format!("mpc-wallet-{}.log", device_id);
+    println!("Logging to: {}", log_filename);
+    println!(
+        "Current directory: {:?}",
+        std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+    );
 
-        info!("Starting MPC Wallet TUI with device ID: {}", device_id);
-        info!("Signal server: {}", args.signal_server);
-        run_headless(device_id, args.signal_server).await
-    } else {
-        // For TUI mode, log to a file in the current directory
-        let log_filename = format!("mpc-wallet-{}.log", device_id);
-        println!("Logging to: {}", log_filename);
-        println!(
-            "Current directory: {:?}",
-            std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
-        );
+    let log_file = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true) // Start fresh each run
+        .open(&log_filename)
+        .unwrap_or_else(|e| {
+            eprintln!("Failed to create log file {}: {}", log_filename, e);
+            std::fs::File::create("/dev/null").unwrap()
+        });
 
-        let log_file = std::fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true) // Start fresh each run
-            .open(&log_filename)
-            .unwrap_or_else(|e| {
-                eprintln!("Failed to create log file {}: {}", log_filename, e);
-                std::fs::File::create("/dev/null").unwrap()
-            });
+    tracing_subscriber::fmt()
+        .with_writer(log_file)
+        .with_env_filter(args.log_level)
+        .with_ansi(false)
+        .init();
 
-        tracing_subscriber::fmt()
-            .with_writer(log_file)
-            .with_env_filter(args.log_level)
-            .with_ansi(false)
-            .init();
+    info!("=== MPC Wallet TUI Started ===");
+    info!("Device ID: {}", device_id);
+    info!(
+        "Working directory: {:?}",
+        std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+    );
+    info!("Log file: {}", log_filename);
+    info!("Signal server: {}", args.signal_server);
+    info!("Offline mode: {}", args.offline);
 
-        info!("=== TUI Node Started ===");
-        info!("Device ID: {}", device_id);
-        info!(
-            "Working directory: {:?}",
-            std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
-        );
-        info!("Log file: {}", log_filename);
-        info!("Signal server: {}", args.signal_server);
-
-        run_with_tui(device_id, args.signal_server).await
-    }
-}
-
-/// Run in headless mode (for testing or automation)
-async fn run_headless(device_id: String, signal_server: String) -> anyhow::Result<()> {
-    info!("Running in headless mode");
-
-    let ui = Arc::new(NoOpUIProvider);
-    let mut app = AppRunner::<Secp256K1Sha256>::new(signal_server, ui);
-
-    // Connect to WebSocket
-    app.connect(device_id.clone()).await?;
-    info!("Connected with device ID: {}", device_id);
-
-    // Run the app (blocks until shutdown)
-    app.run().await?;
-
-    Ok(())
-}
-
-/// Run with TUI
-async fn run_with_tui(device_id: String, signal_server: String) -> anyhow::Result<()> {
-    use crossterm::{
-        cursor,
-        event::{self, Event, KeyCode},
-        execute,
-        terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-    };
-    use ratatui::{backend::CrosstermBackend, Terminal};
-    use std::io;
-    use tokio::time::sleep;
-    use tui_node::ui::tui_provider::TuiProvider;
-
-    // Setup terminal
     // Check if we're in a TTY environment
     if !std::io::stdout().is_terminal() {
-        // Don't print to console in TUI mode as it corrupts the display
         return Err(anyhow::anyhow!(
-            "TUI requires a TTY environment. Use --headless mode or run in a proper terminal."
+            "TUI requires a TTY environment. Run in a proper terminal."
         ));
     }
+
+    // Run the Elm-based TUI application
+    run_elm_tui(device_id, args.signal_server, args.offline).await
+}
+
+/// Run the Elm Architecture TUI
+async fn run_elm_tui(device_id: String, signal_server: String, offline: bool) -> anyhow::Result<()> {
+    use crossterm::{
+        terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+        execute,
+    };
+    use std::io;
+
+    info!("🚀 Starting Elm Architecture TUI");
+
+    // Create app state
+    let app_state = Arc::new(tokio::sync::Mutex::new(
+        tui_node::utils::appstate_compat::AppState::<Secp256K1Sha256>::new()
+    ));
+
+    // Update device ID in app state
+    {
+        let mut state = app_state.lock().await;
+        state.device_id = device_id.clone();
+    }
+
+    // Create and initialize Elm app
+    let mut elm_app = ElmApp::new(device_id.clone(), app_state.clone())?;
+    
+    // Initialize keystore automatically
+    let keystore_path = format!("{}/.frost_keystore", std::env::var("HOME").unwrap_or_else(|_| ".".to_string()));
+    info!("Initializing keystore at: {} for device: {}", keystore_path, device_id);
+    
+    // Initialize keystore in app state
+    {
+        let mut state = app_state.lock().await;
+        match tui_node::keystore::Keystore::new(&keystore_path, &device_id) {
+            Ok(keystore) => {
+                state.keystore = Some(Arc::new(keystore));
+                info!("✅ Keystore initialized successfully");
+            }
+            Err(e) => {
+                tracing::error!("❌ Failed to initialize keystore: {}", e);
+            }
+        }
+    }
+
+    // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
-    let backend = CrosstermBackend::new(stdout);
-    let terminal = Terminal::new(backend)?;
 
-    // Create TUI provider
-    let (tui_provider, mut redraw_rx) = TuiProvider::new(terminal);
-    let ui_provider = Arc::new(tui_provider.clone());
-
-    // Create AppRunner (not wrapped yet, so we can call run())
-    let mut app_runner_instance =
-        AppRunner::<Secp256K1Sha256>::new(signal_server, ui_provider.clone());
-
-    // Get command sender and app state before moving the runner
-    let cmd_tx = app_runner_instance.get_command_sender();
-    let app_state = app_runner_instance.get_app_state();
-
-    // Connect to WebSocket
-    app_runner_instance.connect(device_id.clone()).await?;
-    tui_provider.set_device_id(device_id.clone()).await;
-
-    // Start AppRunner in background task
-    let app_runner_handle = tokio::spawn(async move {
-        tracing::info!("🚀 Starting AppRunner event loop");
-        if let Err(_e) = app_runner_instance.run().await {
-            tracing::error!("❌ AppRunner error: {}", _e);
-        }
-        tracing::info!("AppRunner stopped");
-    });
-
-    // Store command sender and app state for access
-    let cmd_tx = Arc::new(cmd_tx);
-    let app_state = Arc::new(app_state);
-
-    // Command sender and app state are already available
-
-    // AppRunner is already running in background (started above)
-    
-    // Create performance monitor (for future use with PERF_MONITORING env var)
-    let _ = PerformanceMonitor::new();
-
-    // TUI event loop with performance monitoring
-    let mut should_quit = false;
-    let mut last_render = std::time::Instant::now();
-    const MIN_RENDER_INTERVAL: Duration = Duration::from_millis(50); // Minimum time between renders
-
-    loop {
-        // Handle UI updates
-        tokio::select! {
-            _ = redraw_rx.recv() => {
-                // Redraw requested, but throttle to prevent excessive rendering
-                let now = std::time::Instant::now();
-                if now.duration_since(last_render) >= MIN_RENDER_INTERVAL {
-                    let state = app_state.lock().await;
-                    tui_provider.render(&*state).await;
-                    last_render = now;
-                }
-            }
-            _ = sleep(Duration::from_millis(100)) => {
-                // Check for keyboard events with performance tracking
-                if event::poll(Duration::from_millis(10))? {
-                    if let Event::Key(key) = event::read()? {
-                        // Track key event performance
-                        let key_start = std::time::Instant::now();
-                        
-                        // Handle key events
-                        let command_result = tui_provider.handle_key_event(key).await;
-                        
-                        // Record key handling time
-                        let key_duration = key_start.elapsed();
-                        profile_key_handling(&format!("{:?}", key.code), key_duration).await;
-                        
-                        // Always render after handling a key event to show UI changes immediately
-                        let render_start = std::time::Instant::now();
-                        let state = app_state.lock().await;
-                        tui_provider.render(&*state).await;
-                        drop(state);
-                        
-                        // Record render time
-                        let render_duration = render_start.elapsed();
-                        profile_render(render_duration).await;
-                        
-                        if let Some(command) = command_result {
-                            match command.as_str() {
-                                "quit" => {
-                                    should_quit = true;
-                                }
-                                "start_dkg" => {
-                                    let _ = cmd_tx.send(tui_node::utils::state::InternalCommand::<frost_secp256k1::Secp256K1Sha256>::TriggerDkgRound1);
-                                }
-                                cmd if cmd.starts_with("create_wallet_session:") => {
-                                    tracing::info!("🚀 Processing wallet creation command: {}", cmd);
-
-                                    // Parse the wallet creation command
-                                    let parts: Vec<&str> = cmd.split(':').collect();
-                                    if parts.len() == 6 {
-                                        let wallet_name = parts[1].to_string();
-                                        let total = parts[2].parse::<u16>().unwrap_or(3);
-                                        let threshold = parts[3].parse::<u16>().unwrap_or(2);
-                                        let mode = parts[4].parse::<usize>().unwrap_or(0);
-                                        let curve = parts[5].parse::<usize>().unwrap_or(0);
-
-                                        // Map mode and curve to actual values
-                                        let curve_type = if curve == 0 { "secp256k1" } else { "ed25519" };
-                                        let creation_mode = match mode {
-                                            1 => tui_node::handlers::session_handler::WalletCreationMode::Offline,
-                                            2 => tui_node::handlers::session_handler::WalletCreationMode::Hybrid,
-                                            _ => tui_node::handlers::session_handler::WalletCreationMode::Online,
-                                        };
-
-                                        tracing::info!("Creating wallet session: {} ({}/{}) {:?} {}",
-                                            wallet_name, threshold, total, creation_mode, curve_type);
-
-                                        // Create wallet session configuration
-                                        let config = tui_node::handlers::session_handler::WalletSessionConfig {
-                                            wallet_name: wallet_name.clone(),
-                                            description: Some(format!("{}/{} {} wallet", threshold, total, curve_type)),
-                                            total,
-                                            threshold,
-                                            curve_type: curve_type.to_string(),
-                                            mode: creation_mode,
-                                            timeout_hours: 24,
-                                            auto_discovery: true,
-                                            blockchain_config: vec![
-                                                tui_node::handlers::session_handler::BlockchainConfig {
-                                                    blockchain: "ethereum".to_string(),
-                                                    network: "mainnet".to_string(),
-                                                    enabled: true,
-                                                    chain_id: Some(1),
-                                                }
-                                            ],
-                                        };
-
-                                        // Send the proper command to create wallet session
-                                        tracing::info!("📤 Sending wallet creation command: {}", wallet_name);
-
-                                        let send_result = cmd_tx.send(tui_node::utils::state::InternalCommand::<frost_secp256k1::Secp256K1Sha256>::CreateWalletSession {
-                                            config: config.clone(),
-                                        });
-
-                                        match send_result {
-                                            Ok(_) => tracing::info!("✅ Wallet creation command queued successfully"),
-                                            Err(_e) => tracing::error!("❌ Failed to queue wallet creation command: {}", _e),
-                                        }
-
-                                        // Show progress screen
-                                        tui_provider.set_ui_mode(UIMode::DkgProgress {
-                                            allow_cancel: true
-                                        }).await;
-                                    }
-                                }
-                                cmd if cmd.starts_with("propose_session:") => {
-                                    // Parse the session proposal command
-                                    let parts: Vec<&str> = cmd.split(':').collect();
-                                    if parts.len() == 5 {
-                                        let session_name = parts[1].to_string();
-                                        let total_str = parts[2];
-                                        let threshold_str = parts[3];
-                                        let participants_str = parts[4];
-
-                                        if let (Ok(total), Ok(threshold)) = (total_str.parse::<u16>(), threshold_str.parse::<u16>()) {
-                                            let participants: Vec<String> = participants_str
-                                                .split(',')
-                                                .map(|s| s.trim().to_string())
-                                                .filter(|s| !s.is_empty())
-                                                .collect();
-
-
-                                            // Send propose session command
-                                            let _ = cmd_tx.send(tui_node::utils::state::InternalCommand::<frost_secp256k1::Secp256K1Sha256>::ProposeSession {
-                                                session_id: session_name,
-                                                total,
-                                                threshold,
-                                                participants,
-                                            });
-
-                                            // For now, just go back to main menu
-                                            tui_provider.set_ui_mode(UIMode::MainMenu { selected_index: 0 }).await;
-                                        }
-                                    }
-                                }
-                                cmd if cmd.starts_with("join_session:") => {
-                                    // Parse the join session command
-                                    let parts: Vec<&str> = cmd.split(':').collect();
-                                    if parts.len() == 2 {
-                                        let session_index = parts[1].parse::<usize>().unwrap_or(0);
-
-                                        // Get available sessions from state and join the selected one
-                                        let state = app_state.lock().await;
-
-                                        if session_index < state.available_sessions.len() {
-                                            let session = &state.available_sessions[session_index];
-                                            let session_id = session.session_code.clone();
-                                            drop(state);
-
-                                            tracing::info!("Joining session: {}", session_id);
-                                            // Use JoinSession which properly handles both initial join and rejoin scenarios
-                                            let _ = cmd_tx.send(tui_node::utils::state::InternalCommand::<frost_secp256k1::Secp256K1Sha256>::JoinSession(
-                                                session_id
-                                            ));
-
-                                            // Show DKG progress
-                                            tui_provider.set_ui_mode(UIMode::DkgProgress {
-                                                allow_cancel: true
-                                            }).await;
-                                        }
-                                    }
-                                }
-                                "discover_sessions" => {
-                                    // Trigger session discovery
-                                    let _ = cmd_tx.send(tui_node::utils::state::InternalCommand::<frost_secp256k1::Secp256K1Sha256>::DiscoverSessions);
-
-                                    // Show session discovery screen
-                                    tui_provider.set_ui_mode(UIMode::SessionDiscovery {
-                                        selected_index: 0,
-                                        filter_text: String::new(),
-                                        input_mode: false,
-                                    }).await;
-                                }
-                                _ => {
-                                    // Log to file, not console in TUI mode
-                                    tracing::info!("Unhandled command: {}", command);
-                                }
-                            }
-                        }
-
-                        // Handle Esc directly
-                        if key.code == KeyCode::Esc {
-                            should_quit = true;
-                        }
-
-                        // Handle Ctrl-C
-                        if key.code == KeyCode::Char('c') &&
-                           key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) {
-                            should_quit = true;
-                        }
-                    }
-                }
-
-                // Regular render
-                let state = app_state.lock().await;
-                tui_provider.render(&*state).await;
-            }
-        }
-
-        if should_quit {
-            break;
-        }
+    // If not offline, connect to signal server
+    if !offline {
+        info!("Connecting to signal server: {}", signal_server);
+        // TODO: Initialize WebSocket connection
+        // This would be done through the Elm command system
+    } else {
+        info!("Running in offline mode - no network connections");
     }
 
-    // Restore terminal FIRST (before any async operations that might hang)
+    // Run the Elm app (blocks until user quits)
+    let result = elm_app.run().await;
+    
+    // Cleanup - restore terminal
     disable_raw_mode()?;
-    execute!(io::stdout(), LeaveAlternateScreen, cursor::Show)?;
-
-    // Abort the runner handle
-    app_runner_handle.abort();
-
-    // Force clean exit
-    std::process::exit(0);
+    execute!(stdout, LeaveAlternateScreen)?;
+    
+    match result {
+        Ok(()) => {
+            info!("✅ TUI exited successfully");
+            Ok(())
+        }
+        Err(e) => {
+            tracing::error!("❌ TUI error: {}", e);
+            Err(e.into())
+        }
+    }
 }

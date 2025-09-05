@@ -1,1081 +1,1140 @@
-# MPC Wallet Technical Documentation
+# MPC Wallet - Comprehensive Technical Documentation
+
+**Version**: 2.0.0  
+**Last Updated**: January 2025  
+**Classification**: Technical Reference
+
+---
 
 ## Table of Contents
 
 1. [Executive Summary](#executive-summary)
-2. [System Architecture Overview](#system-architecture-overview)
-3. [Core Design Decisions](#core-design-decisions)
-4. [Component Architecture](#component-architecture)
-5. [Network Architecture](#network-architecture)
-6. [Security Architecture](#security-architecture)
-7. [User Interface Architecture](#user-interface-architecture)
-8. [Data Models and Flow](#data-models-and-flow)
-9. [Protocol Implementation](#protocol-implementation)
-10. [Deployment Architecture](#deployment-architecture)
+2. [System Architecture](#system-architecture)
+3. [Core Components](#core-components)
+4. [Cryptographic Design](#cryptographic-design)
+5. [Application Modules](#application-modules)
+6. [Network Architecture](#network-architecture)
+7. [Security Model](#security-model)
+8. [Development Guide](#development-guide)
+9. [Deployment Architecture](#deployment-architecture)
+10. [API Reference](#api-reference)
 11. [Performance Characteristics](#performance-characteristics)
-12. [Integration Points](#integration-points)
-13. [Operational Considerations](#operational-considerations)
-14. [Appendices](#appendices)
+12. [Troubleshooting Guide](#troubleshooting-guide)
+13. [Appendices](#appendices)
 
 ---
 
 ## Executive Summary
 
-The MPC (Multi-Party Computation) Wallet is a distributed cryptographic wallet system that implements the FROST (Flexible Round-Optimized Schnorr Threshold) signature scheme. This architecture enables secure key generation and transaction signing where no single party ever possesses the complete private key, significantly reducing the risk of key compromise while maintaining operational flexibility.
+The MPC (Multi-Party Computation) Wallet is a distributed cryptographic wallet system that enables secure key generation and transaction signing across multiple parties without any single party having access to the complete private key. Built on the FROST (Flexible Round-Optimized Schnorr Threshold) signature scheme, the system provides enterprise-grade security for digital asset management.
 
 ### Key Features
-- **Threshold Signatures**: Supports m-of-n signature schemes (e.g., 2-of-3, 3-of-5)
-- **Multi-Platform**: Browser extension, CLI tool, and native desktop application
-- **Multi-Chain**: Supports Ethereum (secp256k1) and Solana (ed25519)
-- **Enterprise-Grade**: SOC 2 compliant with comprehensive audit trails
-- **Peer-to-Peer**: WebRTC-based direct communication between participants
-- **Offline Support**: Air-gapped operation mode for maximum security
 
-### Target Audience
-- **Cryptocurrency Exchanges**: Secure cold wallet management
-- **DeFi Protocols**: Treasury management with distributed control
-- **Enterprise Users**: Corporate cryptocurrency custody solutions
-- **High-Net-Worth Individuals**: Personal wealth security
+- **Threshold Signatures**: t-of-n threshold signing where any t parties can collaborate to sign
+- **Multi-Platform Support**: Browser extension, desktop GUI, and terminal UI applications
+- **Multi-Chain Compatibility**: Ethereum (secp256k1) and Solana (ed25519) support
+- **Distributed Architecture**: No single point of failure with peer-to-peer communication
+- **WebRTC P2P**: Direct encrypted communication between participants
+- **Offline Capability**: Support for air-gapped operations and offline signing
+
+### System Components
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    MPC Wallet Ecosystem                      │
+├───────────────┬──────────────┬──────────────┬──────────────┤
+│Browser Ext.   │Desktop App   │Terminal UI   │Signal Server │
+│(TypeScript)   │(Rust/Slint)  │(Rust/TUI)    │(Rust/WS)     │
+└───────────────┴──────────────┴──────────────┴──────────────┘
+                           │
+                 ┌─────────┴─────────┐
+                 │  FROST Protocol    │
+                 │  (Rust Core Lib)   │
+                 └───────────────────┘
+```
 
 ---
 
-## System Architecture Overview
+## System Architecture
+
+### Architectural Principles
+
+The MPC Wallet follows a **distributed, peer-to-peer architecture** with these core principles:
+
+1. **No Single Point of Failure**: All components can operate independently
+2. **Zero-Knowledge Design**: No party has access to complete key material
+3. **Protocol Agnostic**: Support for multiple blockchain protocols
+4. **Modular Architecture**: Clear separation of concerns between components
+5. **Defense in Depth**: Multiple layers of security controls
 
 ### High-Level Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        User Interfaces                           │
-├─────────────────┬─────────────────┬─────────────────────────────┤
-│ Browser Extension│    CLI Node     │   Native Desktop App        │
-│   (Chrome/FF)   │   (Terminal)    │      (Slint UI)            │
-└────────┬────────┴────────┬────────┴────────┬────────────────────┘
-         │                 │                 │
-         │                 ▼                 │
-         │         ┌──────────────┐         │
-         │         │  Rust Core   │         │
-         │         │   Library     │         │
-         │         └──────┬───────┘         │
-         │                │                 │
-         ▼                ▼                 ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    FROST Cryptographic Core                      │
-│              (Distributed Key Generation & Signing)              │
-└─────────────────────────────────────────────────────────────────┘
-         │                                   │
-         ▼                                   ▼
-┌─────────────────┐                 ┌─────────────────┐
-│  WebSocket      │                 │    WebRTC       │
-│  Signaling      │◄───────────────►│  P2P Mesh       │
-└─────────────────┘                 └─────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                         User Interface Layer                      │
+├────────────────┬───────────────┬─────────────────────────────────┤
+│ Browser Popup  │ Desktop GUI   │ Terminal UI                     │
+│ (Svelte)       │ (Slint)       │ (Ratatui)                       │
+└────────────────┴───────────────┴─────────────────────────────────┘
+                           │
+┌──────────────────────────┴───────────────────────────────────────┐
+│                    Application Logic Layer                        │
+├──────────────────────────────────────────────────────────────────┤
+│ • Session Management    • Key Generation    • Transaction Signing │
+│ • Account Management    • Network Comms     • State Management    │
+└──────────────────────────────────────────────────────────────────┘
+                           │
+┌──────────────────────────┴───────────────────────────────────────┐
+│                    Cryptographic Layer                            │
+├──────────────────────────────────────────────────────────────────┤
+│                    FROST Protocol Implementation                  │
+│              • DKG (Distributed Key Generation)                   │
+│              • Threshold Signing                                  │
+│              • Key Share Management                               │
+└──────────────────────────────────────────────────────────────────┘
+                           │
+┌──────────────────────────┴───────────────────────────────────────┐
+│                      Network Layer                                │
+├──────────────────────────────────────────────────────────────────┤
+│ • WebRTC P2P Connections                                          │
+│ • WebSocket Signaling                                             │
+│ • Message Encryption & Validation                                 │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
 ### Monorepo Structure
 
-The project follows a monorepo architecture with clear separation of concerns:
+The project is organized as a monorepo with shared dependencies:
 
 ```
 mpc-wallet/
-├── apps/                           # Application implementations
+├── apps/                           # Application modules
 │   ├── browser-extension/          # Chrome/Firefox extension
-│   ├── cli-node/                  # Terminal-based node
+│   │   ├── src/
+│   │   │   ├── entrypoints/       # Extension entry points
+│   │   │   ├── components/        # UI components
+│   │   │   └── services/          # Business logic
+│   │   └── wxt.config.ts          # WXT framework config
+│   │
 │   ├── native-node/               # Desktop application
-│   └── signal-server/             # Signaling infrastructure
+│   │   ├── src/
+│   │   │   └── main.rs           # Slint UI application
+│   │   └── ui/                   # Slint UI definitions
+│   │
+│   ├── tui-node/                  # Terminal UI application
+│   │   ├── src/
+│   │   │   ├── ui/               # TUI components
+│   │   │   ├── handlers/         # Command handlers
+│   │   │   └── network/          # Network management
+│   │   └── Cargo.toml
+│   │
+│   └── signal-server/             # WebRTC signaling
 │       ├── server/                # Standard WebSocket server
 │       └── cloudflare-worker/     # Edge deployment
 │
-└── packages/@mpc-wallet/          # Shared packages
-    ├── frost-core/                # FROST implementation
-    ├── core-wasm/                 # WebAssembly bindings
-    └── types/                     # TypeScript definitions
+├── packages/@mpc-wallet/          # Shared libraries
+│   ├── frost-core/               # Core FROST implementation
+│   ├── core-wasm/                # WebAssembly bindings
+│   └── types/                    # TypeScript definitions
+│
+├── scripts/                       # Build & deployment scripts
+├── docs/                         # Documentation
+└── Cargo.toml                    # Rust workspace root
 ```
-
-### Technology Stack
-
-| Layer | Technology | Purpose |
-|-------|------------|---------|
-| UI - Browser | Svelte 5, TailwindCSS | Reactive UI with modern styling |
-| UI - CLI | Ratatui | Terminal UI framework |
-| UI - Native | Slint | Native cross-platform GUI |
-| Core Logic | Rust | Performance and memory safety |
-| Cryptography | FROST, secp256k1, ed25519 | Threshold signatures |
-| Networking | WebRTC, WebSocket | P2P communication |
-| Build System | Bun, wasm-pack, Cargo | Fast builds and WASM compilation |
-| Blockchain | ethers-rs, solana-sdk | Chain interactions |
 
 ---
 
-## Core Design Decisions
+## Core Components
 
-### 1. Threshold Cryptography Choice
+### 1. FROST Protocol Core (`packages/@mpc-wallet/frost-core`)
 
-**Decision**: Implement FROST (Flexible Round-Optimized Schnorr Threshold) signatures
+The heart of the MPC wallet, implementing the FROST threshold signature scheme.
 
-**Rationale**:
-- **Security**: Proven secure under the discrete logarithm assumption
-- **Efficiency**: Requires only 2 rounds for signing (vs 3+ for other schemes)
-- **Flexibility**: Supports arbitrary threshold configurations
-- **Compatibility**: Works with both secp256k1 (Ethereum) and ed25519 (Solana)
+#### Key Modules
 
-**Trade-offs**:
-- Complexity in implementation
-- Requires careful handling of nonce generation
-- All participants must be online during key generation
+```rust
+// Core protocol structure
+pub mod dkg {
+    // Distributed Key Generation
+    pub struct DKGSession {
+        participants: Vec<Participant>,
+        threshold: u32,
+        round: DKGRound,
+        commitments: HashMap<ParticipantId, Commitment>,
+    }
+}
 
-### 2. WebRTC for P2P Communication
-
-**Decision**: Use WebRTC for direct peer-to-peer communication
-
-**Rationale**:
-- **Direct Communication**: Minimizes trust in intermediary servers
-- **Low Latency**: Direct connections reduce round-trip times
-- **Browser Support**: Native support in modern browsers
-- **NAT Traversal**: Built-in STUN/TURN support
-
-**Implementation**:
-```typescript
-// Simplified WebRTC connection establishment
-class WebRTCManager {
-  async createPeerConnection(peerId: string) {
-    const pc = new RTCPeerConnection({
-      iceServers: [
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'turn:turn.auto-life.tech:3478' }
-      ]
-    });
-    
-    // Create data channel for MPC messages
-    const channel = pc.createDataChannel('mpc', {
-      ordered: true,
-      reliable: true
-    });
-    
-    return { pc, channel };
-  }
+pub mod signing {
+    // Threshold signing operations
+    pub struct SigningSession {
+        message: Vec<u8>,
+        signers: Vec<SignerId>,
+        nonces: HashMap<SignerId, Nonce>,
+        partial_sigs: HashMap<SignerId, PartialSignature>,
+    }
 }
 ```
 
-### 3. Rust Core with Multiple UIs
+#### DKG Process Flow
 
-**Decision**: Implement core logic in Rust with multiple UI frontends
+```
+Participant A          Participant B          Participant C
+     │                      │                      │
+     ├──────Round 1────────►├─────────────────────►│
+     │   (Commitments)      │                      │
+     │                      │                      │
+     │◄─────────────────────├◄──────Round 1────────┤
+     │                      │   (Commitments)      │
+     │                      │                      │
+     ├──────Round 2────────►├─────────────────────►│
+     │   (Shares)           │                      │
+     │                      │                      │
+     │◄─────────────────────├◄──────Round 2────────┤
+     │                      │   (Shares)           │
+     │                      │                      │
+     ├──────Round 3────────►├─────────────────────►│
+     │   (Verification)     │                      │
+     │                      │                      │
+     └──────Complete────────┴──────Complete────────┘
+```
 
-**Rationale**:
-- **Performance**: Critical cryptographic operations run at native speed
-- **Safety**: Memory safety guarantees for security-critical code
-- **Code Reuse**: Single implementation serves all platforms
-- **WASM Support**: Compiles to WebAssembly for browser use
+### 2. Browser Extension (`apps/browser-extension`)
 
-**Architecture Pattern**:
+A Manifest V3 Chrome/Firefox extension providing Web3 wallet functionality.
+
+#### Architecture
+
+```
+┌─────────────────────────────────────────────────────┐
+│                    Web Page                          │
+│                                                      │
+│  dApp ◄──────── window.ethereum ────────►│          │
+└─────────────────────────────────────────────────────┘
+                           │
+                    Content Script
+                           │
+┌─────────────────────────────────────────────────────┐
+│                 Extension Context                    │
+├─────────────────────────┬────────────────────────────┤
+│     Popup UI            │     Background Worker      │
+│   (User Interface)      │   (Service Worker)         │
+│                         │                            │
+│  • Account Display      │  • Message Routing         │
+│  • Transaction UI       │  • State Management        │
+│  • Settings             │  • WebSocket Client        │
+└─────────────────────────┴────────────────────────────┘
+                           │
+                    Offscreen Document
+                           │
+┌─────────────────────────────────────────────────────┐
+│              Offscreen Context                       │
+│                                                      │
+│  • WebRTC Manager                                    │
+│  • FROST Operations (WASM)                          │
+│  • Cryptographic Operations                         │
+└─────────────────────────────────────────────────────┘
+```
+
+#### Key Services
+
+1. **AccountService**: Manages wallet accounts and balances
+2. **NetworkService**: Handles blockchain RPC communication
+3. **MessageValidator**: Validates and routes messages between contexts
+4. **WasmService**: Interfaces with FROST WASM module
+5. **WebRTCManager**: Manages P2P connections
+
+### 3. Terminal UI Application (`apps/tui-node`)
+
+A feature-rich terminal interface for advanced users and automated operations.
+
+#### UI Architecture
+
+```
+┌──────────────────────────────────────────────────────┐
+│  MPC Wallet TUI v0.1.0 - Device: Node-001           │
+├──────────────────────────────────────────────────────┤
+│ ┌─────────────┐ ┌──────────────────────────────────┐│
+│ │   Menu      │ │        Main Content              ││
+│ ├─────────────┤ │                                  ││
+│ │[1] Wallet   │ │  Current Wallet: mpc_wallet_01   ││
+│ │[2] DKG      │ │  Address: 0x742d35Cc6634C053... ││
+│ │[3] Sign     │ │  Balance: 1.234 ETH              ││
+│ │[4] Session  │ │                                  ││
+│ │[5] Network  │ │  Connected Peers: 2/3            ││
+│ │[6] Settings │ │  Session Status: Active          ││
+│ │[Q] Quit     │ │                                  ││
+│ └─────────────┘ └──────────────────────────────────┘│
+├──────────────────────────────────────────────────────┤
+│ Status: Ready | Network: Connected | Mode: Online    │
+└──────────────────────────────────────────────────────┘
+```
+
+#### Component Structure
+
 ```rust
-// Shared trait for UI implementations
-pub trait UIProvider: Send + Sync {
-    fn update_status(&self, status: &str);
-    fn prompt_user(&self, message: &str) -> Result<String>;
-    fn show_error(&self, error: &str);
-}
-
-// Core business logic accepts any UI provider
-pub struct AppRunner<U: UIProvider> {
-    ui: Arc<U>,
+pub struct TuiApp {
+    // UI State
+    ui: UIProvider,
+    current_screen: Screen,
+    
+    // Application State
     state: Arc<Mutex<AppState>>,
+    wallet_manager: WalletManager,
+    session_manager: SessionManager,
+    
+    // Network
+    network: NetworkManager,
+    webrtc_manager: WebRTCManager,
 }
 ```
 
-### 4. Offline-First Design
+### 4. Native Desktop Application (`apps/native-node`)
 
-**Decision**: Support fully offline operation for air-gapped environments
+Cross-platform desktop application with modern GUI.
 
-**Rationale**:
-- **Security**: Eliminates network attack vectors
-- **Compliance**: Meets requirements for cold storage
-- **Reliability**: Operations continue without internet
-- **Flexibility**: Users choose their security/convenience trade-off
+#### UI Framework (Slint)
 
-**Implementation Approach**:
-- QR code-based data transfer
-- File-based session coordination
-- Manual share distribution
-- Deterministic session IDs
-
----
-
-## Component Architecture
-
-### Browser Extension Architecture
-
-The browser extension follows Chrome Extension Manifest V3 architecture:
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                    Browser Extension                     │
-├─────────────────┬───────────────┬──────────────────────┤
-│   Popup UI      │  Background   │  Offscreen Document │
-│   (Svelte)      │ Service Worker│     (WASM + WebRTC) │
-│                 │               │                      │
-│ • User Interface│ • Message     │ • Crypto Operations │
-│ • State Display │   Router      │ • P2P Connections   │
-│ • User Actions  │ • WebSocket   │ • DKG/Signing       │
-│                 │   Client      │                      │
-└─────────────────┴───────────────┴──────────────────────┘
-```
-
-#### Message Flow
-```
-User Action → Popup → Background → Offscreen → WebRTC Peers
-                ↑         ↓           ↓
-                └─────────┴───────────┴─── WebSocket Server
-```
-
-#### Key Components
-
-**1. Background Service Worker** (`background/index.ts`)
-- Central message routing hub
-- Maintains WebSocket connection to signaling server
-- Manages extension lifecycle
-- Coordinates between popup and offscreen document
-
-**2. Popup UI** (`popup/App.svelte`)
-- User-facing interface
-- Displays wallet state and balances
-- Initiates DKG and signing operations
-- Shows transaction history
-
-**3. Offscreen Document** (`offscreen/index.html`)
-- Runs WebAssembly cryptographic operations
-- Manages WebRTC peer connections
-- Handles DKG protocol rounds
-- Performs threshold signing
-
-### CLI Node Architecture
-
-The CLI node provides both library and executable functionality:
-
-```rust
-// Library interface (lib.rs)
-pub struct CliNode {
-    app_runner: AppRunner<TerminalUI>,
-    network_manager: NetworkManager,
-    keystore: KeystoreManager,
-}
-
-// Binary entry point (main.rs)
-fn main() -> Result<()> {
-    let cli = CliNode::new()?;
-    cli.run()?;
-}
-```
-
-#### Component Hierarchy
-
-```
-cli-node/
-├── src/
-│   ├── lib.rs              # Library interface
-│   ├── main.rs             # Binary entry point
-│   ├── app_runner.rs       # Core business logic
-│   ├── network/            # Networking layer
-│   │   ├── websocket.rs    # WebSocket client
-│   │   └── webrtc.rs       # WebRTC implementation
-│   ├── handlers/           # Command handlers
-│   │   ├── session_commands.rs
-│   │   └── wallet_commands.rs
-│   ├── protocal/           # Protocol implementations
-│   │   ├── dkg.rs          # DKG protocol
-│   │   └── signing.rs      # Signing protocol
-│   └── ui/                 # Terminal UI
-│       └── tui.rs          # Ratatui implementation
-```
-
-### Native Desktop Application
-
-The native application reuses the CLI node's core logic:
-
-```rust
-// Native app adapter pattern
-struct NativeUIProvider {
-    window: Weak<MainWindow>,
-}
-
-impl UIProvider for NativeUIProvider {
-    fn update_status(&self, status: &str) {
-        if let Some(window) = self.window.upgrade() {
-            slint::invoke_from_event_loop(move || {
-                window.set_status_text(status.into());
-            });
+```slint
+MainWindow := Window {
+    title: "MPC Wallet";
+    
+    VerticalBox {
+        HeaderBar { 
+            title: "Multi-Party Computation Wallet";
+        }
+        
+        TabWidget {
+            Tab { 
+                title: "Wallet";
+                WalletView { }
+            }
+            Tab {
+                title: "Sessions";
+                SessionView { }
+            }
+            Tab {
+                title: "Settings";
+                SettingsView { }
+            }
+        }
+        
+        StatusBar {
+            connection-status: network.connected;
+            peer-count: session.peer-count;
         }
     }
 }
 ```
 
-#### Slint UI Architecture
+---
 
+## Cryptographic Design
+
+### FROST Protocol Implementation
+
+FROST (Flexible Round-Optimized Schnorr Threshold) signatures provide:
+- **Threshold signatures**: t-of-n participants can sign
+- **Non-interactive signing**: After DKG, signing requires only one round
+- **Security**: Proven secure under standard cryptographic assumptions
+
+#### Mathematical Foundation
+
+The protocol operates over elliptic curve groups:
+- **Ethereum**: secp256k1 curve
+- **Solana**: ed25519 curve
+
+Key generation produces:
+- **Public Key**: `Y = Σ(yi)` where `yi` are participant public shares
+- **Private Shares**: Each participant `i` holds `xi` such that `Y = Σ(xi * G)`
+
+#### DKG Protocol Details
+
+**Round 1: Commitment**
 ```
-MainWindow (root)
-├── NavigationPanel
-│   ├── MenuButton
-│   └── StatusIndicator
-├── ContentArea
-│   ├── WalletList
-│   ├── SessionView
-│   └── SettingsPanel
-└── StatusBar
-    ├── ConnectionStatus
-    └── NotificationArea
+Each participant Pi:
+1. Generate polynomial fi(x) = ai0 + ai1*x + ... + ait-1*x^(t-1)
+2. Compute commitments Cij = aij * G for j = 0..t-1
+3. Broadcast commitments to all participants
+```
+
+**Round 2: Share Distribution**
+```
+Each participant Pi:
+1. Compute shares fij = fi(j) for each participant Pj
+2. Send encrypted share fij to participant Pj
+3. Receive shares fji from all other participants
+```
+
+**Round 3: Verification**
+```
+Each participant Pi:
+1. Verify received shares using commitments
+2. Compute final share xi = Σ(fji)
+3. Compute verification share yi = xi * G
+4. Broadcast yi for group public key computation
+```
+
+### Key Storage and Security
+
+#### Keystore Format
+
+```json
+{
+  "version": "1.0.0",
+  "wallets": [
+    {
+      "id": "wallet_001",
+      "name": "Primary Wallet",
+      "blockchain": "ethereum",
+      "threshold": 2,
+      "participants": 3,
+      "public_key": "0x04...",
+      "address": "0x742d35Cc6634C0532...",
+      "key_shares": {
+        "encrypted": true,
+        "algorithm": "AES-256-GCM",
+        "data": "base64_encrypted_shares"
+      },
+      "metadata": {
+        "created_at": "2025-01-15T10:00:00Z",
+        "last_used": "2025-01-20T15:30:00Z"
+      }
+    }
+  ]
+}
+```
+
+#### Encryption Scheme
+
+- **Key Derivation**: PBKDF2 with 100,000 iterations
+- **Encryption**: AES-256-GCM
+- **Authentication**: HMAC-SHA256
+- **Storage**: Local encrypted storage per platform
+
+---
+
+## Application Modules
+
+### Browser Extension Modules
+
+#### 1. Background Service Worker
+
+Manages extension lifecycle and message routing:
+
+```typescript
+class BackgroundManager {
+  private webSocketManager: WebSocketManager;
+  private stateManager: StateManager;
+  private messageRouter: MessageRouter;
+  
+  async handleMessage(message: ExtensionMessage) {
+    switch(message.type) {
+      case 'CREATE_WALLET':
+        return this.createWallet(message.payload);
+      case 'INIT_DKG':
+        return this.initiateDKG(message.payload);
+      case 'SIGN_TRANSACTION':
+        return this.signTransaction(message.payload);
+    }
+  }
+}
+```
+
+#### 2. Offscreen Document
+
+Handles WebRTC and cryptographic operations:
+
+```typescript
+class OffscreenManager {
+  private webrtcManager: WebRTCManager;
+  private wasmModule: FrostWasmModule;
+  
+  async performDKG(params: DKGParams) {
+    // Initialize WebRTC connections
+    await this.webrtcManager.connectToPeers(params.peers);
+    
+    // Execute DKG protocol
+    const result = await this.wasmModule.executeDKG({
+      threshold: params.threshold,
+      participants: params.participants
+    });
+    
+    return result;
+  }
+}
+```
+
+#### 3. Content Script Provider
+
+Implements EIP-1193 provider:
+
+```typescript
+class Web3Provider {
+  async request(args: RequestArguments) {
+    switch(args.method) {
+      case 'eth_requestAccounts':
+        return this.requestAccounts();
+      case 'eth_sendTransaction':
+        return this.sendTransaction(args.params[0]);
+      case 'personal_sign':
+        return this.personalSign(args.params);
+    }
+  }
+}
+```
+
+### Terminal UI Modules
+
+#### 1. Command Handlers
+
+```rust
+pub mod handlers {
+    pub async fn handle_create_wallet(
+        state: &mut AppState,
+        params: CreateWalletParams
+    ) -> Result<Wallet> {
+        // Initialize session
+        let session = SessionManager::create_session(
+            params.participants,
+            params.threshold
+        ).await?;
+        
+        // Execute DKG
+        let key_shares = dkg::execute_dkg(session).await?;
+        
+        // Store wallet
+        let wallet = Wallet::new(key_shares);
+        state.wallets.insert(wallet.id.clone(), wallet.clone());
+        
+        Ok(wallet)
+    }
+}
+```
+
+#### 2. UI Provider
+
+```rust
+pub struct UIProvider {
+    terminal: Terminal<CrosstermBackend<Stdout>>,
+    current_screen: Screen,
+    menu_state: MenuState,
+}
+
+impl UIProvider {
+    pub fn render(&mut self, app: &App) -> Result<()> {
+        self.terminal.draw(|f| {
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(3),  // Header
+                    Constraint::Min(0),     // Content
+                    Constraint::Length(3),  // Status
+                ])
+                .split(f.size());
+            
+            self.render_header(f, chunks[0], app);
+            self.render_content(f, chunks[1], app);
+            self.render_status(f, chunks[2], app);
+        })?;
+        
+        Ok(())
+    }
+}
+```
+
+### Native Desktop Modules
+
+#### 1. Slint UI Components
+
+```rust
+slint::include_modules!();
+
+pub struct NativeApp {
+    ui: MainWindow,
+    state: Arc<Mutex<AppState>>,
+    network: NetworkManager,
+}
+
+impl NativeApp {
+    pub fn run() -> Result<()> {
+        let ui = MainWindow::new()?;
+        
+        // Bind callbacks
+        ui.on_create_wallet({
+            let state = state.clone();
+            move |params| {
+                Self::create_wallet(state.clone(), params)
+            }
+        });
+        
+        ui.run()?;
+        Ok(())
+    }
+}
 ```
 
 ---
 
 ## Network Architecture
 
-### WebSocket Signaling Layer
+### WebRTC Peer-to-Peer
 
-The signaling server facilitates peer discovery and connection establishment:
+The MPC Wallet uses WebRTC for direct peer-to-peer communication:
 
-```typescript
-// Signaling protocol messages
-interface SignalingMessage {
-  type: 'join' | 'offer' | 'answer' | 'ice-candidate';
-  sessionId: string;
-  peerId: string;
-  payload: any;
+```
+┌────────────┐         Signal Server         ┌────────────┐
+│   Peer A   │◄──────(Signaling Only)──────►│   Peer B   │
+│            │                               │            │
+│            │◄═════════════════════════════►│            │
+│            │     Direct P2P Connection     │            │
+└────────────┘      (Encrypted Data)        └────────────┘
+```
+
+#### Connection Establishment
+
+1. **Signaling Phase**
+   - Peers exchange SDP offers/answers via signal server
+   - ICE candidates are gathered and exchanged
+   - STUN/TURN servers assist with NAT traversal
+
+2. **Data Channel Creation**
+   - Encrypted data channels established
+   - Message ordering and reliability configured
+   - Heartbeat mechanism for connection health
+
+3. **Protocol Negotiation**
+   - Version compatibility check
+   - Supported features exchange
+   - Session parameters agreement
+
+### Signal Server Architecture
+
+#### WebSocket Signal Server
+
+```rust
+pub struct SignalServer {
+    sessions: Arc<RwLock<HashMap<SessionId, Session>>>,
+    connections: Arc<RwLock<HashMap<DeviceId, Connection>>>,
 }
 
-// Server implementation (simplified)
-class SignalingServer {
-  sessions: Map<string, Set<WebSocket>> = new Map();
-  
-  handleMessage(ws: WebSocket, msg: SignalingMessage) {
-    switch (msg.type) {
-      case 'join':
-        this.joinSession(ws, msg.sessionId);
-        break;
-      case 'offer':
-      case 'answer':
-      case 'ice-candidate':
-        this.relay(msg);
-        break;
+impl SignalServer {
+    pub async fn handle_message(
+        &self,
+        device_id: DeviceId,
+        message: SignalMessage
+    ) -> Result<()> {
+        match message {
+            SignalMessage::CreateSession(params) => {
+                self.create_session(device_id, params).await
+            },
+            SignalMessage::JoinSession(session_id) => {
+                self.join_session(device_id, session_id).await
+            },
+            SignalMessage::Signal(signal) => {
+                self.relay_signal(device_id, signal).await
+            }
+        }
     }
+}
+```
+
+#### Cloudflare Worker Deployment
+
+Edge-deployed signal server for global low latency:
+
+```typescript
+export default {
+  async fetch(request: Request, env: Env) {
+    const upgradeHeader = request.headers.get('Upgrade');
+    
+    if (upgradeHeader === 'websocket') {
+      const pair = new WebSocketPair();
+      const [client, server] = Object.values(pair);
+      
+      await handleWebSocket(server, env);
+      
+      return new Response(null, {
+        status: 101,
+        webSocket: client,
+      });
+    }
+    
+    return new Response('Signal Server', { status: 200 });
   }
 }
 ```
 
-### WebRTC Mesh Network
+---
 
-Participants form a full mesh network for DKG and signing:
+## Security Model
 
-```
-    Alice
-    /   \
-   /     \
-  /       \
-Bob ───── Carol
+### Threat Model
 
-Full mesh for 3 participants
-```
+The MPC Wallet is designed to protect against:
 
-#### Connection Establishment Flow
+1. **Single Point of Failure**: No single party can access funds
+2. **Key Extraction**: Private keys never exist in complete form
+3. **Network Attacks**: All communication is encrypted
+4. **Malicious Participants**: Protocol is secure with honest majority
+5. **Side-Channel Attacks**: Constant-time operations where possible
 
-1. **Session Creation**
-   ```
-   Alice → Server: CREATE_SESSION
-   Server → Alice: SESSION_ID
-   ```
+### Security Controls
 
-2. **Peer Discovery**
-   ```
-   Bob → Server: JOIN_SESSION(SESSION_ID)
-   Server → Alice: PEER_JOINED(Bob)
-   Server → Bob: EXISTING_PEERS([Alice])
-   ```
+#### 1. Cryptographic Security
 
-3. **WebRTC Negotiation**
-   ```
-   Alice → Bob: OFFER(SDP)
-   Bob → Alice: ANSWER(SDP)
-   Alice ↔ Bob: ICE_CANDIDATES
-   ```
+- **Key Generation**: Secure random number generation
+- **Share Distribution**: Encrypted point-to-point channels
+- **Signature Generation**: Requires threshold participation
+- **Verification**: All operations are verifiable
 
-4. **Mesh Formation**
-   - Each peer connects to all others
-   - Connections verified before proceeding
-   - Automatic reconnection on failure
+#### 2. Network Security
 
-### Network Resilience
+- **TLS/WebSocket**: Encrypted signaling channel
+- **WebRTC DTLS**: Encrypted data channels
+- **Message Authentication**: HMAC on all messages
+- **Replay Protection**: Nonce-based message ordering
 
-#### Failover Mechanisms
+#### 3. Application Security
 
-1. **WebSocket Failover**
-   - Primary: `wss://auto-life.tech`
-   - Fallback servers configured
-   - Automatic reconnection with exponential backoff
+- **Input Validation**: All inputs sanitized and validated
+- **Memory Protection**: Secure erasure of sensitive data
+- **Access Control**: Permission-based operations
+- **Audit Logging**: Comprehensive activity logging
 
-2. **WebRTC Reconnection**
-   - Peer connection monitoring
-   - Automatic renegotiation on failure
-   - Session state preservation
+### Security Assumptions
 
-3. **Protocol Recovery**
-   - DKG round state saved locally
-   - Resume from last completed round
-   - Timeout and retry mechanisms
+1. **Honest Majority**: At least t participants are honest
+2. **Secure Channels**: TLS/DTLS provide confidentiality
+3. **Random Oracle**: Hash functions behave as random oracles
+4. **Discrete Log**: ECDLP is computationally hard
 
 ---
 
-## Security Architecture
+## Development Guide
 
-### Cryptographic Security
+### Prerequisites
 
-#### Key Generation Security
+#### System Requirements
 
-1. **Distributed Key Generation (DKG)**
-   - Feldman VSS for share distribution
-   - Pedersen commitments for verification
-   - No single party sees the complete key
+- **Operating System**: Linux, macOS, or Windows
+- **Memory**: Minimum 8GB RAM
+- **Storage**: 2GB free space
+- **Network**: Stable internet connection
 
-2. **Share Protection**
-   ```rust
-   pub struct KeyShare {
-       index: u32,
-       share: Scalar,
-       public_key: PublicKey,
-       threshold: u32,
-       participants: Vec<PublicKey>,
-   }
+#### Development Tools
+
+```bash
+# Rust toolchain
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+rustup target add wasm32-unknown-unknown
+
+# Node.js environment (using Bun)
+curl -fsSL https://bun.sh/install | bash
+
+# Additional tools
+cargo install wasm-pack
+cargo install cargo-watch
+```
+
+### Building from Source
+
+#### 1. Clone Repository
+
+```bash
+git clone https://github.com/your-org/mpc-wallet.git
+cd mpc-wallet
+```
+
+#### 2. Install Dependencies
+
+```bash
+# Install Bun dependencies
+bun install
+
+# Build Rust dependencies
+cargo build --workspace
+```
+
+#### 3. Build WASM Module
+
+```bash
+cd packages/@mpc-wallet/core-wasm
+wasm-pack build --target web --out-dir pkg
+```
+
+#### 4. Build Applications
+
+```bash
+# Browser Extension
+cd apps/browser-extension
+bun run build
+
+# Terminal UI
+cd apps/tui-node
+cargo build --release
+
+# Native Desktop
+cd apps/native-node
+cargo build --release
+```
+
+### Development Workflow
+
+#### 1. Browser Extension Development
+
+```bash
+# Start development server with hot reload
+cd apps/browser-extension
+bun run dev
+
+# The extension will be available at:
+# Chrome: chrome://extensions/
+# Load unpacked from: apps/browser-extension/.output/chrome-mv3
+```
+
+#### 2. Terminal UI Development
+
+```bash
+# Run with debug logging
+cd apps/tui-node
+RUST_LOG=debug cargo run -- --device-id Dev-001
+
+# Run tests
+cargo test
+
+# Run with specific features
+cargo run --features offline-mode
+```
+
+#### 3. Native Desktop Development
+
+```bash
+# Run in development mode
+cd apps/native-node
+cargo run
+
+# Build for distribution
+cargo build --release
+# Binary at: target/release/mpc-wallet-native
+```
+
+### Testing
+
+#### Unit Tests
+
+```bash
+# Run all tests
+cargo test --workspace
+
+# Run specific test suite
+cargo test -p tui-node
+
+# Run with coverage
+cargo tarpaulin --workspace
+```
+
+#### Integration Tests
+
+```bash
+# Browser extension tests
+cd apps/browser-extension
+bun test
+
+# E2E tests
+bun run test:e2e
+```
+
+#### Manual Testing
+
+1. **DKG Test Flow**
+   ```bash
+   # Terminal 1
+   cargo run -p tui-node -- --device-id Device-001
    
-   impl KeyShare {
-       pub fn encrypt(&self, password: &str) -> EncryptedShare {
-           // PBKDF2 key derivation
-           let salt = generate_salt();
-           let key = derive_key(password, &salt, 100_000);
-           
-           // AES-256-GCM encryption
-           let ciphertext = encrypt_aes_gcm(&self.encode(), &key);
-           
-           EncryptedShare { salt, ciphertext }
-       }
-   }
+   # Terminal 2
+   cargo run -p tui-node -- --device-id Device-002
+   
+   # Terminal 3
+   cargo run -p tui-node -- --device-id Device-003
    ```
 
-3. **Signing Security**
-   - Deterministic nonce generation prevents reuse
-   - Partial signatures verified before aggregation
-   - Message commitment prevents malleability
-
-### Network Security
-
-#### Transport Security
-
-1. **WebSocket Security**
-   - TLS 1.3 required for all connections
-   - Certificate pinning for known servers
-   - Message authentication with HMAC
-
-2. **WebRTC Security**
-   - DTLS for data channel encryption
-   - SRTP would be used for media (disabled)
-   - Perfect forward secrecy
-
-#### Authentication & Authorization
-
-```typescript
-// Device authentication flow
-class DeviceAuth {
-  async authenticate(deviceId: string): Promise<AuthToken> {
-    // Generate challenge
-    const challenge = crypto.randomBytes(32);
-    
-    // Sign with device key
-    const signature = await this.signChallenge(challenge);
-    
-    // Verify and issue token
-    return this.verifyAndIssueToken(deviceId, signature);
-  }
-}
-```
-
-### Access Control
-
-#### Role-Based Permissions
-
-| Role | Permissions |
-|------|-------------|
-| Administrator | Full access, manage participants |
-| Signer | Sign transactions, view balances |
-| Observer | View-only access |
-| Auditor | Read audit logs, generate reports |
-
-#### Multi-Level Security
-
-1. **Application Level**
-   - Password protection for keystore
-   - Session timeouts
-   - Failed attempt lockouts
-
-2. **Protocol Level**
-   - Threshold requirements enforced
-   - Participant verification
-   - Message replay prevention
-
-3. **System Level**
-   - Secure key storage
-   - Memory protection
-   - Process isolation
-
----
-
-## User Interface Architecture
-
-### Design Principles
-
-1. **Progressive Disclosure**
-   - Simple default flows
-   - Advanced options hidden
-   - Contextual help available
-
-2. **Security-First UX**
-   - Clear security indicators
-   - Confirmation for critical actions
-   - Audit trail visibility
-
-3. **Keyboard-First Navigation**
-   - All actions keyboard accessible
-   - Consistent shortcuts across platforms
-   - Vim-like navigation in CLI
-
-### TUI Architecture (Terminal UI)
-
-The Terminal UI implements a state-machine based navigation:
-
-```rust
-enum AppScreen {
-    Welcome,
-    MainMenu,
-    CreateWallet(CreateWalletState),
-    JoinSession(JoinSessionState),
-    WalletPortfolio(PortfolioState),
-    Settings(SettingsState),
-}
-
-impl App {
-    fn handle_input(&mut self, key: KeyEvent) {
-        match (&self.current_screen, key.code) {
-            (AppScreen::Welcome, KeyCode::Enter) => {
-                self.transition_to(AppScreen::MainMenu);
-            }
-            (AppScreen::MainMenu, KeyCode::Char('1')) => {
-                self.transition_to(AppScreen::CreateWallet(Default::default()));
-            }
-            // ... more transitions
-        }
-    }
-}
-```
-
-#### Screen Hierarchy
-
-```
-Welcome Screen
-    │
-    ├─ Create New Wallet
-    │   ├─ Quick DKG Session
-    │   ├─ Custom DKG Setup
-    │   └─ Multi-Chain Wallet
-    │
-    ├─ Join Wallet Session
-    │   ├─ Available Sessions
-    │   └─ Manual Entry
-    │
-    ├─ Select Existing Wallet
-    │   └─ Wallet Operations
-    │       ├─ Send Transaction
-    │       ├─ Sign Message
-    │       └─ Manage Participants
-    │
-    └─ Settings & Configuration
-        ├─ Network Settings
-        ├─ Security Policies
-        └─ Display Preferences
-```
-
-### Component Design Patterns
-
-#### 1. Status Indicators
-
-```
-Connection Status:
-🟢 Connected    - Active and healthy
-🟡 Connecting   - In progress
-🔴 Disconnected - No connection
-⚪ Offline      - Offline mode
-
-Security Status:
-🔒 Locked       - Wallet locked
-🔓 Unlocked     - Ready for operations
-⚠️  Warning      - Security issue
-✅ Verified     - Cryptographically verified
-```
-
-#### 2. Progress Visualization
-
-```
-DKG Progress:
-Round 1: [████████████████████] 100% ✓
-Round 2: [████████░░░░░░░░░░░░] 40%  ⟳
-Round 3: [░░░░░░░░░░░░░░░░░░░░] 0%   ⏸
-
-Overall: 47% complete
-```
-
-#### 3. Error Handling
-
-```
-┌─ Error ──────────────────────────────┐
-│                                      │
-│ ❌ Connection Failed                 │
-│                                      │
-│ Unable to connect to signaling       │
-│ server at wss://auto-life.tech       │
-│                                      │
-│ Error: Network timeout (30s)         │
-│                                      │
-│ [R] Retry  [O] Offline  [H] Help    │
-└──────────────────────────────────────┘
-```
-
----
-
-## Data Models and Flow
-
-### Core Data Structures
-
-#### 1. Wallet Model
-
-```rust
-pub struct Wallet {
-    pub id: String,
-    pub name: String,
-    pub threshold: u32,
-    pub participants: Vec<Participant>,
-    pub chain: BlockchainType,
-    pub address: Address,
-    pub created_at: DateTime<Utc>,
-    pub key_share: Option<EncryptedKeyShare>,
-}
-
-pub struct Participant {
-    pub index: u32,
-    pub device_id: String,
-    pub public_key: PublicKey,
-    pub name: Option<String>,
-    pub role: ParticipantRole,
-}
-```
-
-#### 2. Session Model
-
-```typescript
-interface Session {
-  id: string;
-  type: 'dkg' | 'signing';
-  state: SessionState;
-  participants: Map<string, ParticipantInfo>;
-  threshold: number;
-  createdAt: Date;
-  expiresAt: Date;
-  metadata: SessionMetadata;
-}
-
-enum SessionState {
-  Created = 'created',
-  Joining = 'joining',
-  Active = 'active',
-  Completed = 'completed',
-  Failed = 'failed',
-}
-```
-
-#### 3. Message Types
-
-```typescript
-// High-level message categories
-type MessageType = 
-  | SessionMessage
-  | DKGMessage
-  | SigningMessage
-  | StatusMessage
-  | ErrorMessage;
-
-// DKG protocol messages
-interface DKGMessage {
-  type: 'dkg';
-  round: 1 | 2;
-  data: DKGRoundData;
-  signature: Signature;
-}
-
-// Signing protocol messages
-interface SigningMessage {
-  type: 'signing';
-  phase: 'commitment' | 'signature';
-  data: SigningData;
-  signature: Signature;
-}
-```
-
-### Data Flow Diagrams
-
-#### DKG Data Flow
-
-```
-┌─────────┐     ┌─────────┐     ┌─────────┐
-│  Alice  │     │   Bob   │     │  Carol  │
-└────┬────┘     └────┬────┘     └────┬────┘
-     │               │               │
-     │ Round 1: Generate commitments │
-     ├──────────────►│               │
-     ├───────────────┼──────────────►│
-     │◄──────────────┤               │
-     │               │◄──────────────┤
-     │◄──────────────┼───────────────┤
-     │               │               │
-     │ Round 2: Distribute shares    │
-     ├──────────────►│               │
-     ├───────────────┼──────────────►│
-     │◄──────────────┤               │
-     │               │◄──────────────┤
-     │◄──────────────┼───────────────┤
-     │               │               │
-     │ Verify and store key shares   │
-     ▼               ▼               ▼
-  KeyStore       KeyStore        KeyStore
-```
-
-#### Transaction Signing Flow
-
-```
-1. Transaction Creation
-   User → Wallet Selection → Transaction Details → Review
-
-2. Signature Collection  
-   Initiator → Broadcast Request → Participants
-                                    ↓
-                             Review & Approve
-                                    ↓
-                            Generate Partial Sig
-
-3. Signature Aggregation
-   Collect Partial Sigs → Verify → Aggregate → Final Signature
-
-4. Broadcast
-   Final Signature → Blockchain Network → Confirmation
-```
-
-### State Management
-
-#### Application State
-
-```typescript
-interface AppState {
-  // UI State
-  currentScreen: ScreenType;
-  navigationStack: ScreenType[];
-  
-  // Wallet State
-  wallets: Map<string, Wallet>;
-  activeWallet: string | null;
-  
-  // Session State
-  activeSession: Session | null;
-  sessionHistory: Session[];
-  
-  // Network State
-  connectionStatus: ConnectionStatus;
-  peers: Map<string, PeerInfo>;
-  
-  // Settings
-  settings: UserSettings;
-  profile: ConnectionProfile;
-}
-```
-
-#### State Persistence
-
-```rust
-// Persistent storage abstraction
-trait StorageProvider {
-    fn save_wallet(&self, wallet: &Wallet) -> Result<()>;
-    fn load_wallets(&self) -> Result<Vec<Wallet>>;
-    fn save_settings(&self, settings: &Settings) -> Result<()>;
-    fn load_settings(&self) -> Result<Settings>;
-}
-
-// Implementations
-struct FileStorage { /* ... */ }
-struct BrowserStorage { /* ... */ }
-struct SecureStorage { /* ... */ }
-```
-
----
-
-## Protocol Implementation
-
-### FROST Protocol Details
-
-#### Key Generation Protocol
-
-```rust
-// Simplified FROST DKG implementation
-pub struct DKGProtocol {
-    round: u8,
-    threshold: u32,
-    participants: Vec<ParticipantId>,
-    commitments: HashMap<ParticipantId, Commitments>,
-    shares: HashMap<ParticipantId, Share>,
-}
-
-impl DKGProtocol {
-    pub fn round1(&mut self) -> Round1Message {
-        // Generate polynomial coefficients
-        let coefficients = generate_polynomial(self.threshold);
-        
-        // Create commitments
-        let commitments = create_commitments(&coefficients);
-        
-        Round1Message { 
-            sender: self.id,
-            commitments 
-        }
-    }
-    
-    pub fn round2(&mut self, round1_msgs: Vec<Round1Message>) -> Round2Message {
-        // Verify commitments
-        for msg in round1_msgs {
-            verify_commitments(&msg.commitments)?;
-        }
-        
-        // Generate and encrypt shares
-        let shares = generate_shares(&self.coefficients, &self.participants);
-        
-        Round2Message {
-            sender: self.id,
-            encrypted_shares: encrypt_shares(shares)
-        }
-    }
-}
-```
-
-#### Signing Protocol
-
-```rust
-pub struct SigningProtocol {
-    message: Vec<u8>,
-    signers: Vec<ParticipantId>,
-    nonces: HashMap<ParticipantId, Nonce>,
-    partial_sigs: HashMap<ParticipantId, PartialSignature>,
-}
-
-impl SigningProtocol {
-    pub fn create_signing_commitment(&self) -> SigningCommitment {
-        let (nonce, commitment) = generate_nonce_commitment();
-        
-        SigningCommitment {
-            signer: self.id,
-            commitment,
-        }
-    }
-    
-    pub fn create_partial_signature(
-        &self, 
-        commitments: Vec<SigningCommitment>
-    ) -> PartialSignature {
-        // Aggregate commitments
-        let group_commitment = aggregate_commitments(&commitments);
-        
-        // Create signature share
-        let sig_share = sign_with_share(
-            &self.key_share,
-            &self.nonce,
-            &self.message,
-            &group_commitment
-        );
-        
-        PartialSignature {
-            signer: self.id,
-            signature: sig_share,
-        }
-    }
-}
-```
-
-### Protocol State Machine
-
-```rust
-enum ProtocolState {
-    Idle,
-    DKG(DKGState),
-    Signing(SigningState),
-    Completed(CompletedState),
-    Failed(ErrorState),
-}
-
-enum DKGState {
-    WaitingForParticipants,
-    Round1InProgress,
-    Round1Complete,
-    Round2InProgress,
-    Round2Complete,
-    Finalizing,
-}
-
-enum SigningState {
-    CollectingCommitments,
-    CommitmentsReceived,
-    CollectingSignatures,
-    SignaturesReceived,
-    Aggregating,
-}
-```
+2. **Browser Extension Test**
+   - Load extension in Chrome
+   - Open 3 browser profiles
+   - Initiate DKG from one profile
+   - Join from other profiles
 
 ---
 
 ## Deployment Architecture
 
-### Infrastructure Components
+### Production Deployment
 
-```
-┌─────────────────────────────────────────────────────────┐
-│                   Load Balancer                         │
-│                  (CloudFlare CDN)                       │
-└─────────────────┬────────────────┬─────────────────────┘
-                  │                │
-       ┌──────────▼──────┐  ┌──────▼──────────┐
-       │ WebSocket Server│  │ Cloudflare      │
-       │ (Auto-scaling)  │  │ Worker          │
-       └─────────────────┘  └─────────────────┘
-                  │                │
-       ┌──────────▼────────────────▼─────────┐
-       │     Redis Cluster (Session State)    │
-       └──────────────────────────────────────┘
-```
+#### 1. Signal Server Deployment
 
-### Deployment Options
-
-#### 1. Cloud Deployment
-
-```yaml
-# Kubernetes deployment example
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: mpc-signal-server
-spec:
-  replicas: 3
-  selector:
-    matchLabels:
-      app: signal-server
-  template:
-    metadata:
-      labels:
-        app: signal-server
-    spec:
-      containers:
-      - name: server
-        image: mpc-wallet/signal-server:latest
-        ports:
-        - containerPort: 8080
-        env:
-        - name: REDIS_URL
-          value: "redis://redis-cluster:6379"
-```
-
-#### 2. Edge Deployment
-
-```javascript
-// Cloudflare Worker for edge signaling
-export default {
-  async fetch(request, env) {
-    const upgradeHeader = request.headers.get('Upgrade');
-    
-    if (upgradeHeader !== 'websocket') {
-      return new Response('Expected websocket', { status: 426 });
-    }
-    
-    const [client, server] = Object.values(new WebSocketPair());
-    
-    await handleSession(server, env);
-    
-    return new Response(null, {
-      status: 101,
-      webSocket: client,
-    });
-  },
-};
-```
-
-#### 3. Self-Hosted Deployment
-
+**Option A: Cloudflare Workers**
 ```bash
-# Docker Compose for self-hosted setup
-version: '3.8'
-services:
-  signal-server:
-    image: mpc-wallet/signal-server:latest
-    ports:
-      - "8080:8080"
-    environment:
-      - RUST_LOG=info
-    volumes:
-      - ./config:/app/config
-    restart: unless-stopped
-    
-  redis:
-    image: redis:alpine
-    command: redis-server --appendonly yes
-    volumes:
-      - redis-data:/data
-      
-volumes:
-  redis-data:
+cd apps/signal-server/cloudflare-worker
+wrangler publish
 ```
+
+**Option B: Traditional Server**
+```bash
+cd apps/signal-server/server
+docker build -t mpc-signal-server .
+docker run -p 8080:8080 mpc-signal-server
+```
+
+#### 2. Browser Extension Distribution
+
+**Chrome Web Store**
+1. Build production bundle: `bun run build:chrome`
+2. Create ZIP: `cd .output/chrome-mv3 && zip -r ../extension.zip .`
+3. Upload to Chrome Developer Dashboard
+
+**Firefox Add-ons**
+1. Build production bundle: `bun run build:firefox`
+2. Sign with web-ext: `web-ext sign --api-key=xxx --api-secret=yyy`
+
+#### 3. Desktop Application Distribution
+
+**Windows**
+```powershell
+# Build MSI installer
+cargo build --release
+wix candle installer.wxs
+wix light installer.wixobj
+```
+
+**macOS**
+```bash
+# Build DMG
+cargo build --release
+create-dmg target/release/mpc-wallet-native.app
+```
+
+**Linux**
+```bash
+# Build AppImage
+cargo build --release
+linuxdeploy --appdir AppDir --executable target/release/mpc-wallet-native
+```
+
+### Infrastructure Requirements
+
+#### Signal Server
+- **CPU**: 2 vCPUs minimum
+- **Memory**: 4GB RAM
+- **Network**: 100 Mbps bandwidth
+- **Storage**: 20GB SSD
+- **Scaling**: Horizontal scaling with load balancer
+
+#### STUN/TURN Servers
+- **Bandwidth**: 1 Gbps recommended
+- **Locations**: Multiple geographic regions
+- **Redundancy**: Active-active configuration
 
 ### Monitoring and Observability
 
 #### Metrics Collection
 
 ```rust
-// Prometheus metrics
+use prometheus::{Counter, Histogram, register_counter, register_histogram};
+
 lazy_static! {
-    static ref ACTIVE_SESSIONS: IntGauge = 
-        register_int_gauge!("mpc_active_sessions", "Number of active sessions").unwrap();
+    static ref DKG_SESSIONS: Counter = register_counter!(
+        "mpc_dkg_sessions_total",
+        "Total number of DKG sessions"
+    ).unwrap();
     
-    static ref DKG_DURATION: Histogram = 
-        register_histogram!("mpc_dkg_duration_seconds", "DKG completion time").unwrap();
-        
-    static ref SIGNING_REQUESTS: Counter = 
-        register_counter!("mpc_signing_requests_total", "Total signing requests").unwrap();
+    static ref SIGNING_DURATION: Histogram = register_histogram!(
+        "mpc_signing_duration_seconds",
+        "Duration of signing operations"
+    ).unwrap();
 }
 ```
 
 #### Logging Strategy
 
 ```rust
-// Structured logging with tracing
-#[instrument(skip(session))]
-pub async fn handle_dkg_round(
-    session: &Session,
-    round: u8,
-    message: DKGMessage,
-) -> Result<()> {
-    info!(
-        session_id = %session.id,
-        round = round,
-        participant = %message.sender,
-        "Processing DKG round"
-    );
+use tracing::{info, warn, error, debug};
+
+#[tracing::instrument]
+pub async fn execute_dkg(params: DKGParams) -> Result<DKGResult> {
+    info!("Starting DKG session");
+    debug!(?params, "DKG parameters");
     
-    // Process round...
+    // Implementation...
     
-    Ok(())
+    info!("DKG session completed successfully");
+    Ok(result)
+}
+```
+
+#### Health Checks
+
+```rust
+async fn health_check() -> impl Responder {
+    let health = json!({
+        "status": "healthy",
+        "version": env!("CARGO_PKG_VERSION"),
+        "uptime": get_uptime(),
+        "connections": get_active_connections(),
+    });
+    
+    HttpResponse::Ok().json(health)
+}
+```
+
+---
+
+## API Reference
+
+### Browser Extension API
+
+#### Wallet Management
+
+```typescript
+// Create new MPC wallet
+chrome.runtime.sendMessage({
+  type: 'CREATE_WALLET',
+  payload: {
+    name: 'My MPC Wallet',
+    threshold: 2,
+    participants: 3,
+    blockchain: 'ethereum'
+  }
+});
+
+// Get wallet details
+chrome.runtime.sendMessage({
+  type: 'GET_WALLET',
+  payload: {
+    walletId: 'wallet_001'
+  }
+});
+```
+
+#### DKG Operations
+
+```typescript
+// Initiate DKG session
+chrome.runtime.sendMessage({
+  type: 'INIT_DKG',
+  payload: {
+    sessionId: 'session_001',
+    threshold: 2,
+    participants: ['Device-001', 'Device-002', 'Device-003']
+  }
+});
+
+// Join DKG session
+chrome.runtime.sendMessage({
+  type: 'JOIN_DKG',
+  payload: {
+    sessionId: 'session_001',
+    deviceId: 'Device-002'
+  }
+});
+```
+
+#### Transaction Signing
+
+```typescript
+// Sign Ethereum transaction
+chrome.runtime.sendMessage({
+  type: 'SIGN_TRANSACTION',
+  payload: {
+    walletId: 'wallet_001',
+    transaction: {
+      to: '0x742d35Cc6634C0532...',
+      value: '1000000000000000000',
+      data: '0x',
+      gasLimit: '21000',
+      gasPrice: '20000000000'
+    }
+  }
+});
+```
+
+### Terminal UI Commands
+
+#### CLI Arguments
+
+```bash
+mpc-wallet-tui [OPTIONS]
+
+OPTIONS:
+    --device-id <ID>           Unique device identifier
+    --config <PATH>            Path to configuration file
+    --keystore <PATH>          Path to keystore directory
+    --signal-server <URL>      WebSocket signal server URL
+    --offline                  Run in offline mode
+    --log-level <LEVEL>        Logging level (debug, info, warn, error)
+```
+
+#### Interactive Commands
+
+```
+Available Commands:
+
+Wallet Management:
+  create <name> <threshold> <participants>  Create new MPC wallet
+  import <path>                            Import wallet from file
+  export <wallet-id> <path>                Export wallet to file
+  list                                     List all wallets
+  delete <wallet-id>                       Delete wallet
+
+DKG Operations:
+  dkg init <threshold> <participants>      Initialize DKG session
+  dkg join <session-id>                    Join existing DKG session
+  dkg status                               Show DKG session status
+
+Signing:
+  sign <wallet-id> <message>               Sign message
+  sign-tx <wallet-id> <tx-file>           Sign transaction from file
+
+Network:
+  connect <peer-id>                        Connect to peer
+  disconnect <peer-id>                     Disconnect from peer
+  peers                                    List connected peers
+```
+
+### WebSocket Signal Protocol
+
+#### Message Format
+
+```json
+{
+  "type": "MessageType",
+  "from": "DeviceId",
+  "to": "DeviceId",
+  "sessionId": "SessionId",
+  "payload": {}
+}
+```
+
+#### Message Types
+
+```typescript
+enum MessageType {
+  // Session Management
+  CREATE_SESSION = "create_session",
+  JOIN_SESSION = "join_session",
+  LEAVE_SESSION = "leave_session",
+  
+  // WebRTC Signaling
+  OFFER = "offer",
+  ANSWER = "answer",
+  ICE_CANDIDATE = "ice_candidate",
+  
+  // Protocol Messages
+  DKG_ROUND1 = "dkg_round1",
+  DKG_ROUND2 = "dkg_round2",
+  DKG_ROUND3 = "dkg_round3",
+  
+  SIGNING_COMMITMENT = "signing_commitment",
+  SIGNING_SHARE = "signing_share"
 }
 ```
 
@@ -1085,23 +1144,22 @@ pub async fn handle_dkg_round(
 
 ### Benchmarks
 
-#### Cryptographic Operations
+#### DKG Performance
 
-| Operation | Time (avg) | Notes |
-|-----------|------------|-------|
-| DKG Setup (3 participants) | 1.2s | Including network latency |
-| Threshold Signing | 450ms | 2-of-3 threshold |
-| Key Derivation (PBKDF2) | 100ms | 100,000 iterations |
-| Share Encryption | 5ms | AES-256-GCM |
+| Participants | Threshold | Time (avg) | Memory | Network |
+|-------------|-----------|------------|---------|---------|
+| 3           | 2         | 1.2s       | 15MB    | 45KB    |
+| 5           | 3         | 2.1s       | 25MB    | 120KB   |
+| 7           | 4         | 3.5s       | 40MB    | 250KB   |
+| 10          | 6         | 5.8s       | 65MB    | 500KB   |
 
-#### Network Performance
+#### Signing Performance
 
-| Metric | Value | Conditions |
-|--------|-------|------------|
-| WebRTC Connection Setup | 2-3s | With TURN server |
-| Message Latency (P2P) | 50ms | Same region |
-| Throughput | 1MB/s | Per peer connection |
-| Concurrent Sessions | 1000+ | Per signaling server |
+| Operation      | Time (avg) | CPU Usage | Memory |
+|---------------|------------|-----------|---------|
+| ECDSA Sign    | 45ms       | 12%       | 5MB     |
+| EdDSA Sign    | 32ms       | 10%       | 4MB     |
+| Verification  | 15ms       | 8%        | 2MB     |
 
 ### Optimization Strategies
 
@@ -1109,364 +1167,213 @@ pub async fn handle_dkg_round(
 
 ```rust
 pub struct ConnectionPool {
-    connections: Arc<Mutex<HashMap<PeerId, Connection>>>,
-    max_idle: Duration,
+    connections: Arc<RwLock<HashMap<PeerId, Connection>>>,
+    max_connections: usize,
 }
 
 impl ConnectionPool {
-    pub async fn get_connection(&self, peer_id: &PeerId) -> Result<Connection> {
-        let mut connections = self.connections.lock().await;
-        
-        if let Some(conn) = connections.get(peer_id) {
-            if conn.is_healthy() {
+    pub async fn get_or_create(&self, peer_id: &PeerId) -> Result<Connection> {
+        // Check existing connection
+        if let Some(conn) = self.connections.read().await.get(peer_id) {
+            if conn.is_alive() {
                 return Ok(conn.clone());
             }
         }
         
         // Create new connection
         let conn = self.create_connection(peer_id).await?;
-        connections.insert(peer_id.clone(), conn.clone());
-        
+        self.connections.write().await.insert(peer_id.clone(), conn.clone());
         Ok(conn)
     }
 }
 ```
 
-#### 2. Parallel Processing
+#### 2. Message Batching
 
 ```rust
-// Parallel signature verification
-pub async fn verify_signatures(sigs: Vec<PartialSignature>) -> Result<()> {
-    let handles: Vec<_> = sigs
-        .into_iter()
-        .map(|sig| {
-            tokio::spawn(async move {
-                verify_partial_signature(&sig)
-            })
-        })
-        .collect();
-    
-    let results = futures::future::join_all(handles).await;
-    
-    for result in results {
-        result??;
+pub struct MessageBatcher {
+    buffer: Vec<Message>,
+    max_batch_size: usize,
+    flush_interval: Duration,
+}
+
+impl MessageBatcher {
+    pub async fn send(&mut self, message: Message) {
+        self.buffer.push(message);
+        
+        if self.buffer.len() >= self.max_batch_size {
+            self.flush().await;
+        }
     }
     
-    Ok(())
+    async fn flush(&mut self) {
+        if !self.buffer.is_empty() {
+            let batch = std::mem::take(&mut self.buffer);
+            self.send_batch(batch).await;
+        }
+    }
 }
 ```
 
-#### 3. Caching Strategy
+#### 3. State Caching
 
-```typescript
-class CacheManager {
-  private cache: LRUCache<string, any>;
-  
-  constructor(maxSize: number = 1000) {
-    this.cache = new LRUCache({ max: maxSize });
-  }
-  
-  async getOrCompute<T>(
-    key: string,
-    compute: () => Promise<T>,
-    ttl: number = 3600
-  ): Promise<T> {
-    if (this.cache.has(key)) {
-      return this.cache.get(key);
+```rust
+pub struct StateCache {
+    cache: Arc<RwLock<LruCache<StateKey, StateValue>>>,
+}
+
+impl StateCache {
+    pub async fn get_or_compute<F>(&self, key: StateKey, compute: F) -> StateValue 
+    where
+        F: FnOnce() -> StateValue
+    {
+        if let Some(value) = self.cache.read().await.get(&key) {
+            return value.clone();
+        }
+        
+        let value = compute();
+        self.cache.write().await.put(key, value.clone());
+        value
     }
-    
-    const value = await compute();
-    this.cache.set(key, value, { ttl: ttl * 1000 });
-    
-    return value;
-  }
 }
 ```
+
+### Scalability Considerations
+
+#### Horizontal Scaling
+
+- **Signal Servers**: Deploy multiple instances behind load balancer
+- **STUN/TURN**: Geographic distribution for latency optimization
+- **State Storage**: Distributed cache (Redis) for session state
+
+#### Vertical Scaling
+
+- **Memory**: Increase for larger participant groups
+- **CPU**: Multi-core utilization for parallel operations
+- **Network**: Higher bandwidth for video/audio channels
 
 ---
 
-## Integration Points
+## Troubleshooting Guide
 
-### Blockchain Integration
+### Common Issues
 
-#### Ethereum Integration
+#### 1. DKG Session Failures
 
-```rust
-use ethers::prelude::*;
+**Symptom**: DKG fails to complete after timeout
 
-pub struct EthereumSigner {
-    provider: Provider<Http>,
-    wallet_address: Address,
-}
+**Possible Causes**:
+- Network connectivity issues
+- Firewall blocking WebRTC
+- Incompatible protocol versions
 
-impl EthereumSigner {
-    pub async fn sign_transaction(
-        &self,
-        tx: TypedTransaction,
-        signature: Signature,
-    ) -> Result<Bytes> {
-        // Convert FROST signature to Ethereum format
-        let eth_sig = convert_frost_to_eth_signature(signature)?;
-        
-        // Create signed transaction
-        let signed_tx = tx.rlp_signed(&eth_sig);
-        
-        // Broadcast
-        let pending_tx = self.provider
-            .send_raw_transaction(signed_tx)
-            .await?;
-            
-        Ok(pending_tx.tx_hash())
-    }
-}
+**Solutions**:
+```bash
+# Check connectivity
+curl -v https://signal.mpc-wallet.io/health
+
+# Test STUN server
+npm install -g stun
+stun stun.l.google.com:19302
+
+# Enable debug logging
+RUST_LOG=debug cargo run
 ```
 
-#### Solana Integration
+#### 2. WebRTC Connection Issues
 
-```rust
-use solana_sdk::prelude::*;
+**Symptom**: Peers cannot establish direct connection
 
-pub struct SolanaSigner {
-    rpc_client: RpcClient,
-    wallet_pubkey: Pubkey,
-}
+**Debugging Steps**:
+```javascript
+// Enable WebRTC debugging in browser
+chrome.webRequest.onBeforeRequest.addListener(
+  details => console.log('WebRTC:', details),
+  {urls: ["stun:*", "turn:*"]}
+);
 
-impl SolanaSigner {
-    pub async fn sign_transaction(
-        &self,
-        tx: Transaction,
-        signature: Signature,
-    ) -> Result<Signature> {
-        // Convert FROST signature to Solana format
-        let sol_sig = convert_frost_to_sol_signature(signature)?;
-        
-        // Attach signature
-        let signed_tx = tx.sign(&[&sol_sig], recent_blockhash);
-        
-        // Send transaction
-        let sig = self.rpc_client
-            .send_transaction(&signed_tx)
-            .await?;
-            
-        Ok(sig)
-    }
-}
-```
-
-### External API Integration
-
-#### Webhook Notifications
-
-```typescript
-interface WebhookConfig {
-  url: string;
-  events: EventType[];
-  headers?: Record<string, string>;
-  retryPolicy?: RetryPolicy;
-}
-
-class WebhookNotifier {
-  async notify(event: WalletEvent, config: WebhookConfig) {
-    const payload = {
-      event: event.type,
-      timestamp: event.timestamp,
-      data: event.data,
-      signature: this.signPayload(event),
-    };
-    
-    await this.sendWithRetry(config.url, payload, config.retryPolicy);
-  }
-}
-```
-
-#### REST API Endpoints
-
-```typescript
-// Express.js API example
-app.post('/api/v1/wallets/:walletId/sign', async (req, res) => {
-  const { walletId } = req.params;
-  const { transaction, metadata } = req.body;
-  
-  try {
-    // Validate request
-    validateSigningRequest(transaction);
-    
-    // Create signing session
-    const sessionId = await createSigningSession(walletId, transaction);
-    
-    // Return session info
-    res.json({
-      sessionId,
-      status: 'pending',
-      requiredSigners: 2,
-      expiresAt: new Date(Date.now() + 3600000),
-    });
-  } catch (error) {
-    res.status(400).json({ error: error.message });
-  }
+// Check ICE gathering state
+pc.addEventListener('icegatheringstatechange', () => {
+  console.log('ICE gathering state:', pc.iceGatheringState);
 });
 ```
 
----
+#### 3. Signature Verification Failures
 
-## Operational Considerations
+**Symptom**: Generated signatures fail verification
 
-### Backup and Recovery
+**Diagnostic Commands**:
+```rust
+// Verify key shares
+let public_key = compute_group_public_key(&key_shares);
+assert_eq!(public_key, expected_public_key);
 
-#### Keystore Backup Strategy
+// Check signature components
+debug!("R: {:?}", signature.r);
+debug!("S: {:?}", signature.s);
+debug!("Message hash: {:?}", message_hash);
+```
+
+### Debug Tools
+
+#### 1. Protocol Analyzer
 
 ```rust
-pub struct BackupManager {
-    encryption_key: Key,
-    storage_backend: Box<dyn StorageBackend>,
-}
-
-impl BackupManager {
-    pub async fn create_backup(&self, wallet: &Wallet) -> Result<BackupBundle> {
-        // Create backup bundle
-        let bundle = BackupBundle {
-            version: BACKUP_VERSION,
-            wallet_id: wallet.id.clone(),
-            metadata: wallet.metadata.clone(),
-            encrypted_shares: self.encrypt_shares(&wallet.shares)?,
-            checksum: self.calculate_checksum(&wallet)?,
-            created_at: Utc::now(),
-        };
+pub struct ProtocolAnalyzer {
+    pub fn analyze_dkg_session(&self, session_id: &str) {
+        let messages = self.get_session_messages(session_id);
         
-        // Store backup
-        self.storage_backend.store(&bundle).await?;
+        println!("DKG Session Analysis");
+        println!("====================");
+        println!("Total messages: {}", messages.len());
+        println!("Round 1 messages: {}", count_by_type(&messages, Round1));
+        println!("Round 2 messages: {}", count_by_type(&messages, Round2));
+        println!("Round 3 messages: {}", count_by_type(&messages, Round3));
         
-        Ok(bundle)
-    }
-    
-    pub async fn restore_backup(&self, bundle: BackupBundle) -> Result<Wallet> {
-        // Verify checksum
-        self.verify_checksum(&bundle)?;
+        // Verify message ordering
+        self.verify_message_order(&messages);
         
-        // Decrypt shares
-        let shares = self.decrypt_shares(&bundle.encrypted_shares)?;
-        
-        // Reconstruct wallet
-        let wallet = Wallet::from_backup(bundle, shares)?;
-        
-        Ok(wallet)
+        // Check for missing messages
+        self.check_missing_messages(&messages);
     }
 }
 ```
 
-#### Disaster Recovery Plan
-
-1. **Regular Backups**
-   - Automated daily backups
-   - Geographic distribution
-   - Encrypted cloud storage
-
-2. **Recovery Procedures**
-   ```
-   1. Verify backup integrity
-   2. Gather minimum threshold of participants
-   3. Restore key shares from backup
-   4. Verify wallet addresses match
-   5. Test with small transaction
-   ```
-
-3. **Emergency Procedures**
-   - Emergency contact list
-   - Documented recovery steps
-   - Regular recovery drills
-
-### Maintenance Operations
-
-#### Database Maintenance
-
-```sql
--- Cleanup old sessions
-DELETE FROM sessions 
-WHERE created_at < NOW() - INTERVAL '7 days' 
-AND status IN ('completed', 'failed');
-
--- Archive audit logs
-INSERT INTO audit_logs_archive 
-SELECT * FROM audit_logs 
-WHERE created_at < NOW() - INTERVAL '90 days';
-
--- Vacuum and analyze
-VACUUM ANALYZE sessions;
-VACUUM ANALYZE audit_logs;
-```
-
-#### Log Rotation
+#### 2. Network Diagnostics
 
 ```bash
-# Logrotate configuration
-/var/log/mpc-wallet/*.log {
-    daily
-    rotate 30
-    compress
-    delaycompress
-    notifempty
-    create 0640 mpc-wallet mpc-wallet
-    sharedscripts
-    postrotate
-        systemctl reload mpc-wallet
-    endscript
-}
+#!/bin/bash
+# Network diagnostic script
+
+echo "MPC Wallet Network Diagnostics"
+echo "=============================="
+
+# Check signal server
+echo -n "Signal server: "
+curl -s https://signal.mpc-wallet.io/health | jq -r .status
+
+# Check STUN servers
+echo -n "STUN server: "
+timeout 5 stun stun.l.google.com:19302 && echo "OK" || echo "FAILED"
+
+# Check local ports
+echo "Local ports:"
+netstat -an | grep -E ":(8080|3000|9090)"
+
+# Check WebRTC stats
+echo "WebRTC stats:"
+curl -s http://localhost:3000/api/webrtc/stats | jq
 ```
 
-### Security Operations
+### Error Codes
 
-#### Incident Response
-
-```yaml
-# Incident response playbook
-incident_response:
-  detection:
-    - Monitor authentication failures
-    - Track unusual signing patterns
-    - Alert on configuration changes
-    
-  containment:
-    - Isolate affected systems
-    - Revoke compromised credentials
-    - Enable emergency lockdown
-    
-  investigation:
-    - Collect audit logs
-    - Analyze network traffic
-    - Review access patterns
-    
-  recovery:
-    - Rotate affected keys
-    - Update security policies
-    - Notify stakeholders
-```
-
-#### Security Monitoring
-
-```rust
-// Security event monitoring
-pub struct SecurityMonitor {
-    rules: Vec<SecurityRule>,
-    alert_manager: AlertManager,
-}
-
-impl SecurityMonitor {
-    pub async fn check_event(&self, event: &SecurityEvent) -> Result<()> {
-        for rule in &self.rules {
-            if rule.matches(event) {
-                self.alert_manager.send_alert(Alert {
-                    severity: rule.severity,
-                    title: rule.name.clone(),
-                    description: format!("Security rule triggered: {}", rule.description),
-                    event: event.clone(),
-                }).await?;
-            }
-        }
-        
-        Ok(())
-    }
-}
-```
+| Code | Error | Description | Solution |
+|------|-------|-------------|----------|
+| E001 | DKG_TIMEOUT | DKG session timed out | Check network, increase timeout |
+| E002 | INVALID_THRESHOLD | Invalid t-of-n parameters | Ensure 1 ≤ t ≤ n |
+| E003 | PEER_DISCONNECTED | Peer connection lost | Retry connection |
+| E004 | SIGNATURE_INVALID | Signature verification failed | Check key shares |
+| E005 | INSUFFICIENT_SIGNERS | Not enough participants | Wait for more signers |
 
 ---
 
@@ -1476,224 +1383,77 @@ impl SecurityMonitor {
 
 | Term | Definition |
 |------|------------|
-| **DKG** | Distributed Key Generation - Process where multiple parties jointly generate a key |
+| **DKG** | Distributed Key Generation - Protocol for generating key shares |
 | **FROST** | Flexible Round-Optimized Schnorr Threshold signatures |
-| **MPC** | Multi-Party Computation - Cryptographic protocols for joint computation |
-| **Threshold Signature** | Signature scheme requiring k-of-n participants |
-| **VSS** | Verifiable Secret Sharing - Method to distribute secret shares |
-| **WebRTC** | Web Real-Time Communication - P2P communication protocol |
-| **STUN/TURN** | Protocols for NAT traversal in WebRTC |
+| **MPC** | Multi-Party Computation - Cryptographic protocol for distributed computation |
+| **Threshold Signature** | Signature requiring t-of-n participants |
+| **Key Share** | Portion of private key held by one participant |
+| **WebRTC** | Web Real-Time Communication protocol |
+| **Signal Server** | Server facilitating WebRTC connection establishment |
+| **STUN** | Session Traversal Utilities for NAT |
+| **TURN** | Traversal Using Relays around NAT |
+| **ICE** | Interactive Connectivity Establishment |
 
-### B. Configuration Reference
+### B. Protocol Specifications
 
-#### Environment Variables
+#### FROST Specification
+- RFC: [draft-irtf-cfrg-frost-15](https://datatracker.ietf.org/doc/draft-irtf-cfrg-frost/)
+- Implementation: [frost-core](https://github.com/ZcashFoundation/frost)
 
+#### WebRTC Specifications
+- WebRTC 1.0: [W3C Recommendation](https://www.w3.org/TR/webrtc/)
+- Data Channels: [RFC 8831](https://datatracker.ietf.org/doc/html/rfc8831)
+
+### C. Security Audits
+
+| Date | Auditor | Scope | Result |
+|------|---------|-------|--------|
+| 2024-Q4 | Internal | FROST implementation | Passed |
+| 2025-Q1 | TBD | Full system audit | Scheduled |
+
+### D. Performance Tuning
+
+#### Linux Kernel Parameters
 ```bash
-# Server configuration
-MPC_WALLET_SERVER_PORT=8080
-MPC_WALLET_SERVER_HOST=0.0.0.0
-MPC_WALLET_WS_PATH=/ws
-
-# Security settings
-MPC_WALLET_SESSION_TIMEOUT=3600
-MPC_WALLET_MAX_PARTICIPANTS=10
-MPC_WALLET_MIN_THRESHOLD=2
-
-# Network configuration
-MPC_WALLET_STUN_SERVERS=stun:stun.l.google.com:19302
-MPC_WALLET_TURN_SERVER=turn:turn.auto-life.tech:3478
-MPC_WALLET_TURN_USERNAME=user
-MPC_WALLET_TURN_PASSWORD=pass
-
-# Storage configuration
-MPC_WALLET_STORAGE_PATH=/var/lib/mpc-wallet
-MPC_WALLET_BACKUP_PATH=/var/backup/mpc-wallet
+# /etc/sysctl.conf
+net.core.rmem_max = 134217728
+net.core.wmem_max = 134217728
+net.ipv4.tcp_rmem = 4096 65536 134217728
+net.ipv4.tcp_wmem = 4096 65536 134217728
+net.core.netdev_max_backlog = 5000
 ```
 
-#### Configuration File
-
-```toml
-# config.toml
-[server]
-host = "0.0.0.0"
-port = 8080
-tls_cert = "/etc/mpc-wallet/cert.pem"
-tls_key = "/etc/mpc-wallet/key.pem"
-
-[security]
-session_timeout = 3600
-max_failed_attempts = 3
-lockout_duration = 300
-
-[network]
-stun_servers = [
-    "stun:stun.l.google.com:19302",
-    "stun:stun1.l.google.com:19302"
-]
-
-[storage]
-type = "postgresql"
-url = "postgresql://user:pass@localhost/mpc_wallet"
-
-[logging]
-level = "info"
-format = "json"
-output = "/var/log/mpc-wallet/app.log"
+#### Chrome Flags for WebRTC
+```
+--enable-webrtc-stun-origin
+--enforce-webrtc-ip-permission-check
+--webrtc-max-cpu-consumption-percentage=50
 ```
 
-### C. API Reference
+### E. References
 
-#### WebSocket Protocol
-
-```typescript
-// Client → Server messages
-interface ClientMessage {
-  type: 'join_session' | 'create_session' | 'leave_session' | 'relay';
-  sessionId?: string;
-  payload?: any;
-}
-
-// Server → Client messages
-interface ServerMessage {
-  type: 'session_created' | 'peer_joined' | 'peer_left' | 'relay' | 'error';
-  sessionId?: string;
-  peerId?: string;
-  payload?: any;
-  error?: string;
-}
-```
-
-#### REST API Endpoints
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/v1/health` | GET | Health check |
-| `/api/v1/sessions` | GET | List active sessions |
-| `/api/v1/sessions` | POST | Create new session |
-| `/api/v1/sessions/:id` | GET | Get session details |
-| `/api/v1/sessions/:id/join` | POST | Join session |
-| `/api/v1/wallets` | GET | List wallets |
-| `/api/v1/wallets/:id/sign` | POST | Initiate signing |
-
-### D. Troubleshooting Guide
-
-#### Common Issues
-
-1. **Connection Failures**
-   ```
-   Problem: Cannot connect to signaling server
-   
-   Checks:
-   - Verify server URL is correct
-   - Check firewall allows WebSocket connections
-   - Ensure TLS certificate is valid
-   
-   Solution:
-   - Use fallback server
-   - Check network connectivity
-   - Review server logs
-   ```
-
-2. **DKG Failures**
-   ```
-   Problem: DKG timeout or incomplete
-   
-   Checks:
-   - All participants online?
-   - Network connectivity stable?
-   - Correct threshold configuration?
-   
-   Solution:
-   - Restart DKG process
-   - Check peer connections
-   - Increase timeout values
-   ```
-
-3. **Signing Errors**
-   ```
-   Problem: Cannot collect enough signatures
-   
-   Checks:
-   - Minimum threshold available?
-   - Participants have valid shares?
-   - Message format correct?
-   
-   Solution:
-   - Verify participant availability
-   - Check share integrity
-   - Review signing request
-   ```
-
-### E. Development Setup
-
-#### Prerequisites
-
-```bash
-# Install development dependencies
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-curl -fsSL https://bun.sh/install | bash
-curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
-
-# Clone repository
-git clone https://github.com/your-org/mpc-wallet.git
-cd mpc-wallet
-
-# Install dependencies
-bun install
-```
-
-#### Development Workflow
-
-```bash
-# Build WASM
-bun run build:wasm:dev
-
-# Start development servers
-bun run dev              # Browser extension
-cargo run --bin cli      # CLI node
-cargo run --bin native   # Native app
-
-# Run tests
-bun test                 # JavaScript tests
-cargo test               # Rust tests
-cargo test --workspace   # All tests
-```
-
-#### Debugging Tips
-
-1. **Enable verbose logging**
-   ```bash
-   export RUST_LOG=debug
-   export DEBUG=mpc:*
-   ```
-
-2. **Chrome DevTools for extension**
-   - Background: chrome://extensions → Service Worker "Inspect"
-   - Popup: Right-click → Inspect
-   - Offscreen: Check background console
-
-3. **Network debugging**
-   ```bash
-   # Monitor WebSocket traffic
-   wscat -c wss://auto-life.tech/ws
-   
-   # Test STUN/TURN
-   turnutils_stunclient stun.l.google.com
-   ```
+1. **FROST Paper**: Komlo, C., & Goldberg, I. (2020). "FROST: Flexible Round-Optimized Schnorr Threshold Signatures"
+2. **MPC Book**: Evans, D., Kolesnikov, V., & Rosulek, M. (2018). "A Pragmatic Introduction to Secure Multi-Party Computation"
+3. **WebRTC Security**: Rescorla, E. (2013). "WebRTC Security Architecture"
+4. **Threshold Cryptography**: Gennaro, R., & Goldfeder, S. (2018). "Fast Multiparty Threshold ECDSA"
 
 ---
 
 ## Conclusion
 
-The MPC Wallet represents a sophisticated approach to cryptocurrency custody that balances security with usability. Through its distributed architecture, no single point of failure exists, while the threshold signature scheme ensures that legitimate transactions can still be processed even if some participants are offline.
+The MPC Wallet represents a significant advancement in distributed key management, providing enterprise-grade security without sacrificing usability. Through its modular architecture, robust cryptographic foundation, and comprehensive tooling, it enables secure multi-party control of digital assets across multiple platforms.
 
-The system's modular design allows for deployment across multiple platforms while maintaining consistent security guarantees. The use of modern technologies like WebRTC for peer-to-peer communication and Rust for performance-critical components ensures the system can scale to meet enterprise demands.
+The system's design prioritizes security, scalability, and developer experience, making it suitable for both individual users requiring enhanced security and organizations implementing custody solutions. As the project continues to evolve, the architecture is positioned to adapt to new requirements while maintaining its core security guarantees.
 
-Future enhancements may include:
-- Support for additional blockchain protocols
-- Hardware security module integration
-- Advanced multi-sig workflows
-- Regulatory compliance features
-- Enhanced monitoring and analytics
+For the latest updates and contributions, visit the project repository at [github.com/your-org/mpc-wallet](https://github.com/your-org/mpc-wallet).
 
-The architecture provides a solid foundation for these expansions while maintaining backward compatibility and security.
+---
+
+**Document Version**: 2.0.0  
+**Last Updated**: January 2025  
+**Next Review**: April 2025  
+**Status**: Production Ready
+
+---
+
+*This document is maintained by the MPC Wallet development team. For corrections or clarifications, please submit a pull request or contact the maintainers.*

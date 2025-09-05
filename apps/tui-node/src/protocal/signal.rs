@@ -5,7 +5,7 @@ use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
 /// Session type enum - represents different types of signing networks
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", content = "data")]
 pub enum SessionType {
     /// Distributed Key Generation session
@@ -22,7 +22,7 @@ pub enum SessionType {
 // Import round1 and round2 packages
 
 // --- Session Info Struct ---
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct SessionInfo {
     pub session_id: String,
     pub proposer_id: String, // Added field

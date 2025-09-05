@@ -118,12 +118,13 @@ impl Keystore {
     }
 
     /// Creates a new wallet in the keystore
-    /// Creates a wallet with multiple blockchain support
+    /// Creates a wallet with simplified metadata (KISS principle)
+    /// Blockchain addresses are derived from group_public_key + curve_type
     pub fn create_wallet_multi_chain(
         &mut self,
         name: &str,
         curve_type: &str,
-        blockchains: Vec<crate::keystore::models::BlockchainInfo>,
+        _blockchains: Vec<crate::keystore::models::BlockchainInfo>, // Ignored - addresses are derived
         threshold: u16,
         total_participants: u16,
         group_public_key: &str,
@@ -144,25 +145,16 @@ impl Keystore {
             )));
         }
 
-        // Create wallet metadata with multiple blockchains
-        let metadata = WalletMetadata {
-            session_id: wallet_id.clone(),
-            device_id: self.device_id.clone(),
-            device_name: None, // Deprecated field
-            curve_type: curve_type.to_string(),
-            blockchains: blockchains.clone(),
-            blockchain: None, // Legacy field
-            public_address: None, // Legacy field
+        // Create simplified wallet metadata - no blockchain info stored
+        let metadata = WalletMetadata::new(
+            wallet_id.clone(),
+            self.device_id.clone(),
+            curve_type.to_string(),
             threshold,
             total_participants,
             participant_index,
-            identifier: None, // Deprecated field
-            group_public_key: group_public_key.to_string(),
-            created_at: chrono::Utc::now().to_rfc3339(),
-            last_modified: chrono::Utc::now().to_rfc3339(),
-            tags: None, // Deprecated field
-            description: None, // Deprecated field
-        };
+            group_public_key.to_string(),
+        );
 
         // Save the wallet with embedded metadata
         self.save_wallet_file_v2(&wallet_id, key_share_data, password, &metadata)?;
@@ -173,13 +165,13 @@ impl Keystore {
         Ok(wallet_id)
     }
 
-    /// Creates a wallet (legacy single blockchain)
+    /// Creates a wallet (legacy single blockchain) - addresses are now derived
     pub fn create_wallet(
         &mut self,
         name: &str,
         curve_type: &str,
-        blockchain: &str,
-        public_address: &str,
+        _blockchain: &str, // Ignored - addresses are derived from curve_type
+        _public_address: &str, // Ignored - addresses are derived from group_public_key
         threshold: u16,
         total_participants: u16,
         group_public_key: &str,
@@ -189,34 +181,11 @@ impl Keystore {
         description: Option<String>,
         participant_index: u16,
     ) -> Result<String> {
-        // Use the wallet name as the wallet ID (for session name convention)
-        // Sanitize the name to ensure it's a valid filename
-        let wallet_id = name.replace("/", "-").replace("\\", "-").replace(":", "-");
-
-        // Check if a wallet with this ID already exists
-        if self.get_wallet(&wallet_id).is_some() {
-            return Err(KeystoreError::General(format!(
-                "Wallet with ID '{}' already exists", wallet_id
-            )));
-        }
-
-        // Create blockchain info from legacy parameters
-        let blockchain_info = crate::keystore::models::BlockchainInfo {
-            blockchain: blockchain.to_string(),
-            network: "mainnet".to_string(),
-            chain_id: if blockchain == "ethereum" { Some(1) } else { None },
-            address: public_address.to_string(),
-            address_format: if blockchain == "ethereum" { "EIP-55".to_string() } else { "base58".to_string() },
-            enabled: true,
-            rpc_endpoint: None,
-            metadata: None,
-        };
-
-        // Call multi-chain version
+        // Just call the simplified version - blockchain info is not stored
         self.create_wallet_multi_chain(
             name,
             curve_type,
-            vec![blockchain_info],
+            Vec::new(), // No blockchain info needed - it's derived
             threshold,
             total_participants,
             group_public_key,

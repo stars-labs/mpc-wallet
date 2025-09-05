@@ -10,7 +10,7 @@ mod storage;
 mod extension_compat;
 
 pub use storage::Keystore;
-pub use models::{DeviceInfo, BlockchainInfo};
+pub use models::{DeviceInfo, BlockchainInfo, WalletMetadata};
 pub use extension_compat::{
     ExtensionKeyShareData, ExtensionWalletMetadata,
     ExtensionKeystoreBackup, ExtensionBackupWallet,

@@ -18,7 +18,7 @@ use webrtc_signal_server::ClientMsg as SharedClientMsg;
 
 use crate::protocal::signal::SessionResponse;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PendingSigningRequest {
     pub signing_id: String,
     pub from_device: String,

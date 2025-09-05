@@ -20,7 +20,11 @@
       "Bash(bun test:*)",
       "Bash(grep:*)",
       "Bash(find:*)",
-      "Bash(cargo check:*)"
+      "Bash(cargo check:*)",
+      "WebSearch",
+      "WebFetch(domain:ratatui.rs)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:docs.rs)"
     ],
     "deny": []
   }

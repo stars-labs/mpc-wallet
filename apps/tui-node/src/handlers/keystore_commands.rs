@@ -57,16 +57,35 @@ pub async fn handle_init_keystore<C: frost_core::Ciphersuite + Send + Sync + 'st
 pub async fn handle_list_wallets<C: frost_core::Ciphersuite + Send + Sync + 'static>(
     state: Arc<Mutex<AppState<C>>>
 ) {
-    let app_state = state.lock().await;
+    let mut app_state = state.lock().await;
+    
+    // Auto-initialize keystore if not already initialized
+    if app_state.keystore.is_none() {
+        let keystore_path = format!("{}/.frost_keystore", std::env::var("HOME").unwrap_or_else(|_| ".".to_string()));
+        let device_name = app_state.device_id.clone();
+        
+        tracing::info!("Auto-initializing keystore at: {} for device: {}", keystore_path, device_name);
+        
+        match Keystore::new(&keystore_path, &device_name) {
+            Ok(keystore) => {
+                app_state.keystore = Some(Arc::new(keystore));
+                tracing::info!("✅ Keystore auto-initialized successfully");
+            }
+            Err(e) => {
+                tracing::error!("❌ Failed to auto-initialize keystore: {}", e);
+            }
+        }
+    }
     
     if let Some(keystore) = &app_state.keystore {
-        // First, collect the wallet info
         let wallets = keystore.list_wallets();
         
         if wallets.is_empty() {
+            // No wallets found
+            println!("No wallets found in keystore");
         } else {
-            // Clone wallet information to avoid borrow issues
-            let wallet_infos = wallets
+            // Convert wallet metadata to display format
+            let wallet_display_infos = wallets
                 .iter()
                 .map(|w| {
                     // Get blockchain info - prioritize new format, fall back to legacy
@@ -88,31 +107,27 @@ pub async fn handle_list_wallets<C: frost_core::Ciphersuite + Send + Sync + 'sta
                         Vec::new()
                     };
                     
-                    (
-                        w.session_id.clone(),
-                        w.session_id.clone(), // session_id serves as the name
-                        w.threshold,
-                        w.total_participants,
-                        w.curve_type.clone(),
-                        blockchains,
-                        w.created_at.clone(),
-                        w.device_id.clone()
-                    )
+                    crate::elm::provider::WalletDisplayInfo {
+                        session_id: w.session_id.clone(),
+                        device_id: w.device_id.clone(),
+                        curve_type: w.curve_type.clone(),
+                        threshold: w.threshold,
+                        total_participants: w.total_participants,
+                        created_at: w.created_at.clone(),
+                    }
                 })
                 .collect::<Vec<_>>();
             
-            // Now that we're done with the keystore borrow, update the UI
-            
-            for (_id, _name, _threshold, _total, _curve, blockchains, _created_at, _device_id) in wallet_infos {
-                // Wallet information available
-                
-                // Show enabled blockchain addresses
-                for _blockchain_info in blockchains.iter().filter(|b| b.enabled) {
-                    // Blockchain: blockchain_info.blockchain, Address: blockchain_info.address
-                }
+            // Display wallet list
+            println!("Found {} wallet(s)", wallet_display_infos.len());
+            for wallet in &wallet_display_infos {
+                println!("  - {}: {} ({})", wallet.session_id, wallet.curve_type, 
+                    format!("{}/{} threshold", wallet.threshold, wallet.total_participants));
             }
         }
     } else {
+        // No keystore initialized
+        println!("Keystore not initialized");
     }
 }
 

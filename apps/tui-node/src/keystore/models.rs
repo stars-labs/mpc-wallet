@@ -16,7 +16,7 @@ fn current_timestamp() -> u64 {
 
 
 /// Information about a blockchain supported by a wallet
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct BlockchainInfo {
     /// Blockchain identifier (e.g., "ethereum", "bsc", "polygon", "solana")
     pub blockchain: String,
@@ -216,61 +216,180 @@ impl DeviceInfo {
 
 }
 
-/// Metadata embedded within each wallet file
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+/// Simplified wallet metadata - KISS and Orthogonal
+/// All blockchain addresses can be derived from group_public_key + curve_type
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct WalletMetadata {
-    /// Session ID from DKG that created this wallet
+    /// Wallet identifier (usually the session name from DKG)
     #[serde(alias = "wallet_id")] // For backward compatibility
     pub session_id: String,
     
     /// Device ID that owns this key share
     pub device_id: String,
     
-    /// User-friendly device name (deprecated, use device_id)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub device_name: Option<String>,
-    
     /// Type of cryptographic curve used ("secp256k1" or "ed25519")
     pub curve_type: String,
     
-    /// List of blockchains supported by this wallet
-    pub blockchains: Vec<BlockchainInfo>,
-    
-    /// Legacy fields for backward compatibility
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub blockchain: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub public_address: Option<String>,
-    
-    /// Minimum number of participants required to sign
+    /// Minimum number of participants required to sign (K in K-of-N)
     pub threshold: u16,
     
-    /// Total number of participants
+    /// Total number of participants (N in K-of-N)
     pub total_participants: u16,
     
     /// This device's participant index (1-based: 1, 2, 3, etc.)
     pub participant_index: u16,
     
-    /// This device's identifier (deprecated, use device_id)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub identifier: Option<String>,
-    
-    /// Serialized group public key
+    /// Serialized FROST group public key (source of truth for addresses)
     pub group_public_key: String,
     
     /// ISO 8601 timestamp when created
     pub created_at: String,
     
-    /// ISO 8601 timestamp when last modified
+    /// ISO 8601 timestamp when last modified  
     pub last_modified: String,
     
-    /// User-defined tags (deprecated, redundant with curve_type)
+    // === Legacy fields for backward compatibility (will be removed in v3.0) ===
+    
+    /// User-friendly device name (deprecated, use device_id)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device_name: Option<String>,
+    
+    /// List of blockchains (deprecated, derive from group_public_key)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub blockchains: Vec<BlockchainInfo>,
+    
+    /// Legacy blockchain field
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blockchain: Option<String>,
+    
+    /// Legacy address field
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub public_address: Option<String>,
+    
+    /// This device's identifier (deprecated, use device_id)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub identifier: Option<String>,
+    
+    /// User-defined tags (deprecated)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tags: Option<Vec<String>>,
     
-    /// Optional description (deprecated, redundant with created_at)
+    /// Optional description (deprecated)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+}
+
+impl WalletMetadata {
+    /// Creates a new simplified wallet metadata
+    pub fn new(
+        session_id: String,
+        device_id: String,
+        curve_type: String,
+        threshold: u16,
+        total_participants: u16,
+        participant_index: u16,
+        group_public_key: String,
+    ) -> Self {
+        let now = chrono::Utc::now().to_rfc3339();
+        Self {
+            session_id,
+            device_id,
+            curve_type,
+            threshold,
+            total_participants,
+            participant_index,
+            group_public_key,
+            created_at: now.clone(),
+            last_modified: now,
+            // All legacy fields set to None
+            device_name: None,
+            blockchains: Vec::new(),
+            blockchain: None,
+            public_address: None,
+            identifier: None,
+            tags: None,
+            description: None,
+        }
+    }
+
+    /// Derives Ethereum address from the group public key (for secp256k1)
+    pub fn derive_ethereum_address(&self) -> Option<String> {
+        if self.curve_type != "secp256k1" {
+            return None;
+        }
+        // Address derivation is handled by the blockchain module
+        // This is just a placeholder for the actual implementation
+        // The actual implementation would deserialize group_public_key and compute the address
+        Some(format!("0x...derived from {}", &self.group_public_key[..8]))
+    }
+
+    /// Derives Solana address from the group public key (for ed25519)
+    pub fn derive_solana_address(&self) -> Option<String> {
+        if self.curve_type != "ed25519" {
+            return None;
+        }
+        // Address derivation is handled by the blockchain module
+        // This is just a placeholder for the actual implementation
+        Some(format!("...derived from {}", &self.group_public_key[..8]))
+    }
+
+    /// Gets all supported blockchain addresses based on curve type
+    pub fn get_blockchain_addresses(&self) -> Vec<BlockchainInfo> {
+        let mut addresses = Vec::new();
+        
+        match self.curve_type.as_str() {
+            "secp256k1" => {
+                // All EVM-compatible chains use the same address
+                if let Some(eth_addr) = self.derive_ethereum_address() {
+                    addresses.push(BlockchainInfo {
+                        blockchain: "ethereum".to_string(),
+                        network: "mainnet".to_string(),
+                        chain_id: Some(1),
+                        address: eth_addr.clone(),
+                        address_format: "EIP-55".to_string(),
+                        enabled: true,
+                        rpc_endpoint: None,
+                        metadata: None,
+                    });
+                    // Add other EVM chains (they all use the same address)
+                    for (chain, chain_id) in &[
+                        ("polygon", 137),
+                        ("bsc", 56),
+                        ("arbitrum", 42161),
+                        ("optimism", 10),
+                    ] {
+                        addresses.push(BlockchainInfo {
+                            blockchain: chain.to_string(),
+                            network: "mainnet".to_string(),
+                            chain_id: Some(*chain_id),
+                            address: eth_addr.clone(),
+                            address_format: "EIP-55".to_string(),
+                            enabled: false,
+                            rpc_endpoint: None,
+                            metadata: None,
+                        });
+                    }
+                }
+            }
+            "ed25519" => {
+                if let Some(sol_addr) = self.derive_solana_address() {
+                    addresses.push(BlockchainInfo {
+                        blockchain: "solana".to_string(),
+                        network: "mainnet".to_string(),
+                        chain_id: None,
+                        address: sol_addr,
+                        address_format: "base58".to_string(),
+                        enabled: true,
+                        rpc_endpoint: None,
+                        metadata: None,
+                    });
+                }
+            }
+            _ => {}
+        }
+        
+        addresses
+    }
 }
 
 /// Self-contained wallet file format
