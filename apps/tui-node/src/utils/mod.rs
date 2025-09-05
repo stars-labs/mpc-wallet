@@ -6,3 +6,4 @@ pub mod solana_helper;
 pub mod state;
 pub mod appstate_compat;
 pub mod performance;
+pub mod erc20_encoder;
