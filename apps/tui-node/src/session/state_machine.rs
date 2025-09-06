@@ -428,9 +428,9 @@ mod tests {
             participants: vec!["proposer".to_string(), "joiner".to_string()],
             threshold: 2,
             total: 3,
-            session_type: crate::protocal::signal::SessionType::Dkg,
-            curve_type: crate::protocal::signal::CurveType::Secp256k1,
-            coordination_type: crate::protocal::signal::CoordinationType::Network,
+            session_type: crate::protocal::signal::SessionType::DKG,
+            curve_type: "secp256k1".to_string(),
+            coordination_type: "network".to_string(),
         };
         
         let result = sm.transition(SessionEvent::ProposalReceived {
@@ -453,9 +453,9 @@ mod tests {
                 participants: vec!["proposer".to_string(), "test-device".to_string()],
                 threshold: 2,
                 total: 3,
-                session_type: crate::protocal::signal::SessionType::Dkg,
-                curve_type: crate::protocal::signal::CurveType::Secp256k1,
-                coordination_type: crate::protocal::signal::CoordinationType::Network,
+                session_type: crate::protocal::signal::SessionType::DKG,
+                curve_type: "secp256k1".to_string(),
+                coordination_type: "network".to_string(),
             },
             from: "proposer".to_string(),
             expires_at: Instant::now() + Duration::from_secs(30),
@@ -474,15 +474,15 @@ mod tests {
         
         sm.state = SessionState::Active {
             session: SessionInfo {
-                session_code: "test-session".to_string(),
+                session_id: "test-session".to_string(),
+                proposer_id: "creator".to_string(),
                 total: 3,
                 threshold: 2,
-                creator_device: "creator".to_string(),
-                participants_joined: 2,
-                wallet_type: "Wallet".to_string(),
+                participants: vec!["creator".to_string(), "test-device".to_string()],
+                accepted_devices: vec!["creator".to_string(), "test-device".to_string()],
+                session_type: crate::protocal::signal::SessionType::DKG,
                 curve_type: "secp256k1".to_string(),
-                description: None,
-                timestamp: 0,
+                coordination_type: "network".to_string(),
             },
             participants: vec!["creator".to_string(), "test-device".to_string()],
             accepted_devices: vec!["creator".to_string(), "test-device".to_string()],

@@ -191,6 +191,7 @@ struct DKGParticipant {
     simulator: KeyEventSimulator,
     sd_card: MockSDCard,
     model: Arc<Mutex<Model>>,
+    _rx: mpsc::UnboundedReceiver<Message>, // Keep receiver alive
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -201,7 +202,7 @@ enum ParticipantRole {
 
 impl DKGParticipant {
     fn new(id: String, role: ParticipantRole, sd_card: MockSDCard) -> Self {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, rx) = mpsc::unbounded_channel();
         let model = Arc::new(Mutex::new(Model::new(id.clone())));
         
         Self {
@@ -210,6 +211,7 @@ impl DKGParticipant {
             simulator: KeyEventSimulator::new(tx),
             sd_card,
             model,
+            _rx: rx, // Keep receiver alive
         }
     }
     

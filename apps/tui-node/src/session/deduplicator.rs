@@ -403,15 +403,31 @@ mod tests {
         // Process sequence 0
         assert!(tracker.should_process_sequence("peer1", 0));
         
-        // Buffer future messages
-        tracker.buffer_message("peer1".to_string(), 2, serde_json::json!({"msg": 2}));
-        tracker.buffer_message("peer1".to_string(), 1, serde_json::json!({"msg": 1}));
+        // Buffer future messages (out of order) - leave a gap at 5
         tracker.buffer_message("peer1".to_string(), 3, serde_json::json!({"msg": 3}));
+        tracker.buffer_message("peer1".to_string(), 2, serde_json::json!({"msg": 2}));
+        tracker.buffer_message("peer1".to_string(), 5, serde_json::json!({"msg": 5})); // Gap at 4
         
-        // Process sequence 1, should also get buffered 2 and 3
+        // Check buffer contents
+        let buffer = tracker.buffer.get("peer1").unwrap();
+        assert_eq!(buffer.len(), 3);
+        assert_eq!(buffer[0].0, 2); // Should be sorted
+        assert_eq!(buffer[1].0, 3);
+        assert_eq!(buffer[2].0, 5); // Gap at 4
+        
+        // Process sequence 1, which updates expected to 2
         assert!(tracker.should_process_sequence("peer1", 1));
+        
+        // Now check if any buffered messages are ready
+        // 2 and 3 are consecutive and should be ready
+        // 5 should stay buffered because there's a gap at 4
         let ready = tracker.get_ready_messages("peer1");
-        assert_eq!(ready.len(), 2); // Messages 2 and 3
+        assert_eq!(ready.len(), 2); // Messages 2 and 3 should be ready
+        
+        // Verify 5 is still buffered
+        let buffer = tracker.buffer.get("peer1").unwrap();
+        assert_eq!(buffer.len(), 1);
+        assert_eq!(buffer[0].0, 5);
     }
     
     #[test]

@@ -34,7 +34,7 @@ pub use threshold_config::ThresholdConfigComponent;
 pub use join_session::JoinSessionComponent;
 
 // Offline DKG components
-pub use offline_dkg_process::OfflineDKGProcessComponent;
+pub use offline_dkg_process::{OfflineDKGProcessComponent, ParticipantRole};
 pub use sd_card_manager::SDCardManagerComponent;
 
 // Keep legacy components available for fallback
