@@ -26,7 +26,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.143"
 tokio = { version = "1.42.0", features = ["full"] }
 async-trait = "0.1.83"
-thiserror = "1.0"
+thiserror = "2.0.9"
 anyhow = "1.0.99"
 tracing = "0.1.41"
 sha2 = "0.10.8"

@@ -1,6 +1,6 @@
 use crate::errors::{FrostError, Result};
 use serde::{Deserialize, Serialize};
-use base64::Engine;
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 
 /// Keystore data structure that's compatible between CLI and browser extension
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -47,8 +47,8 @@ impl Keystore {
             .map_err(|e| FrostError::SerializationError(e.to_string()))?;
         
         Ok(KeystoreData {
-            key_package: base64::engine::general_purpose::STANDARD.encode(&key_package_bytes),
-            public_key_package: base64::engine::general_purpose::STANDARD.encode(&public_key_package_bytes),
+            key_package: BASE64.encode(&key_package_bytes),
+            public_key_package: BASE64.encode(&public_key_package_bytes),
             min_signers,
             max_signers,
             participant_index,
@@ -66,9 +66,9 @@ impl Keystore {
     pub fn import_keystore<C: crate::traits::FrostCurve>(
         keystore_data: &KeystoreData,
     ) -> Result<(C::KeyPackage, C::PublicKeyPackage)> {
-        let key_package_bytes = base64::engine::general_purpose::STANDARD.decode(&keystore_data.key_package)
+        let key_package_bytes = BASE64.decode(&keystore_data.key_package)
             .map_err(|e| FrostError::SerializationError(format!("Failed to decode key package: {}", e)))?;
-        let public_key_package_bytes = base64::engine::general_purpose::STANDARD.decode(&keystore_data.public_key_package)
+        let public_key_package_bytes = BASE64.decode(&keystore_data.public_key_package)
             .map_err(|e| FrostError::SerializationError(format!("Failed to decode public key package: {}", e)))?;
         
         let key_package: C::KeyPackage = serde_json::from_slice(&key_package_bytes)

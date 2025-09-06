@@ -2698,7 +2698,7 @@ dependencies = [
  "k256",
  "log",
  "rand 0.8.5",
- "rlp",
+ "rlp 0.5.2",
  "serde",
  "sha3",
  "zeroize",
@@ -2874,7 +2874,7 @@ dependencies = [
  "num_enum",
  "open-fastrlp",
  "rand 0.8.5",
- "rlp",
+ "rlp 0.5.2",
  "serde",
  "serde_json",
  "strum 0.26.3",
@@ -4555,7 +4555,7 @@ version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f28220f89297a075ddc7245cd538076ee98b01f2a9c23a53a4f1105d5a322808"
 dependencies = [
- "rlp",
+ "rlp 0.5.2",
 ]
 
 [[package]]
@@ -5331,7 +5331,7 @@ dependencies = [
  "solana-client",
  "solana-sdk",
  "spl-token",
- "thiserror 1.0.69",
+ "thiserror 2.0.16",
  "tokio",
  "tracing",
  "web3",
@@ -5341,7 +5341,7 @@ dependencies = [
 name = "mpc-wallet-core-wasm"
 version = "0.1.0"
 dependencies = [
- "base64 0.21.7",
+ "base64 0.22.1",
  "console_error_panic_hook",
  "frost-ed25519",
  "frost-secp256k1",
@@ -5363,7 +5363,7 @@ version = "0.1.0"
 dependencies = [
  "aes-gcm",
  "argon2",
- "base64 0.21.7",
+ "base64 0.22.1",
  "bincode 2.0.1",
  "bs58",
  "clap",
@@ -5383,7 +5383,7 @@ dependencies = [
  "sha2 0.10.9",
  "sha3",
  "tempfile",
- "thiserror 1.0.69",
+ "thiserror 2.0.16",
  "tokio",
 ]
 
@@ -5404,7 +5404,7 @@ dependencies = [
  "serde_json",
  "slint",
  "slint-build",
- "thiserror 1.0.69",
+ "thiserror 2.0.16",
  "tokio",
  "tokio-stream",
  "tokio-tungstenite 0.26.2",
@@ -7300,6 +7300,16 @@ checksum = "bb919243f34364b6bd2fc10ef797edbfa75f33c252e7998527479c6d6b47e1ec"
 dependencies = [
  "bytes",
  "rlp-derive",
+ "rustc-hex",
+]
+
+[[package]]
+name = "rlp"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fa24e92bb2a83198bb76d661a71df9f7076b8c420b8696e4d3d97d50d94479e3"
+dependencies = [
+ "bytes",
  "rustc-hex",
 ]
 
@@ -11670,7 +11680,7 @@ dependencies = [
  "anyhow",
  "argon2",
  "async-trait",
- "base64 0.21.7",
+ "base64 0.22.1",
  "bincode 2.0.1",
  "bs58",
  "chrono",
@@ -11704,7 +11714,7 @@ dependencies = [
  "rand_core 0.6.4",
  "ratatui",
  "rayon",
- "rlp",
+ "rlp 0.6.1",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -11713,7 +11723,7 @@ dependencies = [
  "solana-sdk",
  "solana-system-program",
  "tempfile",
- "thiserror 1.0.69",
+ "thiserror 2.0.16",
  "tokio",
  "tokio-tungstenite 0.26.2",
  "tracing",
@@ -12494,7 +12504,7 @@ dependencies = [
  "parking_lot",
  "pin-project",
  "reqwest 0.11.27",
- "rlp",
+ "rlp 0.5.2",
  "secp256k1 0.27.0",
  "serde",
  "serde_json",

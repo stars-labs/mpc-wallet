@@ -438,7 +438,8 @@ pub async fn setup_data_channel_callbacks<C>(
                                 // Parse DKG messages from SimpleMessage format
                                 if text.starts_with("DKG_ROUND1:") {
                                     if let Some(base64_data) = text.strip_prefix("DKG_ROUND1:") {
-                                        match base64::Engine::decode(&base64::engine::general_purpose::STANDARD, base64_data) {
+                                        use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+                                        match BASE64.decode(base64_data) {
                                             Ok(package_bytes) => {
                                                 tracing::info!("Received DKG Round 1 package from {}", device_id);
                                                 let _ = cmd_tx.send(InternalCommand::ProcessSimpleDkgRound1 {
@@ -453,7 +454,8 @@ pub async fn setup_data_channel_callbacks<C>(
                                     }
                                 } else if text.starts_with("DKG_ROUND2:") {
                                     if let Some(base64_data) = text.strip_prefix("DKG_ROUND2:") {
-                                        match base64::Engine::decode(&base64::engine::general_purpose::STANDARD, base64_data) {
+                                        use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+                                        match BASE64.decode(base64_data) {
                                             Ok(package_bytes) => {
                                                 tracing::info!("Received DKG Round 2 package from {}", device_id);
                                                 let _ = cmd_tx.send(InternalCommand::ProcessSimpleDkgRound2 {

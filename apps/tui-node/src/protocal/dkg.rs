@@ -92,7 +92,10 @@ where
     
     // Create WebRTC message for broadcasting
     let message = WebRTCMessage::SimpleMessage {
-        text: format!("DKG_ROUND1:{}", base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &package_bytes)),
+        text: {
+            use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+            format!("DKG_ROUND1:{}", BASE64.encode(&package_bytes))
+        },
     };
     
     // Broadcast to session participants
@@ -247,7 +250,10 @@ where
             if receiver_device_id != &self_device_id {
                 let package_bytes = package.serialize().expect("Failed to serialize round2 package");
                 let message = WebRTCMessage::SimpleMessage {
-                    text: format!("DKG_ROUND2:{}", base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &package_bytes)),
+                    text: {
+                        use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+                        format!("DKG_ROUND2:{}", BASE64.encode(&package_bytes))
+                    },
                 };
                 
                 if let Err(_e) = crate::utils::device::send_webrtc_message(receiver_device_id, &message, state.clone()).await {

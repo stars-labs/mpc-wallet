@@ -2,7 +2,7 @@
 
 use ethers_core::types::{U256, H160};
 use ethers_core::abi::{Token, encode as abi_encode};
-use rlp::RlpStream;
+use rlp::{RlpStream, Encodable};
 use sha3::{Digest, Keccak256};
 
 /// ERC20 transfer function selector (keccak256("transfer(address,uint256)"))
@@ -168,13 +168,14 @@ impl ERC20Transaction {
     
     /// Encodes the transaction for signing (EIP-155)
     pub fn encode_for_signing(&self) -> Vec<u8> {
+        // Use RlpStream for encoding in RLP 0.6
         let mut stream = RlpStream::new();
         stream.begin_list(9);
         stream.append(&self.nonce);
-        stream.append(&self.gas_price);
-        stream.append(&self.gas_limit);
-        stream.append(&self.token_address);
-        stream.append(&U256::zero()); // Value is 0 for ERC20 calls
+        stream.append(&self.gas_price.as_u64());
+        stream.append(&self.gas_limit.as_u64());
+        stream.append(&self.token_address.as_bytes());
+        stream.append(&0u64); // value (0 for ERC20 calls)
         stream.append(&self.data);
         stream.append(&self.chain_id);
         stream.append(&0u8);
@@ -204,17 +205,18 @@ impl ERC20Transaction {
         // v = chainId * 2 + 35 or chainId * 2 + 36
         let v = self.chain_id * 2 + 35; // Would need recovery ID to determine 35 or 36
         
+        // Use RlpStream for encoding in RLP 0.6
         let mut stream = RlpStream::new();
         stream.begin_list(9);
         stream.append(&self.nonce);
-        stream.append(&self.gas_price);
-        stream.append(&self.gas_limit);
-        stream.append(&self.token_address);
-        stream.append(&U256::zero());
+        stream.append(&self.gas_price.as_u64());
+        stream.append(&self.gas_limit.as_u64());
+        stream.append(&self.token_address.as_bytes());
+        stream.append(&0u64); // value (0 for ERC20 calls)
         stream.append(&self.data);
         stream.append(&v);
-        stream.append(&U256::from_big_endian(r));
-        stream.append(&U256::from_big_endian(s));
+        stream.append(&r);
+        stream.append(&s);
         
         Ok(stream.out().to_vec())
     }

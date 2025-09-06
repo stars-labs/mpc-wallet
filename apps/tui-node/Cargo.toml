@@ -48,11 +48,11 @@ ethers-providers = "2.0.14"
 ethers-signers = "2.0.14"
 k256 = "0.13.4"
 elliptic-curve = "0.13.8"
-rlp = "0.5"
+rlp = "0.6.1"
 clap = { version = "4.5.21", features = ["derive"] }
 chrono = { version = "0.4.39", features = ["serde"] }
 webrtc-signal-server = { path = "../signal-server/server" }
-thiserror = "1.0"
+thiserror = "2.0.9"
 uuid = { version = "1.11.0", features = ["v4", "serde"] }
 
 # Performance optimization dependencies
@@ -65,7 +65,7 @@ rayon = "1.10.0"
 aes-gcm = "0.10.3"
 argon2 = "0.5.3"
 dirs = "5.0.1"
-base64 = "0.21"
+base64 = "0.22.1"
 pbkdf2 = "0.12.2"
 async-trait = "0.1.83"
 tracing = "0.1.41"
