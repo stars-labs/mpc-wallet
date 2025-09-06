@@ -3,6 +3,7 @@
 pub mod blockchain_config;
 #[cfg(test)]
 mod blockchain_config_test;
+pub mod core;
 pub mod keystore;
 pub mod utils;
 pub mod protocal;

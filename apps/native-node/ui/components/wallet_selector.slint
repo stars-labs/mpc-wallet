@@ -1,0 +1,151 @@
+import { ComboBox, Button, VerticalBox, HorizontalBox } from "std-widgets.slint";
+
+export struct WalletInfo {
+    id: string,
+    name: string,
+    address: string,
+    balance: string,
+    chain: string,
+    threshold: string,
+}
+
+export component WalletSelector inherits Rectangle {
+    in property <[WalletInfo]> wallets: [];
+    in-out property <int> selected_index: 0;
+    in property <bool> has_keystore: false;
+    
+    callback wallet_changed(int);
+    callback create_wallet();
+    callback import_wallet();
+    callback export_wallet();
+    
+    preferred-height: 80px;
+    background: #16213E;
+    border-radius: 8px;
+    
+    HorizontalBox {
+        padding: 16px;
+        spacing: 16px;
+        
+        // Wallet dropdown
+        VerticalBox {
+            spacing: 4px;
+            
+            Text {
+                text: "Active Wallet";
+                color: #94A3B8;
+                font-size: 12px;
+                font-weight: 500;
+            }
+            
+            if wallets.length > 0: Rectangle {
+                height: 36px;
+                border-radius: 6px;
+                background: #0F172A;
+                border-width: 1px;
+                border-color: #334155;
+                
+                HorizontalBox {
+                    padding-left: 12px;
+                    padding-right: 8px;
+                    
+                    // Wallet icon
+                    Text {
+                        text: "👛";
+                        font-size: 16px;
+                        vertical-alignment: center;
+                    }
+                    
+                    // Wallet info
+                    VerticalBox {
+                        padding-left: 8px;
+                        spacing: 2px;
+                        vertical-alignment: center;
+                        
+                        Text {
+                            text: wallets[selected_index].name;
+                            color: white;
+                            font-size: 13px;
+                            font-weight: 500;
+                        }
+                        
+                        Text {
+                            text: wallets[selected_index].address.length > 20 ? 
+                                  wallets[selected_index].address.substring(0, 6) + "..." + 
+                                  wallets[selected_index].address.substring(wallets[selected_index].address.length - 4, wallets[selected_index].address.length) :
+                                  wallets[selected_index].address;
+                            color: #64748B;
+                            font-size: 11px;
+                        }
+                    }
+                    
+                    Rectangle { } // Spacer
+                    
+                    // Balance
+                    Text {
+                        text: wallets[selected_index].balance;
+                        color: #10B981;
+                        font-size: 13px;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                    }
+                    
+                    // Dropdown arrow
+                    Text {
+                        text: "▼";
+                        color: #64748B;
+                        font-size: 10px;
+                        vertical-alignment: center;
+                        padding-left: 8px;
+                    }
+                }
+                
+                TouchArea {
+                    // TODO: Show wallet dropdown menu
+                }
+            }
+            
+            if wallets.length == 0: Rectangle {
+                height: 36px;
+                border-radius: 6px;
+                background: #0F172A;
+                border-width: 1px;
+                border-color: #334155;
+                
+                Text {
+                    text: "No wallet selected";
+                    color: #64748B;
+                    font-size: 13px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+        }
+        
+        Rectangle { } // Spacer
+        
+        // Action buttons
+        HorizontalBox {
+            spacing: 8px;
+            vertical-alignment: center;
+            
+            Button {
+                text: "Create";
+                enabled: true;
+                clicked => { create_wallet(); }
+            }
+            
+            Button {
+                text: "Import";
+                enabled: true;
+                clicked => { import_wallet(); }
+            }
+            
+            Button {
+                text: "Export";
+                enabled: has_keystore;
+                clicked => { export_wallet(); }
+            }
+        }
+    }
+}

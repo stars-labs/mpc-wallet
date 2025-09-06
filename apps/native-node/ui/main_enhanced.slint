@@ -1,0 +1,302 @@
+import { Button, VerticalBox, HorizontalBox, LineEdit, TextEdit, ListView, StandardButton, GroupBox, GridBox, ComboBox, TabWidget, ScrollView } from "std-widgets.slint";
+import { ConnectionStatus, ConnectionInfo } from "components/connection_status.slint";
+import { WalletSelector, WalletInfo } from "components/wallet_selector.slint";
+import { DkgProgress, Participant } from "components/dkg_progress.slint";
+import { OfflineMode, SDCardOperation } from "components/offline_mode.slint";
+import { SessionList, SessionInfo } from "components/session_list.slint";
+
+export { ConnectionInfo, WalletInfo, Participant, SDCardOperation, SessionInfo }
+
+// Enhanced global state
+export global AppState {
+    // Connection state
+    in-out property <bool> websocket_connected: false;
+    in-out property <bool> webrtc_connected: false;
+    in-out property <[ConnectionInfo]> mesh_connections: [];
+    in-out property <string> operation_mode: "online"; // "online", "offline", "hybrid"
+    
+    // Wallet state
+    in-out property <[WalletInfo]> wallets: [];
+    in-out property <int> active_wallet_index: 0;
+    in-out property <bool> has_keystore: false;
+    
+    // Session state
+    in-out property <[SessionInfo]> available_sessions: [];
+    in-out property <SessionInfo> active_session;
+    in-out property <bool> has_active_session: false;
+    
+    // DKG state
+    in-out property <bool> dkg_active: false;
+    in-out property <int> dkg_current_round: 0;
+    in-out property <float> dkg_progress: 0.0;
+    in-out property <[Participant]> dkg_participants: [];
+    
+    // Offline mode state
+    in-out property <bool> offline_enabled: false;
+    in-out property <bool> sd_card_detected: false;
+    in-out property <[SDCardOperation]> pending_sd_operations: [];
+    
+    // UI state
+    in-out property <string> device_id: "";
+    in-out property <string> status_message: "Ready";
+    in-out property <[string]> log_messages: [];
+}
+
+// Enhanced main window
+export component MainWindow inherits Window {
+    title: "MPC Wallet - Professional Edition";
+    min-width: 1400px;
+    min-height: 900px;
+    background: #0F172A;
+    
+    // Callbacks
+    callback connect_websocket(string);
+    callback create_wallet();
+    callback import_wallet();
+    callback export_wallet();
+    callback join_session(string);
+    callback create_session();
+    callback leave_session();
+    callback refresh_sessions();
+    callback toggle_offline_mode();
+    callback start_dkg();
+    callback abort_dkg();
+    
+    VerticalBox {
+        padding: 0px;
+        
+        // Header
+        Rectangle {
+            height: 80px;
+            background: linear-gradient(90deg, #1E293B, #334155);
+            
+            HorizontalBox {
+                padding: 20px;
+                spacing: 24px;
+                
+                // Logo and title
+                HorizontalBox {
+                    spacing: 12px;
+                    
+                    Text {
+                        text: "🔐";
+                        font-size: 32px;
+                        vertical-alignment: center;
+                    }
+                    
+                    VerticalBox {
+                        spacing: 2px;
+                        vertical-alignment: center;
+                        
+                        Text {
+                            text: "MPC Wallet";
+                            color: white;
+                            font-size: 24px;
+                            font-weight: 700;
+                        }
+                        
+                        Text {
+                            text: "Professional Edition";
+                            color: #94A3B8;
+                            font-size: 12px;
+                            font-weight: 500;
+                        }
+                    }
+                }
+                
+                Rectangle { } // Spacer
+                
+                // Device ID
+                HorizontalBox {
+                    spacing: 8px;
+                    vertical-alignment: center;
+                    
+                    Text {
+                        text: "Device:";
+                        color: #94A3B8;
+                        font-size: 13px;
+                    }
+                    
+                    Text {
+                        text: AppState.device_id;
+                        color: white;
+                        font-size: 13px;
+                        font-weight: 500;
+                    }
+                }
+                
+                // Status
+                Rectangle {
+                    width: 200px;
+                    height: 32px;
+                    border-radius: 16px;
+                    background: #1E293B;
+                    vertical-alignment: center;
+                    
+                    Text {
+                        text: AppState.status_message;
+                        color: #10B981;
+                        font-size: 12px;
+                        font-weight: 500;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+        
+        // Main content
+        HorizontalBox {
+            padding: 20px;
+            spacing: 20px;
+            
+            // Left panel
+            VerticalBox {
+                width: 400px;
+                spacing: 16px;
+                
+                // Connection status
+                ConnectionStatus {
+                    websocket_connected: AppState.websocket_connected;
+                    webrtc_connected: AppState.webrtc_connected;
+                    mesh_connections: AppState.mesh_connections;
+                    offline_mode: AppState.operation_mode;
+                }
+                
+                // Wallet selector
+                WalletSelector {
+                    wallets: AppState.wallets;
+                    selected_index <=> AppState.active_wallet_index;
+                    has_keystore: AppState.has_keystore;
+                    
+                    create_wallet => { root.create_wallet(); }
+                    import_wallet => { root.import_wallet(); }
+                    export_wallet => { root.export_wallet(); }
+                }
+                
+                // Offline mode
+                OfflineMode {
+                    offline_enabled <=> AppState.offline_enabled;
+                    sd_card_detected: AppState.sd_card_detected;
+                    pending_operations: AppState.pending_sd_operations;
+                    
+                    toggle_offline_mode => { root.toggle_offline_mode(); }
+                }
+                
+                // Session list
+                SessionList {
+                    available_sessions: AppState.available_sessions;
+                    active_session: AppState.active_session;
+                    has_active_session: AppState.has_active_session;
+                    
+                    join_session(id) => { root.join_session(id); }
+                    create_session => { root.create_session(); }
+                    leave_session => { root.leave_session(); }
+                    refresh_sessions => { root.refresh_sessions(); }
+                }
+            }
+            
+            // Right panel
+            VerticalBox {
+                spacing: 16px;
+                
+                // DKG Progress
+                DkgProgress {
+                    active: AppState.dkg_active;
+                    current_round: AppState.dkg_current_round;
+                    progress: AppState.dkg_progress;
+                    participants: AppState.dkg_participants;
+                    session_id: AppState.active_session.session_id;
+                    threshold: AppState.active_session.threshold;
+                    
+                    abort_dkg => { root.abort_dkg(); }
+                }
+                
+                // Tab content
+                TabWidget {
+                    Tab {
+                        title: "Operations";
+                        
+                        VerticalBox {
+                            padding: 20px;
+                            spacing: 16px;
+                            
+                            GroupBox {
+                                title: "DKG Operations";
+                                
+                                VerticalBox {
+                                    spacing: 12px;
+                                    
+                                    Button {
+                                        text: "Start DKG";
+                                        enabled: AppState.has_active_session && !AppState.dkg_active;
+                                        clicked => { root.start_dkg(); }
+                                    }
+                                }
+                            }
+                            
+                            GroupBox {
+                                title: "Signing Operations";
+                                
+                                VerticalBox {
+                                    spacing: 12px;
+                                    
+                                    Text {
+                                        text: "Signing features coming soon...";
+                                        color: #64748B;
+                                        font-size: 13px;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    Tab {
+                        title: "Logs";
+                        
+                        ScrollView {
+                            TextEdit {
+                                text: AppState.log_messages.join("\n");
+                                read-only: true;
+                                font-family: "monospace";
+                                font-size: 11px;
+                            }
+                        }
+                    }
+                    
+                    Tab {
+                        title: "Settings";
+                        
+                        VerticalBox {
+                            padding: 20px;
+                            spacing: 16px;
+                            
+                            GroupBox {
+                                title: "Network Settings";
+                                
+                                GridBox {
+                                    Row {
+                                        Text {
+                                            text: "WebSocket Server:";
+                                            vertical-alignment: center;
+                                        }
+                                        
+                                        LineEdit {
+                                            text: "wss://auto-life.tech";
+                                            placeholder-text: "Enter WebSocket URL";
+                                        }
+                                        
+                                        Button {
+                                            text: "Connect";
+                                            clicked => { root.connect_websocket("wss://auto-life.tech"); }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

@@ -4,6 +4,20 @@ use serde::{Deserialize, Serialize};
 use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
+/// Curve type for cryptographic operations
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum CurveType {
+    Secp256k1,
+    Ed25519,
+}
+
+/// Coordination type for session management
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum CoordinationType {
+    Network,
+    Offline,
+}
+
 /// Session type enum - represents different types of signing networks
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", content = "data")]
