@@ -3496,12 +3496,12 @@ dependencies = [
 
 [[package]]
 name = "gethostname"
-version = "0.4.3"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0176e0459c2e4a1fe232f984bca6890e681076abb9934f6cea7c326f3fc47818"
+checksum = "dc3655aa6818d65bc620d6911f05aa7b6aeb596291e1e9f79e52df85583d1e30"
 dependencies = [
- "libc",
- "windows-targets 0.48.5",
+ "rustix 0.38.44",
+ "windows-targets 0.52.6",
 ]
 
 [[package]]
@@ -5331,7 +5331,7 @@ dependencies = [
  "solana-client",
  "solana-sdk",
  "spl-token",
- "thiserror 2.0.16",
+ "thiserror 1.0.69",
  "tokio",
  "tracing",
  "web3",
@@ -10854,9 +10854,9 @@ dependencies = [
 
 [[package]]
 name = "spl-token"
-version = "4.0.2"
+version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5e9e171cbcb4b1f72f6d78ed1e975cb467f56825c27d09b8dd2608e4e7fc8b3b"
+checksum = "70a0f06ac7f23dc0984931b1fe309468f14ea58e32660439c1cef19456f5d0e3"
 dependencies = [
  "arrayref",
  "bytemuck",
@@ -11690,7 +11690,7 @@ dependencies = [
  "frost-secp256k1",
  "futures",
  "futures-util",
- "gethostname 0.4.3",
+ "gethostname 0.5.0",
  "hex",
  "itertools 0.13.0",
  "k256",
