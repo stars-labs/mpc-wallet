@@ -3,12 +3,12 @@
 use solana_sdk::{
     instruction::{AccountMeta, Instruction},
     pubkey::Pubkey,
-    system_instruction,
     transaction::Transaction,
     hash::Hash,
-    signature::Signature,
     message::Message,
 };
+#[allow(deprecated)]
+use solana_sdk::system_instruction;
 use serde::{Serialize, Deserialize};
 
 /// SPL Token program ID

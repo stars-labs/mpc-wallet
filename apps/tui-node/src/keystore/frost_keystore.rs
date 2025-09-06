@@ -13,7 +13,6 @@ use aes_gcm::{
 };
 use pbkdf2::pbkdf2_hmac;
 use sha2::Sha256;
-use rand::Rng;
 
 /// Error types for FROST keystore operations
 #[derive(Debug, thiserror::Error)]
@@ -263,7 +262,7 @@ impl FrostKeystoreManager {
     fn encrypt_data(&self, data: &[u8], password: &str) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>)> {
         use rand::RngCore;
         // Generate random salt and IV
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let mut salt = vec![0u8; 32];
         let mut iv = vec![0u8; 12];
         rng.fill_bytes(&mut salt);

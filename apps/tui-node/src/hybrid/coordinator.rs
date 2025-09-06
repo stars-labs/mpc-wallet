@@ -1,6 +1,6 @@
 //! Hybrid mode coordinator for managing mixed online/offline participants
 
-use std::collections::{HashMap, BTreeMap};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use serde::{Serialize, Deserialize};
 

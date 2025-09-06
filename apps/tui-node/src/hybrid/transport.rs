@@ -2,7 +2,6 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use serde::{Serialize, Deserialize};
 
 pub use super::coordinator::HybridMessage;
 
