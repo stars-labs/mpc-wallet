@@ -2,11 +2,10 @@
 
 use super::{CoreError, CoreResult, CoreState, OperationMode, SDCardOperation, SDOperationType, UICallback};
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::fs;
-use tokio::sync::Mutex;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 /// Data package for offline exchange
 #[derive(Debug, Clone, Serialize, Deserialize)]

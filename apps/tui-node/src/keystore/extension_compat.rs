@@ -454,9 +454,9 @@ pub fn encrypt_for_extension(
     use rand::Rng;
     
     // Generate salt and IV
-    let mut rng = rand::rng();
-    let salt: [u8; 16] = rng.random();
-    let iv: [u8; 12] = rng.random();
+    let mut rng = rand::thread_rng();
+    let salt: [u8; 16] = rng.r#gen();
+    let iv: [u8; 12] = rng.r#gen();
     
     // Derive key using PBKDF2 (100k iterations for Chrome extension compatibility)
     let mut key = [0u8; 32];

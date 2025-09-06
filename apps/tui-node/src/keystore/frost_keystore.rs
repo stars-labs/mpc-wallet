@@ -180,7 +180,7 @@ impl FrostKeystoreManager {
         
         // Get group public key and derive Ethereum address  
         // Store the actual verifying key for proper persistence
-        let group_vk = pubkey_package.verifying_key();
+        let _group_vk = pubkey_package.verifying_key();
         
         // For Ethereum address, we'd need to properly serialize the key
         // For now, use a placeholder address
@@ -262,7 +262,7 @@ impl FrostKeystoreManager {
     fn encrypt_data(&self, data: &[u8], password: &str) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>)> {
         use rand::RngCore;
         // Generate random salt and IV
-        let mut rng = rand::rng();
+        let mut rng = rand::thread_rng();
         let mut salt = vec![0u8; 32];
         let mut iv = vec![0u8; 12];
         rng.fill_bytes(&mut salt);

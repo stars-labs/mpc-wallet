@@ -1,10 +1,10 @@
 //! Wallet management logic shared between TUI and native nodes
 
 use super::{CoreError, CoreResult, CoreState, WalletInfo, UICallback};
-use crate::keystore::{Keystore, DeviceInfo};
+use crate::keystore::Keystore;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::{error, info};
+use tracing::info;
 
 /// Wallet manager handles wallet operations and keystore management
 pub struct WalletManager {
@@ -70,7 +70,7 @@ impl WalletManager {
     }
     
     /// Import wallet from keystore file
-    pub async fn import_wallet(&self, keystore_path: String, password: String) -> CoreResult<()> {
+    pub async fn import_wallet(&self, keystore_path: String, _password: String) -> CoreResult<()> {
         info!("Importing wallet from: {}", keystore_path);
         
         // For now, create a demo imported wallet
@@ -102,7 +102,7 @@ impl WalletManager {
     }
     
     /// Export wallet to keystore file
-    pub async fn export_wallet(&self, wallet_index: usize, export_path: String, password: String) -> CoreResult<()> {
+    pub async fn export_wallet(&self, wallet_index: usize, export_path: String, _password: String) -> CoreResult<()> {
         info!("Exporting wallet to: {}", export_path);
         
         let wallets = self.state.wallets.lock().await;

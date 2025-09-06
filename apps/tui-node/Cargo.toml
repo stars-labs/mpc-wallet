@@ -17,14 +17,15 @@ mpc-wallet-blockchain = { path = "../../packages/@mpc-wallet/blockchain" }
 frost-ed25519 = { version = "2.2.0", features = ["serde", "serialization"] }
 frost-secp256k1 = { version = "2.2.0", features = ["serde", "serialization"] }
 frost-core = { version = "2.2.0", features = ["serde"] }
-rand = "*"
-solana-sdk = "2.2.2"
-solana-client = "2.2.7"
+rand = "0.8"
+solana-sdk = "3.0.0"
+solana-client = "3.0.1"
+solana-system-program = "3.0.1"
 bincode = { version = "2.0.1", features = ["serde"] }
 hex = { version = "0.4", features = ["serde"] }
-rand_core = "*"
-curve25519-dalek = "*"
-tokio = { version = "1.44.2", features = ["full"] }
+rand_core = "0.6"
+curve25519-dalek = "4.1"
+tokio = { version = "1.47.1", features = ["full"] }
 tokio-tungstenite = { version = "0.26.2", features = ["native-tls"] }
 futures-util = "0.3"
 futures = "0.3"
@@ -35,18 +36,18 @@ ratatui = { version = "0.29", features = ["crossterm"] }
 crossterm = { version = "0.29.0" }
 tuirealm = "3.0"
 tui-realm-stdlib = "3.0"
-anyhow = "*"
-url = "*"
-webrtc = "*"
-lazy_static = "*"
+anyhow = "1.0"
+url = "2.5"
+webrtc = "0.13"
+lazy_static = "1.5"
 bs58 = "0.5.0"
 sha2 = "0.10"
 sha3 = "0.10"
-ethers-core = "*"
-ethers-providers = "*"
-ethers-signers = "*"
-k256 = "*"
-elliptic-curve = "*"
+ethers-core = "2.0"
+ethers-providers = "2.0"
+ethers-signers = "2.0"
+k256 = "0.13"
+elliptic-curve = "0.13"
 rlp = "0.5"
 clap = { version = "4.5.37", features = ["derive"] }
 chrono = { version = "0.4", features = ["serde"] }

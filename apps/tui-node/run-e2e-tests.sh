@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # E2E Test Suite for Offline FROST MPC Wallet
 # This script runs all end-to-end tests and examples

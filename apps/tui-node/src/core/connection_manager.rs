@@ -2,8 +2,7 @@
 
 use super::{ConnectionInfo, ConnectionStatus, CoreError, CoreResult, CoreState, UICallback};
 use std::sync::Arc;
-use tokio::sync::Mutex;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 /// Connection manager handles WebSocket and WebRTC connections
 pub struct ConnectionManager {

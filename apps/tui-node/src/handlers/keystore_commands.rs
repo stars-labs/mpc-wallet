@@ -89,7 +89,7 @@ pub async fn handle_list_wallets<C: frost_core::Ciphersuite + Send + Sync + 'sta
                 .iter()
                 .map(|w| {
                     // Get blockchain info - prioritize new format, fall back to legacy
-                    let blockchains = if !w.blockchains.is_empty() {
+                    let _blockchains = if !w.blockchains.is_empty() {
                         w.blockchains.clone()
                     } else if let (Some(blockchain), Some(address)) = (&w.blockchain, &w.public_address) {
                         // Convert legacy format

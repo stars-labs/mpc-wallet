@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # Script to reorganize and archive obsolete documentation
 # This moves old fix-related docs to archive while preserving important current docs

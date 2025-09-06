@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 echo "Running MPC Wallet TUI with maximum debug logging"
 echo "================================================"

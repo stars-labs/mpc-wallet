@@ -13,7 +13,6 @@ use argon2::{
 };
 use pbkdf2::{pbkdf2_hmac_array};
 use sha2::Sha256;
-use rand::RngCore;
 
 use crate::keystore::KeystoreError;
 
@@ -51,7 +50,8 @@ impl KeyDerivation {
 pub fn encrypt_data_with_method(data: &[u8], password: &str, method: KeyDerivation) -> crate::keystore::Result<Vec<u8>> {
     // Generate a random salt
     let mut salt = [0u8; SALT_LEN];
-    rand::rng().fill_bytes(&mut salt);
+    use rand::RngCore;
+    rand::thread_rng().fill_bytes(&mut salt);
 
     // Derive key using the specified method
     let key = match method {
@@ -85,7 +85,7 @@ pub fn encrypt_data_with_method(data: &[u8], password: &str, method: KeyDerivati
 
     // Generate a random nonce
     let mut nonce_bytes = [0u8; NONCE_LEN];
-    rand::rng().fill_bytes(&mut nonce_bytes);
+    rand::thread_rng().fill_bytes(&mut nonce_bytes);
     let nonce = Nonce::from_slice(&nonce_bytes);
 
     // Encrypt the data

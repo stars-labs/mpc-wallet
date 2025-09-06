@@ -2,8 +2,7 @@
 
 use super::{CoreError, CoreResult, CoreState, SessionInfo, SessionStatus, UICallback};
 use std::sync::Arc;
-use tokio::sync::Mutex;
-use tracing::{error, info, warn};
+use tracing::info;
 
 /// Session manager that handles session lifecycle
 pub struct SessionManager {

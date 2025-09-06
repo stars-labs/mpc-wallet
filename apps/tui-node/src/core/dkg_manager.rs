@@ -1,11 +1,7 @@
 //! DKG management logic shared between TUI and native nodes
 
-use super::{CoreError, CoreResult, CoreState, ParticipantInfo, ParticipantStatus, UICallback};
-use crate::protocal::dkg;
-use frost_secp256k1::{self as frost, Identifier};
-use std::collections::BTreeMap;
+use super::{CoreResult, CoreState, ParticipantInfo, ParticipantStatus, UICallback};
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tracing::{error, info};
 
 /// DKG manager that handles the distributed key generation process
@@ -50,9 +46,9 @@ impl DkgManager {
     }
     
     /// Execute DKG rounds
-    async fn execute_dkg_rounds(&self, threshold: u16, total: u16) -> CoreResult<()> {
+    async fn execute_dkg_rounds(&self, _threshold: u16, _total: u16) -> CoreResult<()> {
         // Round 1: Generate commitments
-        self.execute_round1(threshold, total).await?;
+        self.execute_round1().await?;
         
         // Round 2: Generate shares
         self.execute_round2().await?;
@@ -69,7 +65,7 @@ impl DkgManager {
     }
     
     /// Execute round 1: Generate commitments
-    async fn execute_round1(&self, threshold: u16, total: u16) -> CoreResult<()> {
+    async fn execute_round1(&self) -> CoreResult<()> {
         info!("Executing DKG round 1: Generating commitments");
         
         *self.state.dkg_round.lock().await = 1;

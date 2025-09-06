@@ -4,7 +4,6 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use serde::{Serialize, Deserialize};
-use rand::Rng;
 
 use super::mesh_manager::{WebRTCMeshManager, PeerId};
 use super::connection_monitor::ConnectionMonitor;
@@ -369,7 +368,8 @@ impl MeshSimulator {
         let delivered = match (&from_condition, &to_condition) {
             (NetworkCondition::Failed, _) | (_, NetworkCondition::Failed) => false,
             (NetworkCondition::Degraded { packet_loss, .. }, _) => {
-                let mut rng = rand::rng();
+                use rand::Rng;
+                let mut rng = rand::thread_rng();
                 rng.gen_range(0.0..1.0) > *packet_loss
             }
             _ => true,

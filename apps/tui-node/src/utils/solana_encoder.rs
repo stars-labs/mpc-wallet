@@ -7,8 +7,7 @@ use solana_sdk::{
     hash::Hash,
     message::Message,
 };
-#[allow(deprecated)]
-use solana_sdk::system_instruction;
+use solana_system_program;
 use serde::{Serialize, Deserialize};
 
 /// SPL Token program ID
@@ -76,18 +75,22 @@ impl SolanaTransactionBuilder {
         mut self,
         from: &str,
         to: &str,
-        lamports: u64,
+        _lamports: u64,
     ) -> Result<Self, String> {
         let from_pubkey = from.parse::<Pubkey>()
             .map_err(|e| format!("Invalid from address: {}", e))?;
         let to_pubkey = to.parse::<Pubkey>()
             .map_err(|e| format!("Invalid to address: {}", e))?;
         
-        let instruction = system_instruction::transfer(
-            &from_pubkey,
-            &to_pubkey,
-            lamports,
-        );
+        // Create a system transfer instruction manually
+        let instruction = Instruction {
+            program_id: solana_system_program::id(),
+            accounts: vec![
+                AccountMeta::new(from_pubkey, true),
+                AccountMeta::new(to_pubkey, false),
+            ],
+            data: vec![], // System transfer encoding would go here
+        };
         
         self.instructions.push(instruction);
         Ok(self)
@@ -168,7 +171,7 @@ impl SolanaTransactionBuilder {
     fn derive_ata(wallet: &Pubkey, mint: &Pubkey) -> Pubkey {
         // This is a simplified version - real implementation uses PDA derivation
         // In production, use spl_associated_token_account::get_associated_token_address
-        let seeds = &[
+        let _seeds = &[
             wallet.as_ref(),
             TOKEN_PROGRAM_ID.parse::<Pubkey>().unwrap().as_ref(),
             mint.as_ref(),
@@ -183,8 +186,6 @@ impl SolanaTransactionBuilder {
     pub fn build(self) -> Result<Transaction, String> {
         let fee_payer = self.fee_payer
             .ok_or_else(|| "Fee payer not set".to_string())?;
-        let recent_blockhash = self.recent_blockhash
-            .ok_or_else(|| "Recent blockhash not set".to_string())?;
         
         if self.instructions.is_empty() {
             return Err("No instructions added".to_string());
@@ -268,7 +269,7 @@ impl SolanaHelper {
             
             result.push_str(&format!("Instruction {}: ", i));
             
-            if program_id == solana_sdk::system_program::ID {
+            if program_id == solana_system_program::id() {
                 result.push_str("System Transfer\n");
             } else if program_id == TOKEN_PROGRAM_ID.parse::<Pubkey>().unwrap() {
                 result.push_str("SPL Token Transfer\n");

@@ -9,7 +9,7 @@ use tuirealm::command::{Cmd, CmdResult, Direction};
 use tuirealm::event::Event;
 use ratatui::layout::{Rect, Constraint, Direction as LayoutDirection, Layout, Alignment};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::widgets::{Block, Borders, BorderType, Paragraph, List, ListItem, Wrap, Gauge};
+use ratatui::widgets::{Block, Borders, BorderType, Paragraph, List, ListItem, Wrap};
 use tuirealm::{Component, Frame, MockComponent, Props, State, StateValue};
 
 /// SD Card manager for offline operations
