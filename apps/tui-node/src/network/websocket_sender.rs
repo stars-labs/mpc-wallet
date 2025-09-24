@@ -102,9 +102,10 @@ pub async fn run_websocket_handler<C>(
             }
             InternalCommand::UpdateParticipantWebRTCStatus { device_id, webrtc_connected, data_channel_open } => {
                 // This command needs to be forwarded to the UI but we don't have access to the UI message sender here
-                info!("📊 Received UpdateParticipantWebRTCStatus for {}: WebRTC={}, Channel={}", 
+                error!("⚠️ FIXME: UpdateParticipantWebRTCStatus for {} not forwarded to UI! WebRTC={}, Channel={}",
                       device_id, webrtc_connected, data_channel_open);
-                // TODO: Need to forward this to UI message handler
+                // This is why the UI doesn't update - the message never reaches the UI layer
+                // The InternalCommand is received but can't be converted to a UI Message here
             }
             _ => {
                 // Other commands not handled by WebSocket sender

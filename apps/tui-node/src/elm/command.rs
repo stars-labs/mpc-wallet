@@ -366,6 +366,45 @@ impl Command {
                                 info!("✅ Stored WebSocket message channel in AppState (EARLY)");
                             }
 
+                            // Start WebRTC status polling task to update UI
+                            let tx_status_poll = tx_clone.clone();
+                            let app_state_poll = app_state.clone();
+                            tokio::spawn(async move {
+                                info!("🔄 Starting WebRTC status polling task");
+                                let mut last_statuses: std::collections::HashMap<String, (bool, bool)> = std::collections::HashMap::new();
+
+                                loop {
+                                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+                                    // Check device statuses in AppState
+                                    let state = app_state_poll.lock().await;
+                                    for (device_id, status) in &state.device_statuses {
+                                        let webrtc_connected = matches!(status, webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState::Connected);
+                                        let data_channel_open = state.data_channels.contains_key(device_id);
+
+                                        // Check if status changed
+                                        let new_status = (webrtc_connected, data_channel_open);
+                                        let should_update = if let Some(&old_status) = last_statuses.get(device_id) {
+                                            old_status != new_status
+                                        } else {
+                                            true // First time seeing this device
+                                        };
+
+                                        if should_update {
+                                            // Status changed or new device, send UI update
+                                            let _ = tx_status_poll.send(Message::UpdateParticipantWebRTCStatus {
+                                                device_id: device_id.clone(),
+                                                webrtc_connected: new_status.0,
+                                                data_channel_open: new_status.1,
+                                            });
+                                            info!("📊 WebRTC status update for {}: WebRTC={}, Channel={}",
+                                                  device_id, new_status.0, new_status.1);
+                                            last_statuses.insert(device_id.clone(), new_status);
+                                        }
+                                    }
+                                }
+                            });
+
                             // Register device with the signal server (send directly before moving ws_sink)
                             let register_msg = webrtc_signal_server::ClientMsg::Register { 
                                 device_id: device_id.clone() 
