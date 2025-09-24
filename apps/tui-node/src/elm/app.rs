@@ -323,20 +323,57 @@ where
                 // Update WebSocket connection status
                 dkg_progress.set_websocket_connected(self.model.network_state.connected);
                 
-                // Add participants from active session if available
+                // Add participants from active session if available (excluding self)
                 if let Some(ref session) = self.model.active_session {
+                    info!("📋 Session participants: {:?}, self: {}", session.participants, self.model.device_id);
                     for participant in &session.participants {
-                        dkg_progress.update_participant(
-                            participant.clone(),
-                            crate::elm::components::dkg_progress::ParticipantStatus::DataChannelOpen
-                        );
+                        // Skip self - we don't need to show our own status
+                        if participant == &self.model.device_id {
+                            info!("  Skipping self: {}", participant);
+                            continue;
+                        }
+                        
+                        // Check if we have WebRTC status for this participant
+                        if let Some(&(webrtc_connected, data_channel_open)) = 
+                            self.model.network_state.participant_webrtc_status.get(participant) {
+                            info!("  {} - WebRTC: {}, DataChannel: {}", participant, webrtc_connected, data_channel_open);
+                            // Use the actual WebRTC status
+                            dkg_progress.update_webrtc_status(
+                                participant.clone(),
+                                webrtc_connected,
+                                data_channel_open
+                            );
+                        } else {
+                            info!("  {} - No status, defaulting to Waiting", participant);
+                            // Default to waiting for other participants
+                            dkg_progress.update_participant(
+                                participant.clone(),
+                                crate::elm::components::dkg_progress::ParticipantStatus::Waiting
+                            );
+                        }
                     }
-                } else {
-                    // If no active session, at least add current device
-                    dkg_progress.update_participant(
-                        self.model.device_id.clone(),
-                        crate::elm::components::dkg_progress::ParticipantStatus::DataChannelOpen
-                    );
+                }
+                
+                // Calculate and update mesh status if we have an active session
+                if let Some(ref session) = self.model.active_session {
+                    // Count how many participants have data channels open (excluding self)
+                    let mesh_ready_count = session.participants.iter()
+                        .filter(|p| **p != self.model.device_id) // Exclude self
+                        .filter(|p| {
+                            self.model.network_state.participant_webrtc_status.get(*p)
+                                .map_or(false, |(_, data_channel_open)| *data_channel_open)
+                        })
+                        .count();
+                    
+                    // Check if all expected participants have data channels open
+                    let expected_other_participants = (total_participants as usize).saturating_sub(1);
+                    let all_connected = mesh_ready_count == expected_other_participants;
+                    
+                    info!("🔗 Mesh status calculation: ready_count={}, expected={}, all_connected={}", 
+                          mesh_ready_count, expected_other_participants, all_connected);
+                    
+                    // Update mesh status in the component
+                    dkg_progress.update_mesh_status(mesh_ready_count, all_connected);
                 }
                 
                 // Set the selected action from the model
@@ -611,6 +648,10 @@ where
             }
             KeyCode::Char('q') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
                 debug!("🚪 Ctrl+Q -> Quit");
+                return Some(Message::Quit);
+            }
+            KeyCode::Char('c') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
+                debug!("🚪 Ctrl+C -> Quit");
                 return Some(Message::Quit);
             }
             KeyCode::Char('r') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {

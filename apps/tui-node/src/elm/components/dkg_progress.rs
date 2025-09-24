@@ -150,9 +150,18 @@ impl DKGProgressComponent {
             });
         }
 
-        // Check if all data channels are open
-        self.all_data_channels_open = self.participants.len() >= self.total_participants as usize &&
+        // Check if all data channels are open (comparing against other participants only)
+        let expected_other_participants = self.total_participants.saturating_sub(1) as usize;
+        self.all_data_channels_open = self.participants.len() >= expected_other_participants &&
             self.participants.iter().all(|p| p.data_channel_open);
+        
+        // Update mesh_ready_count based on actual data channels open
+        // Mesh is ready when we have all expected participants with open data channels
+        if self.all_data_channels_open && self.participants.len() >= expected_other_participants {
+            self.mesh_ready_count = expected_other_participants;
+        } else {
+            self.mesh_ready_count = 0;
+        }
     }
 
     /// Update mesh status
@@ -404,15 +413,18 @@ impl DKGProgressComponent {
         // Participants Count with WebRTC details
         let data_channels_open = self.participants.iter().filter(|p| p.data_channel_open).count();
         let webrtc_connected = self.participants.iter().filter(|p| p.webrtc_connected).count();
+        
+        // total_participants includes self, but we only track connections to OTHER participants
+        let other_participants = self.total_participants.saturating_sub(1);
 
         let participants_text = vec![
             Line::from(vec![
                 Span::styled("P2P Status: ", Style::default().fg(Color::Gray)),
                 Span::styled(
-                    format!("WebRTC: {}/{} | Channels: {}/{} | Mesh: {}/{}",
-                            webrtc_connected, self.total_participants,
-                            data_channels_open, self.total_participants,
-                            self.mesh_ready_count, self.total_participants),
+                    format!("WebRTC: {}/{} | Channels: {}/{} | Mesh: {}/1",
+                            webrtc_connected, other_participants,
+                            data_channels_open, other_participants,
+                            if self.mesh_ready_count >= other_participants as usize { 1 } else { 0 }),
                     Style::default().fg(if self.all_data_channels_open {
                         Color::Green
                     } else if data_channels_open > 0 {
@@ -503,9 +515,10 @@ impl DKGProgressComponent {
             })
             .collect();
         
-        // Add placeholder slots for missing participants
+        // Add placeholder slots for missing participants (excluding self)
         let mut all_items = items;
-        for i in self.participants.len()..self.total_participants as usize {
+        let expected_other_participants = self.total_participants.saturating_sub(1) as usize;
+        for i in self.participants.len()..expected_other_participants {
             all_items.push(ListItem::new(Line::from(vec![
                 Span::raw("  ⏳ "),
                 Span::styled(
@@ -558,10 +571,11 @@ impl DKGProgressComponent {
                         }
                     },
                     DKGRound::WaitingForParticipants => {
-                        if self.mesh_ready_count == self.total_participants as usize {
+                        let expected_other_participants = self.total_participants.saturating_sub(1) as usize;
+                        if self.mesh_ready_count == expected_other_participants {
                             "🟢 Mesh fully connected! Starting DKG...".to_string()
                         } else {
-                            format!("⏳ Mesh formation: {}/{} ready", self.mesh_ready_count, self.total_participants)
+                            format!("⏳ Mesh formation: {}/{} ready", self.mesh_ready_count, expected_other_participants)
                         }
                     },
                     DKGRound::Round1 => "🔄 Round 1: Generating and broadcasting commitments...".to_string(),

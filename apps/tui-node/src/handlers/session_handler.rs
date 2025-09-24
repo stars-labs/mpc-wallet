@@ -345,11 +345,12 @@ pub async fn handle_accept_session_proposal<C: Ciphersuite + Send + Sync + 'stat
             drop(state);
 
             // Use the simplified WebRTC initiation with AppState
-            crate::network::webrtc_simple::simple_initiate_webrtc_with_channel(
+            crate::network::webrtc::initiate_webrtc_with_channel(
                 self_device_id,
                 participants,
                 device_connections_arc,
                 app_state.clone(),
+                None,  // No UI message sender available here
             ).await;
         }
     } else {
@@ -473,11 +474,12 @@ pub async fn handle_process_session_response<C: Ciphersuite + Send + Sync + 'sta
                     drop(state);
 
                     // Use the simplified WebRTC initiation with AppState
-                    crate::network::webrtc_simple::simple_initiate_webrtc_with_channel(
+                    crate::network::webrtc::initiate_webrtc_with_channel(
                         self_device_id,
                         participants,
                         device_connections_arc,
                         app_state.clone(),
+                        None,  // No UI message sender available here
                     ).await;
                 } else {
                     let _status = state.mesh_status.clone();

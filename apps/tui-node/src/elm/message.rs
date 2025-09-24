@@ -60,6 +60,8 @@ pub enum Message {
     DKGComplete { result: DKGResult },
     DKGFailed { error: String },
     CancelDKG,
+    StartDKGProtocol,  // Trigger the actual DKG protocol when mesh is ready
+    ProcessDKGRound1 { from_device: String, package_bytes: Vec<u8> },  // Process received DKG Round 1 package
     
     // Signing operations
     InitiateSigning { request: SigningRequest },
@@ -78,6 +80,8 @@ pub enum Message {
     PeerDisconnected { peer_id: String },
     NetworkMessage { from: String, data: Vec<u8> },
     InitiateWebRTCWithParticipants { participants: Vec<String> },
+    CheckWebRTCConnections,
+    VerifyMeshConnectivity,
     ConnectionStatusChanged { connected: bool },
     
     // Keystore events

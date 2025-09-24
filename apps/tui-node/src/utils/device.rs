@@ -29,39 +29,44 @@ pub async fn send_webrtc_message<C>(
     message: &WebRTCMessage<C>,
     state_log: Arc<Mutex<AppState<C>>>,
 ) -> Result<(), String> where C: Ciphersuite {
+    // Enhanced debugging to trace data channel access
     let data_channel = {
         let guard = state_log.lock().await;
+        tracing::debug!("🔍 Looking for data channel for device: {}", target_device_id);
+        tracing::debug!("🔍 Available data channels: {:?}", guard.data_channels.keys().collect::<Vec<_>>());
         guard.data_channels.get(target_device_id).cloned()
     };
 
     if let Some(dc) = data_channel {
- 
-        if dc.ready_state() == RTCDataChannelState::Open {
-   
+        let ready_state = dc.ready_state();
+        tracing::debug!("🔍 Data channel for {} found, state: {:?}", target_device_id, ready_state);
+        
+        if ready_state == RTCDataChannelState::Open {
             let msg_json = serde_json::to_string(&message)
                 .map_err(|e| format!("Failed to serialize envelope: {}", e))?;
 
             if let Err(_e) = dc.send_text(msg_json).await {
                 return Err(format!("Failed to send message: {}", _e));
             }
-            //         // udpate conncetion status
-            // let mut state_guard = state_log.lock().await;
-            // state_guard.device_statuses.insert(
-            //             target_device_id.to_string(),
-            //             webrtc::device_connection::device_connection_state::RTCDeviceConnectionState::Connected,
-            // );
 
             Ok(())
         } else {
             let err_msg = format!(
                 "Data channel for {} is not open (state: {:?})",
                 target_device_id,
-                dc.ready_state()
+                ready_state
             );
+            tracing::warn!("❌ {}", err_msg);
             Err(err_msg)
         }
     } else {
         let err_msg = format!("Data channel not found for device {}", target_device_id);
+        // Add more detailed debugging
+        let available_channels = {
+            let guard = state_log.lock().await;
+            guard.data_channels.keys().cloned().collect::<Vec<_>>()
+        };
+        tracing::warn!("❌ {} - Available channels: {:?}", err_msg, available_channels);
         Err(err_msg)
     }
 }

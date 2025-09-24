@@ -360,10 +360,11 @@ pub async fn handle_process_session_response_with_rejoin<C: Ciphersuite + Send +
     drop(state);
 
     // Use the simplified WebRTC initiation with AppState
-    crate::network::webrtc_simple::simple_initiate_webrtc_with_channel(
+    crate::network::webrtc::initiate_webrtc_with_channel(
         device_id,
         participants,
         device_connections_arc,
         app_state.clone(),
+        None,  // No UI message sender available here
     ).await;
 }

@@ -132,10 +132,19 @@ async fn run_elm_tui(device_id: String, signal_server: String, offline: bool) ->
         }
     }
 
-    // Setup terminal
+    // Setup terminal with panic handler for cleanup
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
+    
+    // Set up Ctrl+C handler for graceful shutdown
+    let original_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |panic_info| {
+        // Clean up terminal on panic
+        let _ = disable_raw_mode();
+        let _ = execute!(io::stdout(), LeaveAlternateScreen);
+        original_hook(panic_info);
+    }));
 
     // If not offline, connect to signal server
     if !offline {

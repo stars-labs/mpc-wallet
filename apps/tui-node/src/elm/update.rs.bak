@@ -332,9 +332,11 @@ pub fn update(model: &mut Model, msg: Message) -> Option<Command> {
                     info!("🎯 All participants connected! Starting DKG protocol...");
                     // DON'T set dkg_in_progress here - let the command handler do it
                     // to avoid race condition where it's set before the command runs
+                    // Send command to actually start the DKG protocol
+                    None // None // Some(Command::StartDKGProtocol)
+                } else {
+                    Some(Command::SendMessage(Message::ForceRemount))
                 }
-                // ALWAYS force remount to update the UI with the new connection status
-                Some(Command::SendMessage(Message::ForceRemount))
             } else {
                 None
             }
@@ -435,10 +437,10 @@ pub fn update(model: &mut Model, msg: Message) -> Option<Command> {
             Some(Command::StartDKG { config: params.wallet_config })
         }
         
-        Message::ProcessDKGRound1 { from_device, package_bytes: _ } => {
+        Message::ProcessDKGRound1 { from_device, package_bytes } => {
             info!("Processing DKG Round 1 package from {}", from_device);
             // Create command to process the DKG package
-            None // None // Some(Command::ProcessDKGRound1 { from_device, package_bytes })
+            None // Some(Command::ProcessDKGRound1 { from_device, package_bytes })
         }
 
         // ============= Network Events =============
@@ -454,22 +456,14 @@ pub fn update(model: &mut Model, msg: Message) -> Option<Command> {
         
         Message::VerifyMeshConnectivity => {
             info!("🔍 Verifying WebRTC mesh connectivity");
-
+            
             // Check current connection status from network state
             if let Some(session) = &model.active_session {
                 let expected_connections = session.participants.len().saturating_sub(1);
-
-                // Count how many participants have data channels open (excluding self)
-                let connected_count = session.participants.iter()
-                    .filter(|p| **p != model.device_id)
-                    .filter(|p| {
-                        model.network_state.participant_webrtc_status.get(*p)
-                            .map_or(false, |(_, data_channel_open)| *data_channel_open)
-                    })
-                    .count();
-
-                info!("📊 Mesh Status: {}/{} data channels open", connected_count, expected_connections);
-
+                let connected_count = model.network_state.peers.len();
+                
+                info!("📊 Mesh Status: {}/{} connections", connected_count, expected_connections);
+                
                 if connected_count < expected_connections {
                     info!("⚠️ Mesh incomplete, triggering re-initiation");
                     // Re-initiate with all participants
@@ -477,7 +471,7 @@ pub fn update(model: &mut Model, msg: Message) -> Option<Command> {
                         .filter(|p| **p != model.device_id)
                         .cloned()
                         .collect();
-
+                    
                     Some(Command::InitiateWebRTCConnections { participants: other_participants })
                 } else {
                     info!("✅ Mesh complete! All participants connected");

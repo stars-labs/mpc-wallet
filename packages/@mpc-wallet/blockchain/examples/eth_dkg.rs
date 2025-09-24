@@ -1,6 +1,6 @@
 use bincode::serde::{decode_from_slice, encode_to_vec};
 use clap::Parser;
-use elliptic_curve::point::AffineCoordinates; // Import for .x() on AffinePoint
+use k256::elliptic_curve::point::AffineCoordinates; // Import for .x() on AffinePoint
 use ethers_core::types::{
     Address,
     H256,
@@ -30,10 +30,31 @@ use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
+use std::collections::HashSet;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
 use tokio::time::timeout; // Use tokio's timeout // Add this import
+
+// --- New Message Types for Discovery ---
+#[derive(Serialize, Deserialize, Clone, Debug)]
+struct PingMessage {
+    sender_index: u16,
+    timestamp: u64,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+struct PongMessage {
+    sender_index: u16,
+    responding_to: u16,
+    timestamp: u64,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+struct ReadyMessage {
+    sender_index: u16,
+    ready_nodes: Vec<u16>,
+}
 
 // --- DKG Message Types ---
 #[derive(Serialize, Deserialize, Clone, Debug)] // Add Debug
@@ -87,8 +108,14 @@ struct SignerSelectionMessage {
 // --- Generic Message Wrapper ---
 #[derive(Serialize, Deserialize, Clone, Debug)] // Add Debug
 enum MessageWrapper {
+    // Discovery messages
+    Ping(PingMessage),
+    Pong(PongMessage), 
+    Ready(ReadyMessage),
+    // DKG messages
     DkgRound1(Round1Message),
     DkgRound2(Round2Message),
+    // Signing messages
     SignTx(TxMessage),
     SignCommitment(CommitmentMessage),
     SignShare(ShareMessage),
@@ -112,85 +139,144 @@ struct CliArgs {
     /// Is this node the initiator?
     #[arg(long, default_value_t = false)]
     is_initiator: bool,
+    /// Wait for all nodes to join before proceeding (default: true)
+    #[arg(long, default_value_t = true)]
+    wait_for_all: bool,
 }
 
-// Async send_to using tokio with retry logic
-async fn send_to(addr: &str, msg: &MessageWrapper) {
-    // ... (same as before) ...
+// Async send_to using tokio with better error handling for discovery
+async fn send_to(addr: &str, msg: &MessageWrapper) -> bool {
     let data = encode_to_vec(msg, bincode::config::standard()).unwrap();
-    let sock_addr: SocketAddr = addr.parse().unwrap();
+    let sock_addr: SocketAddr = match addr.parse() {
+        Ok(addr) => addr,
+        Err(_) => return false,
+    };
 
-    // Add retry logic with backoff
-    let mut attempt = 0;
-    let max_attempts = 5;
-
-    loop {
-        match timeout(Duration::from_secs(2), TcpStream::connect(sock_addr)).await {
-            Ok(Ok(mut stream)) => {
-                if let Err(e) = stream.write_all(&data).await {
-                    eprintln!("Failed to write to {}: {}", addr, e);
-                } else {
-                    // Only print success on retry attempts
-                    if attempt > 0 {
-                        println!(
-                            "Successfully connected to {} after {} attempts",
-                            addr,
-                            attempt + 1
-                        );
-                    }
-                }
-                break; // Exit the retry loop on success
-            }
-            Ok(Err(e)) => {
-                attempt += 1;
-                if attempt >= max_attempts {
-                    eprintln!(
-                        "Failed to connect to {} after {} attempts: {}",
-                        addr, attempt, e
-                    );
-                    break;
-                }
-                let backoff = Duration::from_millis(500 * attempt as u64); // Exponential-ish backoff
-                eprintln!(
-                    "Connection to {} failed (attempt {}), retrying in {:?}: {}",
-                    addr, attempt, backoff, e
-                );
-                tokio::time::sleep(backoff).await;
-            }
-            Err(_) => {
-                attempt += 1;
-                if attempt >= max_attempts {
-                    eprintln!("Timeout connecting to {} after {} attempts", addr, attempt);
-                    break;
-                }
-                let backoff = Duration::from_millis(500 * attempt as u64);
-                eprintln!(
-                    "Connection to {} timed out (attempt {}), retrying in {:?}",
-                    addr, attempt, backoff
-                );
-                tokio::time::sleep(backoff).await;
+    match timeout(Duration::from_secs(2), TcpStream::connect(sock_addr)).await {
+        Ok(Ok(mut stream)) => {
+            match stream.write_all(&data).await {
+                Ok(_) => true,
+                Err(_) => false,
             }
         }
+        _ => false, // Connection refused or timeout - expected during discovery
     }
 }
 
-// Async broadcast using tokio
-async fn broadcast(index: u16, total: u16, msg: &MessageWrapper) {
-    // ... (same as before) ...
-    println!("Node {} broadcasting message: {:?}", index, msg); // Log message being broadcast
+// Async send_to with retries for important messages
+async fn send_to_with_retries(addr: &str, msg: &MessageWrapper, max_retries: u32) -> bool {
+    for attempt in 0..=max_retries {
+        if send_to(addr, msg).await {
+            return true;
+        }
+        if attempt < max_retries {
+            let backoff = Duration::from_millis(100 * (attempt as u64 + 1));
+            tokio::time::sleep(backoff).await;
+        }
+    }
+    false
+}
+
+// Async mesh discovery: Wait for all nodes to join the cluster  
+async fn discover_all_peers(index: u16, total: u16) -> Result<HashSet<u16>, Box<dyn Error + Send + Sync>> {
+    let mut discovered = HashSet::new();
+    discovered.insert(index); // Always include self
+    
+    println!("Node {} starting peer discovery, waiting for all {} nodes...", index, total);
+    
+    // Set up listener for discovery messages
+    let listener = TcpListener::bind(format!("127.0.0.1:1000{}", index)).await?;
+    println!("Node {} listening on 127.0.0.1:1000{}", index, index);
+    
+    let mut last_ping_time = tokio::time::Instant::now();
+    let ping_interval = Duration::from_secs(2);
+    
+    // Continue until we've discovered all nodes
+    while discovered.len() < total as usize {
+        // Send pings periodically
+        if last_ping_time.elapsed() >= ping_interval {
+            let ping_msg = PingMessage {
+                sender_index: index,
+                timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs(),
+            };
+            let wrapped_msg = MessageWrapper::Ping(ping_msg);
+            
+            // Try to ping all other nodes that we haven't discovered yet
+            for target_idx in 1..=total {
+                if target_idx != index && !discovered.contains(&target_idx) {
+                    let target_addr = format!("127.0.0.1:1000{}", target_idx);
+                    send_to(&target_addr, &wrapped_msg).await;
+                }
+            }
+            last_ping_time = tokio::time::Instant::now();
+            
+            if discovered.len() == total as usize {
+                println!("Node {} discovered all {} nodes: {:?}", index, total, discovered);
+            } else {
+                println!("Node {} discovered {}/{} nodes: {:?}", 
+                        index, discovered.len(), total, discovered);
+            }
+        }
+        
+        // Listen for incoming messages
+        match timeout(Duration::from_millis(50), listener.accept()).await {
+            Ok(Ok((mut stream, _addr))) => {
+                let mut buf = Vec::new();
+                if stream.read_to_end(&mut buf).await.is_ok() && !buf.is_empty() {
+                    if let Ok((msg, _)) = decode_from_slice(&buf, bincode::config::standard()) {
+                        match msg {
+                            MessageWrapper::Ping(ping) => {
+                                discovered.insert(ping.sender_index);
+                                // Send pong back
+                                let pong_msg = PongMessage {
+                                    sender_index: index,
+                                    responding_to: ping.sender_index,
+                                    timestamp: ping.timestamp,
+                                };
+                                let wrapped_msg = MessageWrapper::Pong(pong_msg);
+                                let target_addr = format!("127.0.0.1:1000{}", ping.sender_index);
+                                send_to(&target_addr, &wrapped_msg).await;
+                            }
+                            MessageWrapper::Pong(pong) => {
+                                if pong.responding_to == index {
+                                    discovered.insert(pong.sender_index);
+                                }
+                            }
+                            _ => {} // Ignore other message types during discovery
+                        }
+                    }
+                }
+            }
+            _ => {
+                // No incoming connection or timeout, continue
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        }
+    }
+    
+    println!("Node {} discovery complete! Found all {} nodes: {:?}", index, total, discovered);
+    Ok(discovered)
+}
+
+// Async broadcast to discovered peers only
+async fn broadcast_to_peers(index: u16, peers: &HashSet<u16>, msg: &MessageWrapper) {
+    println!("Node {} broadcasting message to {} peers...", index, peers.len() - 1);
     let mut tasks = Vec::new();
-    for device_idx in 1..=total {
-        if device_idx == index {
+    for &peer_idx in peers {
+        if peer_idx == index {
             continue;
         }
-        let device_addr = format!("127.0.0.1:1000{}", device_idx);
+        let peer_addr = format!("127.0.0.1:1000{}", peer_idx);
         // Clone msg for each task
         let msg_clone = msg.clone();
         tasks.push(tokio::spawn(async move {
-            send_to(&device_addr, &msg_clone).await;
+            send_to_with_retries(&peer_addr, &msg_clone, 3).await;
         }));
     }
-    // Wait for all sends to complete (optional, fire-and-forget is also possible)
+    // Wait for all sends to complete
     for task in tasks {
         let _ = task.await; // Handle potential task errors if needed
     }
@@ -229,6 +315,39 @@ async fn receive_messages(
                                     bincode::config::standard(),
                                 ) {
                                     Ok((wrapped_msg, _)) => {
+                                        // Debug message type
+                                        match &wrapped_msg {
+                                            MessageWrapper::Ping(_) => {
+                                                println!("Received Ping message");
+                                            }
+                                            MessageWrapper::Pong(_) => {
+                                                println!("Received Pong message");
+                                            }
+                                            MessageWrapper::Ready(_) => {
+                                                println!("Received Ready message");
+                                            }
+                                            MessageWrapper::DkgRound1(_) => {
+                                                println!("Received DkgRound1 message");
+                                            }
+                                            MessageWrapper::DkgRound2(_) => {
+                                                println!("Received DkgRound2 message");
+                                            }
+                                            MessageWrapper::SignTx(_) => {
+                                                println!("Received SignTx message");
+                                            }
+                                            MessageWrapper::SignCommitment(_) => {
+                                                println!("Received SignCommitment message");
+                                            }
+                                            MessageWrapper::SignShare(_) => {
+                                                println!("Received SignShare message");
+                                            }
+                                            MessageWrapper::SignAggregated(_) => {
+                                                println!("Received SignAggregated message");
+                                            }
+                                            MessageWrapper::SignerSelection(_) => {
+                                                println!("Received SignerSelection message");
+                                            }
+                                        }
                                         println!("Node received message: {:?}", wrapped_msg); // Log received message
                                         // Push ALL decoded messages to the shared vec
                                         let mut messages_guard = messages_clone.lock().await;
@@ -388,6 +507,7 @@ fn derive_eth_address(
 #[derive(Debug, Clone, PartialEq)]
 enum NodeState {
     Initial,
+    Discovery,
     DkgProcess,
     Idle,
     TransactionComposition, // Initiator only
@@ -405,8 +525,10 @@ struct NodeContext {
     total: u16,
     threshold: u16,
     is_initiator: bool,
+    wait_for_all: bool,
     state: NodeState,
     my_identifier: Identifier,
+    discovered_peers: HashSet<u16>,
     key_package: Option<KeyPackage<Secp256K1Sha256>>,
     pubkey_package: Option<PublicKeyPackage<Secp256K1Sha256>>,
     eth_address: Option<Address>,
@@ -445,6 +567,7 @@ impl NodeContext {
         total: u16,
         threshold: u16,
         is_initiator: bool,
+        wait_for_all: bool,
     ) -> Result<Self, Box<dyn Error + Send + Sync>> {
         let my_identifier = Identifier::try_from(index).expect("Invalid identifier");
 
@@ -453,8 +576,10 @@ impl NodeContext {
             total,
             threshold,
             is_initiator,
+            wait_for_all,
             state: NodeState::Initial,
             my_identifier,
+            discovered_peers: HashSet::new(),
             key_package: None,
             pubkey_package: None,
             eth_address: None,
@@ -518,7 +643,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let is_initiator = args.is_initiator;
 
     // Create initial context
-    let mut context = NodeContext::new(index, total, threshold, is_initiator)?;
+    let mut context = NodeContext::new(index, total, threshold, is_initiator, args.wait_for_all)?;
 
     // Main state machine loop
     loop {
@@ -526,6 +651,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         match context.state.clone() {
             // Use clone to avoid borrowing issues
             NodeState::Initial => handle_initial_state(&mut context).await?,
+            NodeState::Discovery => handle_discovery_state(&mut context).await?,
             NodeState::DkgProcess => handle_dkg_process(&mut context).await?,
             NodeState::Idle => handle_idle_state(&mut context).await?,
             NodeState::TransactionComposition => {
@@ -593,23 +719,52 @@ async fn handle_initial_state(
         );
         context.state = NodeState::Idle;
     } else {
-        println!("Node {} no keys found, starting DKG process", context.index);
-        context.state = NodeState::DkgProcess;
+        println!("Node {} no keys found, starting discovery process", context.index);
+        context.state = NodeState::Discovery;
     }
 
+    Ok(())
+}
+
+// Handle peer discovery state
+async fn handle_discovery_state(context: &mut NodeContext) -> Result<(), Box<dyn Error + Send + Sync>> {
+    println!("Node {} in DISCOVERY state", context.index);
+    
+    if context.wait_for_all {
+        // Wait for all nodes to join
+        context.discovered_peers = discover_all_peers(context.index, context.total).await?;
+        println!("Node {} discovered all {} peers: {:?}", 
+                context.index, context.total, context.discovered_peers);
+        
+        // Proceed to DKG with all nodes
+        context.state = NodeState::DkgProcess;
+    } else {
+        // Use threshold-based discovery (fallback - not implemented)
+        println!("Node {} using threshold-based discovery (not implemented in this version)", context.index);
+        context.state = NodeState::DkgProcess;
+    }
+    
     Ok(())
 }
 
 async fn handle_dkg_process(context: &mut NodeContext) -> Result<(), Box<dyn Error + Send + Sync>> {
     println!("Node {} in DKG_PROCESS state", context.index);
 
-    // Set up listener
-    context.setup_listener().await?;
+    // Set up listener (reuse existing if available)
+    if context.listener.is_none() {
+        context.setup_listener().await?;
+    }
     let listener = context.listener.clone().unwrap(); // Clone Arc for use
+
+    // Brief wait to ensure all discovered nodes are ready for DKG
+    println!(
+        "Node {} waiting briefly for DKG coordination...",
+        context.index
+    );
+    tokio::time::sleep(Duration::from_secs(2)).await;
 
     // --- DKG Round 1 ---
     println!("Node {} starting DKG Round 1...", context.index);
-    // ... (DKG part 1 and broadcast remain the same) ...
     let (round1_secret_package, round1_package) = frost::keys::dkg::part1(
         context.my_identifier,
         context.total,
@@ -626,7 +781,7 @@ async fn handle_dkg_process(context: &mut NodeContext) -> Result<(), Box<dyn Err
         package: round1_package.clone(),
     };
     let wrapped_r1_msg = MessageWrapper::DkgRound1(round1_message);
-    broadcast(context.index, context.total, &wrapped_r1_msg).await;
+    broadcast_to_peers(context.index, &context.discovered_peers, &wrapped_r1_msg).await;
 
     // Receive Round 1 Packages (with buffering and loop)
     println!("Node {} receiving DKG Round 1 packages...", context.index);
@@ -700,14 +855,23 @@ async fn handle_dkg_process(context: &mut NodeContext) -> Result<(), Box<dyn Err
             if let MessageWrapper::DkgRound1(m) = msg {
                 if received_round1_packages.len() < context.total as usize {
                     let participant_id = Identifier::try_from(m.participant_index)?;
-                    if received_round1_packages
-                        .insert(participant_id, m.package)
-                        .is_none()
-                    {
+                    // Only accept packages from discovered peers
+                    if context.discovered_peers.contains(&m.participant_index) {
+                        if received_round1_packages
+                            .insert(participant_id, m.package)
+                            .is_none()
+                        {
+                            println!(
+                                "Node {} received DKG R1 package from participant {}",
+                                context.index, m.participant_index
+                            );
+                        }
+                    } else {
                         println!(
-                            "Node {} received DKG R1 package from participant {}",
+                            "Node {} ignoring R1 package from undiscovered peer {}",
                             context.index, m.participant_index
                         );
+                        context.message_buffer.push(MessageWrapper::DkgRound1(m));
                     }
                 } else {
                     context.message_buffer.push(MessageWrapper::DkgRound1(m)); // Buffer excess R1
@@ -749,7 +913,6 @@ async fn handle_dkg_process(context: &mut NodeContext) -> Result<(), Box<dyn Err
     let mut send_tasks = Vec::new();
     for (receiver_id, package) in round2_packages {
         if received_round1_packages_from_others.contains_key(&receiver_id) {
-            // ... (index derivation and sending logic is correct) ...
             let id_bytes = receiver_id.serialize();
             if id_bytes.len() < 2 {
                 panic!("Identifier serialization too short!");
@@ -759,16 +922,19 @@ async fn handle_dkg_process(context: &mut NodeContext) -> Result<(), Box<dyn Err
                     .try_into()
                     .expect("Slice failed"),
             );
-            let round2_message = Round2Message {
-                participant_index: context.index,
-                package,
-            };
-            let wrapped_r2_msg = MessageWrapper::DkgRound2(round2_message);
-            let device_addr = format!("127.0.0.1:1000{}", receiver_idx);
-            println!("[Debug] Sending R2 to device_addr: {}", device_addr);
-            send_tasks.push(tokio::spawn(async move {
-                send_to(&device_addr, &wrapped_r2_msg).await;
-            }));
+            // Only send to discovered peers
+            if context.discovered_peers.contains(&receiver_idx) {
+                let round2_message = Round2Message {
+                    participant_index: context.index,
+                    package,
+                };
+                let wrapped_r2_msg = MessageWrapper::DkgRound2(round2_message);
+                let device_addr = format!("127.0.0.1:1000{}", receiver_idx);
+                println!("[Debug] Sending R2 to device_addr: {}", device_addr);
+                send_tasks.push(tokio::spawn(async move {
+                    send_to_with_retries(&device_addr, &wrapped_r2_msg, 3).await;
+                }));
+            }
         }
     }
     for task in send_tasks {
@@ -1065,7 +1231,7 @@ async fn handle_signing_commitment(
         commitment: commitment.clone(),
     };
     let wrapped_commit_msg = MessageWrapper::SignCommitment(commitment_message);
-    broadcast(context.index, context.total, &wrapped_commit_msg).await;
+    broadcast_to_peers(context.index, &context.discovered_peers, &wrapped_commit_msg).await;
 
     // Receive commitments from others (with buffering, loop, and timeout)
     println!(
@@ -1529,7 +1695,7 @@ async fn handle_signature_aggregation(
     };
     context.aggregated_signature = Some(agg_sig_msg_data.clone());
     let agg_sig_msg = MessageWrapper::SignAggregated(agg_sig_msg_data);
-    broadcast(context.index, context.total, &agg_sig_msg).await;
+    broadcast_to_peers(context.index, &context.discovered_peers, &agg_sig_msg).await;
 
     // Transition to submission state
     context.state = NodeState::TransactionSubmission;
@@ -1748,7 +1914,7 @@ async fn handle_transaction_composition(
         transaction_request: tx_req_bytes,
     };
     let wrapped_tx_msg = MessageWrapper::SignTx(tx_message);
-    broadcast(context.index, context.total, &wrapped_tx_msg).await;
+    broadcast_to_peers(context.index, &context.discovered_peers, &wrapped_tx_msg).await;
 
     // Transition to next state
     context.state = NodeState::SigningCommitment;
@@ -1909,7 +2075,7 @@ async fn handle_signer_selection(
     let selection_msg = MessageWrapper::SignerSelection(SignerSelectionMessage {
         selected_identifiers: context.selected_signers.clone().unwrap(),
     });
-    broadcast(context.index, context.total, &selection_msg).await;
+    broadcast_to_peers(context.index, &context.discovered_peers, &selection_msg).await;
 
     // Transition to next state (initiator is always selected)
     context.state = NodeState::SignatureGeneration { selected: true };

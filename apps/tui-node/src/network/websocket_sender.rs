@@ -100,6 +100,43 @@ pub async fn run_websocket_handler<C>(
                     }
                 }
             }
+            InternalCommand::UpdateParticipantWebRTCStatus { device_id, webrtc_connected, data_channel_open } => {
+                // This command needs to be forwarded to the UI but we don't have access to the UI message sender here
+                info!("📊 Received UpdateParticipantWebRTCStatus for {}: WebRTC={}, Channel={}",
+                      device_id, webrtc_connected, data_channel_open);
+                // TODO: Need to forward this to UI message handler
+            }
+
+            // CRITICAL: Handle DKG Round 1 messages received via WebRTC
+            InternalCommand::ProcessSimpleDkgRound1 { from_device_id, package_bytes } => {
+                info!("📨 Processing DKG Round 1 from {}", from_device_id);
+
+                // Call the real FROST DKG Round 1 processor
+                let state_clone = state.clone();
+                tokio::spawn(async move {
+                    crate::protocal::dkg::process_dkg_round1(
+                        state_clone,
+                        from_device_id,
+                        package_bytes
+                    ).await;
+                });
+            }
+
+            // CRITICAL: Handle DKG Round 2 messages received via WebRTC
+            InternalCommand::ProcessSimpleDkgRound2 { from_device_id, to_device_id, package_bytes } => {
+                info!("📨 Processing DKG Round 2 from {} to {}", from_device_id, to_device_id);
+
+                // Call the real FROST DKG Round 2 processor
+                let state_clone = state.clone();
+                tokio::spawn(async move {
+                    crate::protocal::dkg::process_dkg_round2(
+                        state_clone,
+                        from_device_id,
+                        package_bytes
+                    ).await;
+                });
+            }
+
             _ => {
                 // Other commands not handled by WebSocket sender
             }

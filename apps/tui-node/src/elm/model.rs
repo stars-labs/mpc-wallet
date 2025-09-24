@@ -85,6 +85,7 @@ pub struct WalletState {
     pub keystore: Option<std::sync::Arc<Keystore>>,
     pub selected_wallet: Option<String>,
     pub creating_wallet: Option<CreateWalletState>,
+    pub dkg_in_progress: bool,
 }
 
 // Manual Debug implementation for WalletState
@@ -97,6 +98,7 @@ impl std::fmt::Debug for WalletState {
             .field("keystore", &self.keystore.is_some())  // Just show if present
             .field("selected_wallet", &self.selected_wallet)
             .field("creating_wallet", &self.creating_wallet)
+            .field("dkg_in_progress", &self.dkg_in_progress)
             .finish()
     }
 }
@@ -110,6 +112,7 @@ pub struct NetworkState {
     pub connection_status: ConnectionStatus,
     pub last_ping: Option<DateTime<Utc>>,
     pub reconnect_attempts: u32,
+    pub participant_webrtc_status: std::collections::HashMap<String, (bool, bool)>, // (webrtc_connected, data_channel_open)
 }
 
 impl Default for NetworkState {
@@ -121,6 +124,7 @@ impl Default for NetworkState {
             connection_status: ConnectionStatus::Disconnected,
             last_ping: None,
             reconnect_attempts: 0,
+            participant_webrtc_status: std::collections::HashMap::new(),
         }
     }
 }

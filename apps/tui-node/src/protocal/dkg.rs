@@ -17,6 +17,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use serde::{Serialize, Deserialize};
 use base64;
+use tracing::{info, error, warn};
 
 /// DKG execution mode for different coordination scenarios
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -38,21 +39,75 @@ impl Default for DkgMode {
 
 // Removed insecure derive_group_key function - now using real FROST DKG output
 
+/// Dynamic DKG handler that uses the correct curve based on session configuration
+pub async fn handle_trigger_dkg_round1_dynamic(
+    state_secp256k1: Option<Arc<Mutex<AppState<frost_secp256k1::Secp256K1Sha256>>>>,
+    state_ed25519: Option<Arc<Mutex<AppState<frost_ed25519::Ed25519Sha512>>>>,
+    self_device_id: String,
+    curve_type: crate::elm::model::CurveType,
+) {
+    info!("🎯 Starting dynamic DKG with curve: {:?}", curve_type);
+
+    match curve_type {
+        crate::elm::model::CurveType::Secp256k1 => {
+            if let Some(state) = state_secp256k1 {
+                info!("📈 Using Secp256k1 curve for DKG");
+                let internal_tx = {
+                    let guard = state.lock().await;
+                    guard.websocket_internal_cmd_tx.clone()
+                }.unwrap_or_else(|| {
+                    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+                    tx
+                });
+
+                handle_trigger_dkg_round1(state, self_device_id, internal_tx).await;
+            } else {
+                error!("❌ Secp256k1 state not available!");
+            }
+        }
+        crate::elm::model::CurveType::Ed25519 => {
+            if let Some(state) = state_ed25519 {
+                info!("🔑 Using Ed25519 curve for DKG");
+                let internal_tx = {
+                    let guard = state.lock().await;
+                    guard.websocket_internal_cmd_tx.clone()
+                }.unwrap_or_else(|| {
+                    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+                    tx
+                });
+
+                handle_trigger_dkg_round1(state, self_device_id, internal_tx).await;
+            } else {
+                error!("❌ Ed25519 state not available!");
+            }
+        }
+    }
+}
+
 /// Start DKG Round 1 - Real FROST implementation
 pub async fn handle_trigger_dkg_round1<C>(
-    state: Arc<Mutex<AppState<C>>>, 
+    state: Arc<Mutex<AppState<C>>>,
     self_device_id: String,
     _internal_cmd_tx: tokio::sync::mpsc::UnboundedSender<crate::utils::state::InternalCommand<C>>
-) 
+)
 where
     C: Ciphersuite + Send + Sync + 'static,
 {
+    info!("🎯🎯🎯 handle_trigger_dkg_round1 CALLED! Device: {}", self_device_id);
+    info!("📊 About to acquire state lock...");
+
     let mut guard = state.lock().await;
-    
+    info!("✅ State lock acquired");
+
     // Check if we have a session
     let session = match &guard.session {
-        Some(s) => s.clone(),
+        Some(s) => {
+            info!("✅ Session found: {} participants, threshold {}/{}",
+                s.participants.len(), s.threshold, s.total);
+            s.clone()
+        },
         None => {
+            error!("❌ No session available for DKG!");
             guard.dkg_state = DkgState::Failed("No session available".to_string());
             return;
         }
@@ -102,10 +157,67 @@ where
     let participants = session.participants.clone();
     drop(guard);
     
+    // Wait longer to ensure data channels are fully established
+    tokio::time::sleep(tokio::time::Duration::from_millis(2000)).await; // Increased from 500ms to 2s
+    info!("📡 Broadcasting DKG Round 1 packages to {} participants", participants.len() - 1);
+    
+    // Verify data channels are ready before broadcasting
+    let participants_to_check: Vec<String> = participants.iter()
+        .filter(|&p| *p != self_device_id)
+        .cloned()
+        .collect();
+    
+    let mut all_ready = false;
+    for attempt in 1..=10 {
+        let state_guard = state.lock().await;
+        let ready_count = participants_to_check.iter().filter(|&device_id| {
+            state_guard.data_channels.get(device_id)
+                .map(|dc| dc.ready_state() == webrtc::data_channel::data_channel_state::RTCDataChannelState::Open)
+                .unwrap_or(false)
+        }).count();
+        
+        if ready_count == participants_to_check.len() {
+            all_ready = true;
+            info!("✅ All {} data channels verified ready for DKG broadcast", ready_count);
+            drop(state_guard);
+            break;
+        } else {
+            drop(state_guard);
+            info!("⏳ Data channels readiness: {}/{} (attempt {}/10)", 
+                         ready_count, participants_to_check.len(), attempt);
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+        }
+    }
+    
+    if !all_ready {
+        warn!("⚠️ Not all data channels ready, proceeding with DKG anyway");
+    }
+    
     for device_id in participants {
         if device_id != self_device_id {
-            if let Err(_e) = crate::utils::device::send_webrtc_message(&device_id, &message, state.clone()).await {
-                tracing::warn!("Failed to send DKG Round 1 package to {}: {:?}", device_id, _e);
+            // Enhanced retry logic for sending DKG packages with longer timeout
+            let mut retry_count = 0;
+            const MAX_RETRIES: u32 = 10; // Increased from 3 to 10
+            const RETRY_DELAY_MS: u64 = 500; // Reduced from 1000ms to 500ms for more frequent retries
+            
+            while retry_count < MAX_RETRIES {
+                match crate::utils::device::send_webrtc_message(&device_id, &message, state.clone()).await {
+                    Ok(()) => {
+                        info!("✅ Successfully sent DKG Round 1 package to {}", device_id);
+                        break;
+                    }
+                    Err(e) if (e.contains("Data channel not found") || e.contains("Data channel for") || e.contains("is not open")) && retry_count < MAX_RETRIES - 1 => {
+                        retry_count += 1;
+                        info!("⏳ Data channel not ready for {}, retrying in {}ms (attempt {}/{})", 
+                                     device_id, RETRY_DELAY_MS, retry_count, MAX_RETRIES);
+                        tokio::time::sleep(tokio::time::Duration::from_millis(RETRY_DELAY_MS)).await;
+                    }
+                    Err(e) => {
+                        warn!("❌ Failed to send DKG Round 1 package to {} after {} attempts: {}", 
+                                     device_id, retry_count + 1, e);
+                        break;
+                    }
+                }
             }
         }
     }
@@ -140,7 +252,7 @@ where
     let round1_package = match frost_core::keys::dkg::round1::Package::<C>::deserialize(&package_bytes) {
         Ok(pkg) => pkg,
         Err(e) => {
-            tracing::error!("Failed to deserialize DKG Round 1 package: {}", e);
+            error!("Failed to deserialize DKG Round 1 package: {}", e);
             return;
         }
     };
@@ -152,12 +264,12 @@ where
     let required_count = session.total as usize;
     let received_count = guard.dkg_round1_packages.len();
     
-    tracing::info!("DKG Round 1: received {}/{} packages total", received_count, required_count);
+    info!("DKG Round 1: received {}/{} packages total", received_count, required_count);
     
     if received_count >= required_count {
         // Move to Round 2
         guard.dkg_state = DkgState::Round1Complete;
-        tracing::info!("All DKG Round 1 packages received, triggering Round 2");
+        info!("All DKG Round 1 packages received, triggering Round 2");
         
         // Trigger Round 2 immediately
         let self_device_id = guard.device_id.clone();
@@ -257,11 +369,11 @@ where
                 };
                 
                 if let Err(_e) = crate::utils::device::send_webrtc_message(receiver_device_id, &message, state.clone()).await {
-                    tracing::warn!("Failed to send DKG Round 2 package to {}: {:?}", receiver_device_id, _e);
+                    warn!("Failed to send DKG Round 2 package to {}: {:?}", receiver_device_id, _e);
                 }
             }
         } else {
-            tracing::warn!("Could not find device_id for identifier {:?}", receiver_id);
+            warn!("Could not find device_id for identifier {:?}", receiver_id);
         }
     }
 }
@@ -301,7 +413,7 @@ where
     let round2_package = match frost_core::keys::dkg::round2::Package::<C>::deserialize(&package_bytes) {
         Ok(pkg) => pkg,
         Err(e) => {
-            tracing::error!("Failed to deserialize DKG Round 2 package: {}", e);
+            error!("Failed to deserialize DKG Round 2 package: {}", e);
             return;
         }
     };
@@ -318,7 +430,7 @@ where
     let expected_senders = session.total as usize - 1; // All participants except ourselves
     let received_count = guard.dkg_round2_packages.len();
     
-    tracing::info!("DKG Round 2: received {}/{} packages from other participants", received_count, expected_senders);
+    info!("DKG Round 2: received {}/{} packages from other participants", received_count, expected_senders);
     
     if received_count >= expected_senders {
         // Now run FROST part3 to complete DKG
@@ -376,10 +488,10 @@ where
         guard.current_wallet_id = Some(wallet_id.clone());
         
         // Log the real group public key
-        tracing::info!("🎉 DKG completed successfully!");
-        tracing::info!("Group Verifying Key: {:?}", verifying_key);
-        tracing::info!("Key Package Identifier: {:?}", key_package.identifier());
-        tracing::info!("Min signers: {:?}", key_package.min_signers());
+        info!("🎉 DKG completed successfully!");
+        info!("Group Verifying Key: {:?}", verifying_key);
+        info!("Key Package Identifier: {:?}", key_package.identifier());
+        info!("Min signers: {:?}", key_package.min_signers());
         
         // Now we can use the real verifying key to generate addresses
         // First serialize the verifying key properly
@@ -403,7 +515,7 @@ where
             match generate_address_for_chain(&group_public_key_bytes, &curve_type, chain_id) {
                 Ok(address) => {
                     generated_addresses.push(format!("{}: {}", chain_id, address));
-                    tracing::info!("Generated {} address: {}", chain_id, address);
+                    info!("Generated {} address: {}", chain_id, address);
                     
                     // Create BlockchainInfo for UI display
                     // Map chain_id to proper chain ID for EVM chains
@@ -439,7 +551,7 @@ where
                     blockchain_addresses.push(blockchain_info);
                 }
                 Err(e) => {
-                    tracing::warn!("Could not generate {} address: {}", chain_id, e);
+                    warn!("Could not generate {} address: {}", chain_id, e);
                 }
             }
         }
@@ -457,12 +569,12 @@ where
         
         // Log successful DKG completion with real FROST key
         let display_address = guard.etherum_public_key.as_deref().unwrap_or("no address");
-        tracing::info!("🎉 DKG completed successfully with REAL FROST!");
-        tracing::info!("Wallet ID: {}, Primary Address: {}", wallet_id, display_address);
-        tracing::info!("DKG State set to: {:?}", guard.dkg_state);
-        tracing::info!("Generated {} blockchain addresses", guard.blockchain_addresses.len());
+        info!("🎉 DKG completed successfully with REAL FROST!");
+        info!("Wallet ID: {}, Primary Address: {}", wallet_id, display_address);
+        info!("DKG State set to: {:?}", guard.dkg_state);
+        info!("Generated {} blockchain addresses", guard.blockchain_addresses.len());
         for blockchain_info in &guard.blockchain_addresses {
-            tracing::info!("  - {}: {}", blockchain_info.blockchain, blockchain_info.address);
+            info!("  - {}: {}", blockchain_info.blockchain, blockchain_info.address);
         }
     }
 }
@@ -481,7 +593,7 @@ where
     // Simple finalization
     guard.dkg_state = DkgState::Complete;
     
-    tracing::info!("DKG finalization completed for device: {}", guard.device_id);
+    info!("DKG finalization completed for device: {}", guard.device_id);
 }
 
 /// Finalize DKG - alias for compatibility

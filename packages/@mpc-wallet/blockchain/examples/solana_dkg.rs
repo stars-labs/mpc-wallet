@@ -12,8 +12,9 @@ use hex;
 use serde::{Deserialize, Serialize};
 use solana_client::rpc_client::RpcClient;
 use solana_sdk::{
-    commitment_config::CommitmentConfig, message::Message, pubkey::Pubkey, signature::Signature,
-    system_instruction::transfer, transaction::Transaction,
+    instruction::{AccountMeta, Instruction},
+    message::Message, pubkey::Pubkey, signature::Signature,
+    transaction::Transaction,
 };
 use std::collections::BTreeMap;
 use std::convert::TryInto;
@@ -26,6 +27,7 @@ use std::str::FromStr;
 use std::thread;
 use std::time::Duration;
 use std::time::Instant;
+use std::collections::HashSet;
 
 /// Solana DKG Example CLI
 #[derive(Parser, Debug)]
@@ -43,9 +45,30 @@ struct CliArgs {
     /// Is this node the initiator?
     #[arg(long, default_value_t = false)]
     is_initiator: bool,
+    /// Wait for all nodes to join before proceeding (default: true)
+    #[arg(long, default_value_t = true)]
+    wait_for_all: bool,
 }
 
-// --- DKG Message Types ---
+// --- New Message Types for Discovery ---
+#[derive(Serialize, Deserialize, Clone, Debug)]
+struct PingMessage {
+    sender_index: u16,
+    timestamp: u64,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+struct PongMessage {
+    sender_index: u16,
+    responding_to: u16,
+    timestamp: u64,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+struct ReadyMessage {
+    sender_index: u16,
+    ready_nodes: Vec<u16>,
+}
 #[derive(Serialize, Deserialize, Clone, Debug)] // Add Debug
 struct Round1Message {
     participant_index: u16,
@@ -58,7 +81,7 @@ struct Round2Message {
     package: round2::Package<Ed25519Sha512>,
 }
 
-// --- Signing Message Types ---
+// --- DKG Message Types ---
 #[derive(Serialize, Deserialize, Clone, Debug)] // Add Debug
 struct TxMessage {
     message_bytes: Vec<u8>,
@@ -76,7 +99,7 @@ struct ShareMessage {
     share: frost_round2::SignatureShare<Ed25519Sha512>,
 }
 
-// --- New Message Type for Aggregated Signature ---
+// --- Signing Message Types ---
 #[derive(Serialize, Deserialize, Clone, Debug)] // Add Debug
 struct AggregatedSignatureMessage {
     signature_bytes: Vec<u8>,
@@ -91,62 +114,171 @@ struct SignerSelectionMessage {
 // --- Generic Message Wrapper ---
 #[derive(Serialize, Deserialize, Clone, Debug)] // Add Debug
 enum MessageWrapper {
+    // Discovery messages
+    Ping(PingMessage),
+    Pong(PongMessage),
+    Ready(ReadyMessage),
+    // DKG messages
     DkgRound1(Round1Message),
     DkgRound2(Round2Message),
+    // Signing messages
     SignTx(TxMessage),
     SignCommitment(CommitmentMessage),
     SignShare(ShareMessage),
     SignAggregated(AggregatedSignatureMessage),
-    SignerSelection(SignerSelectionMessage), // New variant
+    SignerSelection(SignerSelectionMessage),
 }
 
 // Remove parse_args function
 // fn parse_args() -> (u16, u16, u16, bool) { ... }
 
-// Simple send/recv helpers for TCP
+// Simple send/recv helpers for TCP with better error handling
 fn send_to(addr: &str, msg: &MessageWrapper) -> bool {
     let data = encode_to_vec(msg, bincode::config::standard()).unwrap();
-    let max_retries = 5;
-
-    for attempt in 0..=max_retries {
-        match TcpStream::connect(addr) {
-            Ok(mut stream) => match stream.write_all(&data) {
-                Ok(_) => {
-                    println!("Successfully sent message to {}", addr);
-                    return true;
-                }
-                Err(e) => {
-                    eprintln!("Failed to write to {} (attempt {}): {}", addr, attempt, e);
-                    if attempt < max_retries {
-                        thread::sleep(Duration::from_millis(200 * (attempt as u64 + 1)));
-                        continue;
-                    }
-                }
-            },
-            Err(e) => {
-                eprintln!("Failed to connect to {} (attempt {}): {}", addr, attempt, e);
-                if attempt < max_retries {
-                    thread::sleep(Duration::from_millis(200 * (attempt as u64 + 1)));
-                    continue;
-                }
+    match TcpStream::connect(addr) {
+        Ok(mut stream) => match stream.write_all(&data) {
+            Ok(_) => {
+                println!("Successfully sent message to {}", addr);
+                true
             }
+            Err(e) => {
+                // Only print error for non-connection issues
+                eprintln!("Failed to write to {}: {}", addr, e);
+                false
+            }
+        },
+        Err(_) => {
+            // Connection refused is expected when nodes aren't ready - don't spam logs
+            false
         }
     }
+}
 
-    eprintln!("Failed to send to {} after {} attempts", addr, max_retries);
+// Try to send with retries but less aggressive
+fn send_to_with_retries(addr: &str, msg: &MessageWrapper, max_retries: u32) -> bool {
+    for attempt in 0..=max_retries {
+        if send_to(addr, msg) {
+            return true;
+        }
+        if attempt < max_retries {
+            thread::sleep(Duration::from_millis(100 * (attempt as u64 + 1)));
+        }
+    }
     false
 }
 
-// Broadcast to all devices except self
-fn broadcast(index: u16, total: u16, msg: &MessageWrapper) {
-    println!("Node {} broadcasting message...", index);
+// Mesh discovery: Wait for all nodes to join the cluster
+fn discover_all_peers(index: u16, total: u16) -> HashSet<u16> {
+    let mut discovered = HashSet::new();
+    discovered.insert(index); // Always include self
+    
+    println!("Node {} starting peer discovery, waiting for all {} nodes...", index, total);
+    
+    // Set up listener for discovery messages
+    let listener = match TcpListener::bind(format!("127.0.0.1:1000{}", index)) {
+        Ok(l) => {
+            println!("Node {} listening on 127.0.0.1:1000{}", index, index);
+            l
+        }
+        Err(e) => {
+            eprintln!("Failed to bind listener: {}", e);
+            return discovered;
+        }
+    };
+    
+    // Make listener non-blocking for discovery phase
+    if let Err(e) = listener.set_nonblocking(true) {
+        eprintln!("Failed to set non-blocking: {}", e);
+        return discovered;
+    }
+    
+    let mut last_ping_time = Instant::now();
+    let ping_interval = Duration::from_secs(2);
+    
+    // Continue until we've discovered all nodes
+    while discovered.len() < total as usize {
+        // Send pings periodically
+        if last_ping_time.elapsed() >= ping_interval {
+            let ping_msg = PingMessage {
+                sender_index: index,
+                timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs(),
+            };
+            let wrapped_msg = MessageWrapper::Ping(ping_msg);
+            
+            // Try to ping all other nodes
+            for target_idx in 1..=total {
+                if target_idx != index && !discovered.contains(&target_idx) {
+                    let target_addr = format!("127.0.0.1:1000{}", target_idx);
+                    send_to(&target_addr, &wrapped_msg);
+                }
+            }
+            last_ping_time = Instant::now();
+            
+            if discovered.len() == total as usize {
+                println!("Node {} discovered all {} nodes: {:?}", index, total, discovered);
+            } else {
+                println!("Node {} discovered {}/{} nodes: {:?}", 
+                        index, discovered.len(), total, discovered);
+            }
+        }
+        
+        // Listen for incoming messages
+        match listener.accept() {
+            Ok((mut stream, _addr)) => {
+                let mut buf = Vec::new();
+                if stream.read_to_end(&mut buf).is_ok() && !buf.is_empty() {
+                    if let Ok((msg, _)) = decode_from_slice(&buf, bincode::config::standard()) {
+                        match msg {
+                            MessageWrapper::Ping(ping) => {
+                                discovered.insert(ping.sender_index);
+                                // Send pong back
+                                let pong_msg = PongMessage {
+                                    sender_index: index,
+                                    responding_to: ping.sender_index,
+                                    timestamp: ping.timestamp,
+                                };
+                                let wrapped_msg = MessageWrapper::Pong(pong_msg);
+                                let target_addr = format!("127.0.0.1:1000{}", ping.sender_index);
+                                send_to(&target_addr, &wrapped_msg);
+                            }
+                            MessageWrapper::Pong(pong) => {
+                                if pong.responding_to == index {
+                                    discovered.insert(pong.sender_index);
+                                }
+                            }
+                            _ => {} // Ignore other message types during discovery
+                        }
+                    }
+                }
+            }
+            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                // No incoming connection, continue
+                thread::sleep(Duration::from_millis(50));
+            }
+            Err(_) => {
+                // Other errors, continue
+                thread::sleep(Duration::from_millis(50));
+            }
+        }
+    }
+    
+    println!("Node {} discovery complete! Found all {} nodes: {:?}", index, total, discovered);
+    discovered
+}
+
+// Broadcast to discovered peers only
+fn broadcast_to_peers(index: u16, peers: &HashSet<u16>, msg: &MessageWrapper) {
+    println!("Node {} broadcasting message to {} peers...", index, peers.len() - 1);
     let mut success_count = 0;
-    for device_idx in 1..=total {
-        if device_idx == index {
+    for &peer_idx in peers {
+        if peer_idx == index {
             continue;
         }
-        let device_addr = format!("127.0.0.1:1000{}", device_idx);
-        if send_to(&device_addr, msg) {
+        let peer_addr = format!("127.0.0.1:1000{}", peer_idx);
+        if send_to_with_retries(&peer_addr, msg, 3) {
             success_count += 1;
         }
     }
@@ -154,7 +286,7 @@ fn broadcast(index: u16, total: u16, msg: &MessageWrapper) {
         "Node {} broadcast completed: {}/{} successful",
         index,
         success_count,
-        total - 1
+        peers.len() - 1
     );
 }
 
@@ -206,6 +338,15 @@ fn receive_messages<T>(
 
                                 // Debug message type
                                 match &wrapped_msg {
+                                    MessageWrapper::Ping(_) => {
+                                        println!("Received Ping message from {}", addr)
+                                    }
+                                    MessageWrapper::Pong(_) => {
+                                        println!("Received Pong message from {}", addr)
+                                    }
+                                    MessageWrapper::Ready(_) => {
+                                        println!("Received Ready message from {}", addr)
+                                    }
                                     MessageWrapper::DkgRound1(_) => {
                                         println!("Received DkgRound1 message from {}", addr)
                                     }
@@ -293,6 +434,15 @@ fn receive_messages<T>(
 
                     // Debug message type
                     match &wrapped_msg {
+                        MessageWrapper::Ping(_) => {
+                            println!("Received Ping message from {}", addr)
+                        }
+                        MessageWrapper::Pong(_) => {
+                            println!("Received Pong message from {}", addr)
+                        }
+                        MessageWrapper::Ready(_) => {
+                            println!("Received Ready message from {}", addr)
+                        }
                         MessageWrapper::DkgRound1(_) => {
                             println!("Received DkgRound1 message from {}", addr)
                         }
@@ -341,12 +491,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     let is_initiator = args.is_initiator;
 
     // Create initial context
-    let mut context = NodeContext::new(index, total, threshold, is_initiator)?;
+    let mut context = NodeContext::new(index, total, threshold, is_initiator, args.wait_for_all)?;
 
     // Main state machine loop
     loop {
         match context.state {
             NodeState::Initial => handle_initial_state(&mut context)?,
+            NodeState::Discovery => handle_discovery_state(&mut context)?,
             NodeState::DkgProcess => handle_dkg_process(&mut context)?,
             NodeState::Idle => {
                 if is_initiator {
@@ -391,6 +542,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 #[derive(Debug, Clone, PartialEq)]
 enum NodeState {
     Initial,
+    Discovery,
     DkgProcess,
     Idle,
     TransactionComposition,
@@ -408,8 +560,10 @@ struct NodeContext {
     total: u16,
     threshold: u16,
     is_initiator: bool,
+    wait_for_all: bool,
     state: NodeState,
     my_identifier: Identifier,
+    discovered_peers: HashSet<u16>,
     key_package: Option<KeyPackage<Ed25519Sha512>>,
     pubkey_package: Option<PublicKeyPackage<Ed25519Sha512>>,
     solana_pubkey: Option<Pubkey>,
@@ -443,6 +597,7 @@ impl NodeContext {
         total: u16,
         threshold: u16,
         is_initiator: bool,
+        wait_for_all: bool,
     ) -> Result<Self, Box<dyn Error>> {
         let my_identifier = Identifier::try_from(index).expect("Invalid identifier");
 
@@ -451,8 +606,10 @@ impl NodeContext {
             total,
             threshold,
             is_initiator,
+            wait_for_all,
             state: NodeState::Initial,
             my_identifier,
+            discovered_peers: HashSet::new(),
             key_package: None,
             pubkey_package: None,
             solana_pubkey: None,
@@ -574,10 +731,32 @@ fn handle_initial_state(context: &mut NodeContext) -> Result<(), Box<dyn Error>>
         // Transition to idle state
         context.state = NodeState::Idle;
     } else {
-        println!("Node {} no keys found, starting DKG process", context.index);
-        context.state = NodeState::DkgProcess;
+        println!("Node {} no keys found, starting discovery process", context.index);
+        context.state = NodeState::Discovery;
     }
 
+    Ok(())
+}
+
+// Handle peer discovery state
+fn handle_discovery_state(context: &mut NodeContext) -> Result<(), Box<dyn Error>> {
+    println!("Node {} in DISCOVERY state", context.index);
+    
+    if context.wait_for_all {
+        // Wait for all nodes to join
+        context.discovered_peers = discover_all_peers(context.index, context.total);
+        println!("Node {} discovered all {} peers: {:?}", 
+                context.index, context.total, context.discovered_peers);
+        
+        // Proceed to DKG with all nodes
+        context.state = NodeState::DkgProcess;
+    } else {
+        // Use threshold-based discovery (original behavior)
+        // This could be implemented as a fallback option
+        println!("Node {} using threshold-based discovery (not implemented in this version)", context.index);
+        context.state = NodeState::DkgProcess;
+    }
+    
     Ok(())
 }
 
@@ -585,12 +764,14 @@ fn handle_initial_state(context: &mut NodeContext) -> Result<(), Box<dyn Error>>
 fn handle_dkg_process(context: &mut NodeContext) -> Result<(), Box<dyn Error>> {
     println!("Node {} in DKG_PROCESS state", context.index);
 
-    // Set up network listener
-    context.setup_listener()?;
+    // Set up network listener (reuse existing if available)
+    if context.listener.is_none() {
+        context.setup_listener()?;
+    }
 
-    // Give other nodes time to start up
+    // Brief wait to ensure all discovered nodes are ready for DKG
     println!(
-        "Node {} waiting briefly for all nodes to start...",
+        "Node {} waiting briefly for DKG coordination...",
         context.index
     );
     thread::sleep(Duration::from_secs(2));
@@ -609,27 +790,28 @@ fn handle_dkg_process(context: &mut NodeContext) -> Result<(), Box<dyn Error>> {
     context.round1_secret_package = Some(round1_secret_package);
     context.round1_package = Some(round1_package.clone());
 
-    // Broadcast round 1 package
+    // Broadcast round 1 package to discovered peers only
     let round1_message = Round1Message {
         participant_index: context.index,
         package: round1_package,
     };
     let wrapped_msg = MessageWrapper::DkgRound1(round1_message);
-    broadcast(context.index, context.total, &wrapped_msg);
+    broadcast_to_peers(context.index, &context.discovered_peers, &wrapped_msg);
 
-    // Receive Round 1 packages from other participants
+    // Receive Round 1 packages from discovered peers only
     println!("Node {} receiving Round 1 packages...", context.index);
+    let expected_round1_count = context.discovered_peers.len() - 1; // Exclude self
     let received_messages = receive_messages(
         context.listener.as_ref().unwrap(),
-        (context.total - 1) as usize,
-        None, // No timeout for DKG
+        expected_round1_count,
+        Some(Duration::from_secs(30)), // Add timeout for robustness
         |msg| match msg {
             MessageWrapper::DkgRound1(m) => Some(m),
             _ => None,
         },
     )?;
 
-    // Process received packages
+    // Process received packages - only from discovered peers
     let mut received_round1_packages = BTreeMap::new();
     // IMPORTANT: Include our own package in the map
     received_round1_packages.insert(
@@ -639,11 +821,19 @@ fn handle_dkg_process(context: &mut NodeContext) -> Result<(), Box<dyn Error>> {
 
     for msg in received_messages {
         let participant_id = Identifier::try_from(msg.participant_index)?;
-        received_round1_packages.insert(participant_id, msg.package);
-        println!(
-            "Node {} received R1 package from {}",
-            context.index, msg.participant_index
-        );
+        // Only accept packages from discovered peers
+        if context.discovered_peers.contains(&msg.participant_index) {
+            received_round1_packages.insert(participant_id, msg.package);
+            println!(
+                "Node {} received R1 package from {}",
+                context.index, msg.participant_index
+            );
+        } else {
+            println!(
+                "Node {} ignoring R1 package from undiscovered peer {}",
+                context.index, msg.participant_index
+            );
+        }
     }
 
     context.received_round1_packages = Some(received_round1_packages.clone());
@@ -671,39 +861,44 @@ fn handle_dkg_process(context: &mut NodeContext) -> Result<(), Box<dyn Error>> {
 
     context.round2_secret_package = Some(round2_secret_package);
 
-    // Send Round 2 packages to each participant
+    // Send Round 2 packages to each discovered participant
     println!("Node {} sending Round 2 packages...", context.index);
     for (receiver_id, package) in &round2_packages {
         if received_round1_packages_from_others.contains_key(receiver_id) {
             let id_bytes = receiver_id.serialize();
             let receiver_idx = u16::from_le_bytes(id_bytes[0..2].try_into()?);
-            let round2_message = Round2Message {
-                participant_index: context.index,
-                package: package.clone(),
-            };
-            let wrapped_msg = MessageWrapper::DkgRound2(round2_message);
-            let device_addr = format!("127.0.0.1:1000{}", receiver_idx);
-            send_to(&device_addr, &wrapped_msg);
+            // Only send to discovered peers
+            if context.discovered_peers.contains(&receiver_idx) {
+                let round2_message = Round2Message {
+                    participant_index: context.index,
+                    package: package.clone(),
+                };
+                let wrapped_msg = MessageWrapper::DkgRound2(round2_message);
+                let device_addr = format!("127.0.0.1:1000{}", receiver_idx);
+                send_to_with_retries(&device_addr, &wrapped_msg, 3);
+            }
         }
     }
 
     // Receive Round 2 packages
     println!("Node {} receiving Round 2 packages...", context.index);
+    let expected_round2_count = context.discovered_peers.len() - 1; // Exclude self
     let received_r2_messages = receive_messages(
         context.listener.as_ref().unwrap(),
-        (context.total - 1) as usize,
-        None, // No timeout for DKG
+        expected_round2_count,
+        Some(Duration::from_secs(30)), // Add timeout
         |msg| match msg {
             MessageWrapper::DkgRound2(m) => Some(m),
             _ => None,
         },
     )?;
 
-    // Process received Round 2 packages
+    // Process received Round 2 packages - only from discovered peers
     let mut received_round2_packages = BTreeMap::new();
     for msg in received_r2_messages {
         let sender_id = Identifier::try_from(msg.participant_index)?;
-        if received_round1_packages_from_others.contains_key(&sender_id) {
+        if received_round1_packages_from_others.contains_key(&sender_id) && 
+           context.discovered_peers.contains(&msg.participant_index) {
             received_round2_packages.insert(sender_id, msg.package);
             println!(
                 "Node {} received R2 package from {}",
@@ -859,16 +1054,26 @@ fn handle_transaction_composition(context: &mut NodeContext) -> Result<(), Box<d
 
     // Create transaction
     let rpc_url = "https://api.testnet.solana.com";
-    let rpc_client =
-        RpcClient::new_with_commitment(rpc_url.to_string(), CommitmentConfig::confirmed());
+    let rpc_client = RpcClient::new(rpc_url.to_string());
     let recent_blockhash = rpc_client.get_latest_blockhash()?;
 
+    // Create a transfer instruction manually  
+    let system_program_id = Pubkey::default(); // System program ID is all zeros
+    let transfer_instruction = Instruction {
+        program_id: system_program_id,
+        accounts: vec![
+            AccountMeta::new(context.solana_pubkey.unwrap(), true),
+            AccountMeta::new(target_address, false),
+        ],
+        data: {
+            let mut data = vec![2, 0, 0, 0]; // Transfer instruction discriminator
+            data.extend_from_slice(&amount.to_le_bytes()); // Amount as little-endian bytes
+            data
+        },
+    };
+    
     let message = Message::new(
-        &[transfer(
-            &context.solana_pubkey.unwrap(),
-            &target_address,
-            amount,
-        )],
+        &[transfer_instruction],
         Some(&context.solana_pubkey.unwrap()),
     );
     let mut tx = Transaction::new_unsigned(message);
@@ -885,7 +1090,7 @@ fn handle_transaction_composition(context: &mut NodeContext) -> Result<(), Box<d
         message_bytes: message_bytes,
     };
     let wrapped_msg = MessageWrapper::SignTx(tx_message);
-    broadcast(context.index, context.total, &wrapped_msg);
+    broadcast_to_peers(context.index, &context.discovered_peers, &wrapped_msg);
 
     // Transition to next state
     context.state = NodeState::SigningCommitment;
@@ -912,14 +1117,15 @@ fn handle_signing_commitment(context: &mut NodeContext) -> Result<(), Box<dyn Er
         commitment: commitment,
     };
     let wrapped_msg = MessageWrapper::SignCommitment(commitment_message);
-    broadcast(context.index, context.total, &wrapped_msg);
+    broadcast_to_peers(context.index, &context.discovered_peers, &wrapped_msg);
 
     // Receive commitments from others (with timeout)
     println!("Node {} receiving commitments...", context.index);
     let timeout = Duration::from_secs(30); // 30 seconds timeout
+    let expected_commit_count = context.discovered_peers.len() - 1; // Exclude self
     let received_commit_msgs = receive_messages(
         context.listener.as_ref().unwrap(),
-        (context.total - 1) as usize,
+        expected_commit_count,
         Some(timeout),
         |msg| match msg {
             MessageWrapper::SignCommitment(m) => Some(m),
@@ -1097,7 +1303,7 @@ fn handle_signer_selection(context: &mut NodeContext) -> Result<(), Box<dyn Erro
         selected_identifiers: selected_ids,
     };
     let wrapped_msg = MessageWrapper::SignerSelection(selection_msg);
-    broadcast(context.index, context.total, &wrapped_msg);
+    broadcast_to_peers(context.index, &context.discovered_peers, &wrapped_msg);
 
     // Transition to next state
     context.state = NodeState::SignatureGeneration { selected: true };
@@ -1278,7 +1484,7 @@ fn handle_signature_aggregation(context: &mut NodeContext) -> Result<(), Box<dyn
         signature_bytes: signature_bytes,
     };
     let wrapped_msg = MessageWrapper::SignAggregated(agg_sig_msg);
-    broadcast(context.index, context.total, &wrapped_msg);
+    broadcast_to_peers(context.index, &context.discovered_peers, &wrapped_msg);
 
     // Transition to next state
     context.state = NodeState::TransactionSubmission;
@@ -1305,10 +1511,7 @@ fn handle_transaction_submission(context: &mut NodeContext) -> Result<(), Box<dy
     println!("Transaction details: {:?}", final_tx);
     println!("Attempting to submit transaction...");
 
-    let rpc_client = RpcClient::new_with_commitment(
-        "https://api.testnet.solana.com".to_string(),
-        CommitmentConfig::confirmed(),
-    );
+    let rpc_client = RpcClient::new("https://api.testnet.solana.com".to_string());
 
     match rpc_client.send_and_confirm_transaction_with_spinner(&final_tx) {
         Ok(sig) => {
