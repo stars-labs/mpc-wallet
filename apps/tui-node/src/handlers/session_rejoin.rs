@@ -365,5 +365,6 @@ pub async fn handle_process_session_response_with_rejoin<C: Ciphersuite + Send +
         participants,
         device_connections_arc,
         app_state.clone(),
+        None,  // No UI message sender available here
     ).await;
 }

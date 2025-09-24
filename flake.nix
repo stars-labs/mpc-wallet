@@ -25,59 +25,111 @@
           lib,
           ...
         }:
+        let
+          # Common dependencies for all platforms
+          commonBuildInputs = with pkgs; [
+            nixfmt-rfc-style
+            nixd
+            bun
+            pkg-config
+            rustc
+            cargo
+            #rust-analyzer
+            clippy
+            openssl
+            rustfmt
+            wasm-pack
+            wasm-bindgen-cli
+            clang
+            lld
+            worker-build
+            fontconfig
+            freetype
+          ];
+
+          # Linux-specific dependencies (includes Wayland)
+          linuxBuildInputs = with pkgs; [
+            # Wayland dependencies for native node GUI
+            wayland
+            libxkbcommon
+            wayland-protocols
+
+            # Graphics libraries
+            libGL
+            vulkan-loader
+            mesa
+
+            # X11 fallback dependencies
+            xorg.libX11
+            xorg.libXcursor
+            xorg.libXrandr
+            xorg.libXi
+          ];
+
+          # macOS-specific dependencies
+          darwinBuildInputs = with pkgs; [
+            # macOS frameworks are handled by the system
+            # Add any macOS-specific packages here if needed
+            libiconv
+          ];
+
+          # Platform-specific library paths
+          linuxLibraryPath = lib.makeLibraryPath (with pkgs; [
+            wayland
+            libxkbcommon
+            vulkan-loader
+            libGL
+            xorg.libX11
+            xorg.libXcursor
+            xorg.libXrandr
+            xorg.libXi
+            fontconfig
+            freetype
+          ]);
+
+          # Determine platform-specific inputs
+          platformBuildInputs =
+            if pkgs.stdenv.isLinux then
+              linuxBuildInputs
+            else if pkgs.stdenv.isDarwin then
+              darwinBuildInputs
+            else
+              [];
+        in
         {
-          
-          devShells.default = pkgs.mkShell.override { stdenv = pkgs.clangStdenv; } {
+          devShells.default = pkgs.mkShell {
             RUST_SRC_PATH = "${pkgs.rust.packages.stable.rustPlatform.rustLibSrc}";
             RUST_BACKTRACE = 1;
-            
-            # Wayland and graphics environment variables
-            LD_LIBRARY_PATH = lib.makeLibraryPath (with pkgs; [
-              wayland
-              libxkbcommon
-              vulkan-loader
-              libGL
-              xorg.libX11
-              xorg.libXcursor
-              xorg.libXrandr
-              xorg.libXi
-              fontconfig
-              freetype
-            ]);
-            nativeBuildInputs = with pkgs; [
-              nixfmt-rfc-style
-              nixd
-              bun
-              pkg-config
-              rustc
-              cargo
-              #rust-analyzer
-              clippy
-              openssl
-              rustfmt          
-              wasm-pack      
-              wasm-bindgen-cli
-              clang
-              lld
-              
-              # Wayland dependencies for native node GUI
-              wayland
-              libxkbcommon
-              wayland-protocols
-              libGL
-              
-              # X11 fallback dependencies
-              xorg.libX11
-              xorg.libXcursor
-              xorg.libXrandr
-              xorg.libXi
-              worker-build             
-              # Additional graphics dependencies
-              vulkan-loader
-              mesa
-              fontconfig
-              freetype
-            ];
+
+            # Platform-specific environment variables
+            LD_LIBRARY_PATH = if pkgs.stdenv.isLinux then linuxLibraryPath else "";
+
+            # macOS-specific environment variables
+            DYLD_FALLBACK_LIBRARY_PATH = if pkgs.stdenv.isDarwin then
+              "${pkgs.libiconv}/lib"
+            else "";
+
+            nativeBuildInputs = commonBuildInputs ++ platformBuildInputs;
+
+            shellHook = ''
+              echo "🚀 MPC Wallet Development Environment"
+              echo "Platform: ${system}"
+              echo ""
+              if [[ "${system}" == *"linux"* ]]; then
+                echo "✅ Linux environment configured with Wayland support"
+              elif [[ "${system}" == *"darwin"* ]]; then
+                echo "✅ macOS environment configured"
+                echo "Note: Wayland dependencies are not available on macOS"
+                echo "The native GUI app may require adjustments to run on macOS"
+              fi
+              echo ""
+              echo "Available commands:"
+              echo "  cargo build         - Build the project"
+              echo "  cargo run           - Run the TUI application"
+              echo "  bun install         - Install JavaScript dependencies"
+              echo "  bun run build:wasm  - Build WebAssembly modules"
+              echo ""
+            '';
           };
         };
     };

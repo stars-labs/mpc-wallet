@@ -350,6 +350,7 @@ pub async fn handle_accept_session_proposal<C: Ciphersuite + Send + Sync + 'stat
                 participants,
                 device_connections_arc,
                 app_state.clone(),
+                None,  // No UI message sender available here
             ).await;
         }
     } else {
@@ -478,6 +479,7 @@ pub async fn handle_process_session_response<C: Ciphersuite + Send + Sync + 'sta
                         participants,
                         device_connections_arc,
                         app_state.clone(),
+                        None,  // No UI message sender available here
                     ).await;
                 } else {
                     let _status = state.mesh_status.clone();

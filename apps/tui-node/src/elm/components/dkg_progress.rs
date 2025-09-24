@@ -150,8 +150,9 @@ impl DKGProgressComponent {
             });
         }
 
-        // Check if all data channels are open
-        self.all_data_channels_open = self.participants.len() >= self.total_participants as usize &&
+        // Check if all data channels are open (comparing against other participants only)
+        let expected_other_participants = self.total_participants.saturating_sub(1) as usize;
+        self.all_data_channels_open = self.participants.len() >= expected_other_participants &&
             self.participants.iter().all(|p| p.data_channel_open);
     }
 
@@ -404,15 +405,18 @@ impl DKGProgressComponent {
         // Participants Count with WebRTC details
         let data_channels_open = self.participants.iter().filter(|p| p.data_channel_open).count();
         let webrtc_connected = self.participants.iter().filter(|p| p.webrtc_connected).count();
+        
+        // total_participants includes self, but we only track connections to OTHER participants
+        let other_participants = self.total_participants.saturating_sub(1);
 
         let participants_text = vec![
             Line::from(vec![
                 Span::styled("P2P Status: ", Style::default().fg(Color::Gray)),
                 Span::styled(
                     format!("WebRTC: {}/{} | Channels: {}/{} | Mesh: {}/{}",
-                            webrtc_connected, self.total_participants,
-                            data_channels_open, self.total_participants,
-                            self.mesh_ready_count, self.total_participants),
+                            webrtc_connected, other_participants,
+                            data_channels_open, other_participants,
+                            self.mesh_ready_count, other_participants),
                     Style::default().fg(if self.all_data_channels_open {
                         Color::Green
                     } else if data_channels_open > 0 {

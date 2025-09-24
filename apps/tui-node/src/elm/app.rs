@@ -326,17 +326,48 @@ where
                 // Add participants from active session if available
                 if let Some(ref session) = self.model.active_session {
                     for participant in &session.participants {
-                        dkg_progress.update_participant(
-                            participant.clone(),
-                            crate::elm::components::dkg_progress::ParticipantStatus::DataChannelOpen
-                        );
+                        // Check if we have WebRTC status for this participant
+                        if let Some(&(webrtc_connected, data_channel_open)) = 
+                            self.model.network_state.participant_webrtc_status.get(participant) {
+                            // Use the actual WebRTC status
+                            dkg_progress.update_webrtc_status(
+                                participant.clone(),
+                                webrtc_connected,
+                                data_channel_open
+                            );
+                        } else if participant == &self.model.device_id {
+                            // Self is always "connected"
+                            dkg_progress.update_participant(
+                                participant.clone(),
+                                crate::elm::components::dkg_progress::ParticipantStatus::DataChannelOpen
+                            );
+                        } else {
+                            // Default to waiting for other participants
+                            dkg_progress.update_participant(
+                                participant.clone(),
+                                crate::elm::components::dkg_progress::ParticipantStatus::Waiting
+                            );
+                        }
                     }
-                } else {
-                    // If no active session, at least add current device
-                    dkg_progress.update_participant(
-                        self.model.device_id.clone(),
-                        crate::elm::components::dkg_progress::ParticipantStatus::DataChannelOpen
-                    );
+                }
+                
+                // Calculate and update mesh status if we have an active session
+                if let Some(ref session) = self.model.active_session {
+                    // Count how many participants have data channels open (excluding self)
+                    let mesh_ready_count = session.participants.iter()
+                        .filter(|p| **p != self.model.device_id) // Exclude self
+                        .filter(|p| {
+                            self.model.network_state.participant_webrtc_status.get(*p)
+                                .map_or(false, |(_, data_channel_open)| *data_channel_open)
+                        })
+                        .count();
+                    
+                    // Check if all expected participants have data channels open
+                    let expected_other_participants = (total_participants as usize).saturating_sub(1);
+                    let all_connected = mesh_ready_count >= expected_other_participants;
+                    
+                    // Update mesh status in the component
+                    dkg_progress.update_mesh_status(mesh_ready_count, all_connected);
                 }
                 
                 // Set the selected action from the model

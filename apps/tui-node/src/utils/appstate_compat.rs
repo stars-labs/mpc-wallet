@@ -77,6 +77,8 @@ pub struct AppState<C: Ciphersuite> {
     pub websocket_internal_cmd_tx: Option<tokio::sync::mpsc::UnboundedSender<super::state::InternalCommand<C>>>,
     // Alternative: string-based channel for WebSocket messages (avoids Send issues)
     pub websocket_msg_tx: Option<tokio::sync::mpsc::UnboundedSender<String>>,
+    // ICE candidate queue for handling race conditions
+    pub ice_candidate_queue: Arc<tokio::sync::Mutex<std::collections::HashMap<String, Vec<webrtc::ice_transport::ice_candidate::RTCIceCandidateInit>>>>,
 }
 
 impl<C: Ciphersuite + Send + Sync + 'static> AppState<C> 
@@ -148,6 +150,7 @@ where
             websocket_error: None,
             websocket_internal_cmd_tx: None,
             websocket_msg_tx: None,
+            ice_candidate_queue: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
         }
     }
     
@@ -219,6 +222,7 @@ where
             websocket_error: None,
             websocket_internal_cmd_tx: None,
             websocket_msg_tx: None,
+            ice_candidate_queue: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
         }
     }
     

@@ -30,6 +30,8 @@ pub enum Command {
     SendNetworkMessage { to: String, data: Vec<u8> },
     BroadcastMessage { data: Vec<u8> },
     InitiateWebRTCConnections { participants: Vec<String> },
+    VerifyWebRTCMesh,
+    EnsureFullMesh,
     
     // Keystore operations
     InitializeKeystore { path: String, device_id: String },
@@ -584,6 +586,7 @@ impl Command {
                                                                             let app_state_for_answer = app_state_clone.clone();
                                                                             let ws_tx_clone = ws_msg_tx.clone();
                                                                             let _self_device_id = device_id.clone();
+                                                                            let tx_msg_spawn = tx_msg.clone();
 
                                                                             tokio::spawn(async move {
                                                                                 info!("🎯 Processing WebRTC offer from {}", from_device);
@@ -614,18 +617,28 @@ impl Command {
 
                                                                                                 // Set up handler for incoming data channels
                                                                                                 let from_device_dc = from_device.clone();
+                                                                                                let tx_msg_dc = tx_msg_spawn.clone();
                                                                                                 arc_pc.on_data_channel(Box::new(move |dc: Arc<webrtc::data_channel::RTCDataChannel>| {
                                                                                                     let device_id_dc = from_device_dc.clone();
+                                                                                                    let tx_msg_dc = tx_msg_dc.clone();
                                                                                                     Box::pin(async move {
                                                                                                         info!("📂 Incoming data channel from {}: {}", device_id_dc, dc.label());
 
                                                                                                         // Set up message handlers for the incoming data channel
                                                                                                         let device_id_open = device_id_dc.clone();
+                                                                                                        let tx_msg_open = tx_msg_dc.clone();
                                                                                                         dc.on_open(Box::new(move || {
                                                                                                             let device_open = device_id_open.clone();
+                                                                                                            let tx_msg_open = tx_msg_open.clone();
                                                                                                             Box::pin(async move {
                                                                                                                 info!("📂 Data channel OPENED from {}", device_open);
-                                                                                                                // TODO: Notify DKG that channel is ready
+                                                                                                                
+                                                                                                                // Send UI update for data channel open
+                                                                                                                let _ = tx_msg_open.send(Message::UpdateParticipantWebRTCStatus {
+                                                                                                                    device_id: device_open.clone(),
+                                                                                                                    webrtc_connected: true,
+                                                                                                                    data_channel_open: true,
+                                                                                                                });
                                                                                                             })
                                                                                                         }));
 
@@ -645,9 +658,20 @@ impl Command {
 
                                                                                                 // Set up connection state handler
                                                                                                 let device_id_state = from_device.clone();
+                                                                                                let tx_msg_state = tx_msg_spawn.clone();
                                                                                                 arc_pc.on_peer_connection_state_change(Box::new(move |state: webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState| {
                                                                                                     let device_id_state = device_id_state.clone();
+                                                                                                    let tx_msg_state = tx_msg_state.clone();
                                                                                                     Box::pin(async move {
+                                                                                                        let is_connected = matches!(state, webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState::Connected);
+                                                                                                        
+                                                                                                        // Send UI update
+                                                                                                        let _ = tx_msg_state.send(Message::UpdateParticipantWebRTCStatus {
+                                                                                                            device_id: device_id_state.clone(),
+                                                                                                            webrtc_connected: is_connected,
+                                                                                                            data_channel_open: false, // Will be updated when data channel opens
+                                                                                                        });
+                                                                                                        
                                                                                                         match state {
                                                                                                             webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState::Connected => {
                                                                                                                 info!("✅ WebRTC connection ESTABLISHED with {} (from answer)", device_id_state);
@@ -1118,8 +1142,18 @@ impl Command {
                             
                             // Store a basic session in app state that will be updated
                             // when we receive SessionAvailable messages from the server
+                            // Use the curve type from any existing available sessions or default to Ed25519
                             {
                                 let mut state = app_state.lock().await;
+                                
+                                // Try to find the curve type from available sessions
+                                let curve_type = state.available_sessions.iter()
+                                    .find(|s| s.session_code == session_id)
+                                    .map(|s| s.curve_type.clone())
+                                    .unwrap_or_else(|| "Ed25519".to_string());  // Default to Ed25519 as that's what the session was created with
+                                
+                                info!("📊 Joining session with curve type: {}", curve_type);
+                                
                                 state.session = Some(crate::protocal::signal::SessionInfo {
                                     session_id: session_id.clone(),
                                     proposer_id: "unknown".to_string(),
@@ -1127,7 +1161,7 @@ impl Command {
                                     threshold: 2,  // Will be updated from SessionAvailable
                                     total: 3,      // Will be updated from SessionAvailable
                                     session_type: crate::protocal::signal::SessionType::DKG,
-                                    curve_type: "Secp256k1".to_string(),
+                                    curve_type,
                                     coordination_type: "Network".to_string(),
                                 });
                             }
@@ -1178,13 +1212,38 @@ impl Command {
                                                     // Check if this is our session being announced/updated
                                                     if let Some(sid) = session_info.get("session_id").and_then(|v| v.as_str()) {
                                                         if sid == session_id_clone {
-                                                            // Our session - check participants
+                                                            // Our session - update full session info
+                                                            let curve_type = session_info.get("curve_type")
+                                                                .and_then(|v| v.as_str())
+                                                                .unwrap_or("Ed25519")
+                                                                .to_string();
+                                                            
+                                                            let _ = tx_msg.send(Message::Info { 
+                                                                message: format!("📋 Session update - curve type: {}", curve_type)
+                                                            });
+                                                            
+                                                            // Update the session in app state with correct curve type
+                                                            {
+                                                                let mut state = app_state_clone.lock().await;
+                                                                if let Some(ref mut session) = state.session {
+                                                                    session.curve_type = curve_type.clone();
+                                                                    
+                                                                    // Also update other session fields
+                                                                    if let Some(total) = session_info.get("total").and_then(|v| v.as_u64()) {
+                                                                        session.total = total as u16;
+                                                                    }
+                                                                    if let Some(threshold) = session_info.get("threshold").and_then(|v| v.as_u64()) {
+                                                                        session.threshold = threshold as u16;
+                                                                    }
+                                                                }
+                                                            }
+                                                            
+                                                            // Update participants list
                                                             if let Some(participants) = session_info.get("participants").and_then(|v| v.as_array()) {
                                                                 let _ = tx_msg.send(Message::Info { 
                                                                     message: format!("📋 Session update - participants: {}", participants.len())
                                                                 });
                                                                 
-                                                                // Update participants list
                                                                 participants_seen.clear();
                                                                 for p in participants {
                                                                     if let Some(pid) = p.as_str() {
@@ -1200,6 +1259,9 @@ impl Command {
                                                         message: format!("📡 Connected devices: {:?}", devices)
                                                     });
                                                     
+                                                    // Track previous count to detect new participants
+                                                    let prev_count = participants_seen.len();
+                                                    
                                                     // Count unique participants in our session
                                                     for device in &devices {
                                                         participants_seen.insert(device.clone());
@@ -1208,7 +1270,7 @@ impl Command {
                                                     // Send UpdateParticipants message to update the model
                                                     let participants_list: Vec<String> = participants_seen.iter().cloned().collect();
                                                     let _ = tx_msg.send(Message::UpdateParticipants { 
-                                                        participants: participants_list 
+                                                        participants: participants_list.clone() 
                                                     });
                                                     
                                                     let participants_count = participants_seen.len();
@@ -1218,33 +1280,46 @@ impl Command {
                                                             participants_count, session_total)
                                                     });
                                                     
-                                                    if participants_count >= session_total as usize {
+                                                    // Re-initiate WebRTC if we have new participants
+                                                    if participants_count > prev_count && participants_count > 1 {
                                                         let _ = tx_msg.send(Message::Info { 
-                                                            message: "🎉 All participants connected! Starting DKG...".to_string()
+                                                            message: format!("🔄 New participant detected, re-initiating WebRTC with all {} participants", participants_count)
                                                         });
                                                         
-                                                        // Actually initiate WebRTC connections NOW
-                                                        let _ = tx_msg.send(Message::Info { 
-                                                            message: "🔗 Establishing peer-to-peer connections...".to_string()
-                                                        });
-                                                        
-                                                        // Get participants list without self
+                                                        // Get participants list WITHOUT self for WebRTC initiation
                                                         let self_device = _device_id_clone.clone();
                                                         let other_participants: Vec<String> = participants_seen.iter()
                                                             .filter(|p| **p != self_device)
                                                             .cloned()
                                                             .collect();
                                                         
-                                                        if !other_participants.is_empty() {
-                                                            let _ = tx_msg.send(Message::Info { 
-                                                                message: format!("🔗 Initiating WebRTC with {} participants", other_participants.len())
-                                                            });
-                                                            
-                                                            // Send message to trigger WebRTC initiation
-                                                            let _ = tx_msg.send(Message::InitiateWebRTCWithParticipants {
-                                                                participants: other_participants,
-                                                            });
-                                                        }
+                                                        // Re-initiate WebRTC with OTHER participants only
+                                                        let _ = tx_msg.send(Message::InitiateWebRTCWithParticipants {
+                                                            participants: other_participants,
+                                                        });
+                                                    }
+                                                    
+                                                    if participants_count >= session_total as usize {
+                                                        let _ = tx_msg.send(Message::Info { 
+                                                            message: "🎉 All participants connected! Starting DKG...".to_string()
+                                                        });
+                                                        
+                                                        // Final WebRTC initiation to ensure all connections
+                                                        let _ = tx_msg.send(Message::Info { 
+                                                            message: "🔗 Ensuring all peer-to-peer connections are established...".to_string()
+                                                        });
+                                                        
+                                                        // Send with ALL participants to ensure full mesh
+                                                        let _ = tx_msg.send(Message::InitiateWebRTCWithParticipants {
+                                                            participants: participants_list,
+                                                        });
+                                                        
+                                                        // Schedule mesh verification after a delay
+                                                        let tx_verify = tx_msg.clone();
+                                                        tokio::spawn(async move {
+                                                            tokio::time::sleep(tokio::time::Duration::from_millis(2000)).await;
+                                                            let _ = tx_verify.send(Message::VerifyMeshConnectivity);
+                                                        });
                                                         
                                                         // Update DKG progress
                                                         let _ = tx_msg.send(Message::UpdateDKGProgress {
@@ -1279,6 +1354,7 @@ impl Command {
                                                                         let app_state_for_answer = app_state_clone.clone();
                                                                         let ws_tx_clone = ws_msg_tx.clone();
                                                                         let _self_device_id = device_id.clone();
+                                                                        let tx_msg_spawn = tx_msg.clone();
 
                                                                         tokio::spawn(async move {
                                                                             info!("🎯 Processing WebRTC offer from {}", from_device);
@@ -1309,18 +1385,28 @@ impl Command {
 
                                                                                             // Set up handler for incoming data channels
                                                                                             let from_device_dc = from_device.clone();
+                                                                                            let tx_msg_dc = tx_msg_spawn.clone();
                                                                                             arc_pc.on_data_channel(Box::new(move |dc: Arc<webrtc::data_channel::RTCDataChannel>| {
                                                                                                 let device_id_dc = from_device_dc.clone();
+                                                                                                let tx_msg_dc = tx_msg_dc.clone();
                                                                                                 Box::pin(async move {
                                                                                                     info!("📂 Incoming data channel from {}: {}", device_id_dc, dc.label());
 
                                                                                                     // Set up message handlers for the incoming data channel
                                                                                                     let device_id_open = device_id_dc.clone();
+                                                                                                    let tx_msg_open = tx_msg_dc.clone();
                                                                                                     dc.on_open(Box::new(move || {
                                                                                                         let device_open = device_id_open.clone();
+                                                                                                        let tx_msg_open = tx_msg_open.clone();
                                                                                                         Box::pin(async move {
                                                                                                             info!("📂 Data channel OPENED from {}", device_open);
-                                                                                                            // TODO: Notify DKG that channel is ready
+                                                                                                            
+                                                                                                            // Send UI update for data channel open
+                                                                                                            let _ = tx_msg_open.send(Message::UpdateParticipantWebRTCStatus {
+                                                                                                                device_id: device_open.clone(),
+                                                                                                                webrtc_connected: true,
+                                                                                                                data_channel_open: true,
+                                                                                                            });
                                                                                                         })
                                                                                                     }));
 
@@ -1340,9 +1426,20 @@ impl Command {
 
                                                                                             // Set up connection state handler
                                                                                             let device_id_state = from_device.clone();
+                                                                                            let tx_msg_state = tx_msg_spawn.clone();
                                                                                             arc_pc.on_peer_connection_state_change(Box::new(move |state: webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState| {
                                                                                                 let device_id_state = device_id_state.clone();
+                                                                                                let tx_msg_state = tx_msg_state.clone();
                                                                                                 Box::pin(async move {
+                                                                                                    let is_connected = matches!(state, webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState::Connected);
+                                                                                                    
+                                                                                                    // Send UI update
+                                                                                                    let _ = tx_msg_state.send(Message::UpdateParticipantWebRTCStatus {
+                                                                                                        device_id: device_id_state.clone(),
+                                                                                                        webrtc_connected: is_connected,
+                                                                                                        data_channel_open: false, // Will be updated when data channel opens
+                                                                                                    });
+                                                                                                    
                                                                                                     match state {
                                                                                                         webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState::Connected => {
                                                                                                             info!("✅ WebRTC connection ESTABLISHED with {} (from answer)", device_id_state);
@@ -1415,6 +1512,25 @@ impl Command {
                                                                                 return;
                                                                             }
                                                                             info!("✅ Set remote description (offer) from {}", from_device);
+
+                                                                            // Process any queued ICE candidates for this peer
+                                                                            {
+                                                                                let state = app_state_for_answer.lock().await;
+                                                                                let ice_queue_clone = state.ice_candidate_queue.clone();
+                                                                                drop(state);
+                                                                                
+                                                                                let mut queue = ice_queue_clone.lock().await;
+                                                                                if let Some(candidates) = queue.remove(&from_device) {
+                                                                                    info!("📦 Processing {} queued ICE candidates for {}", candidates.len(), from_device);
+                                                                                    for candidate in candidates {
+                                                                                        if let Err(e) = pc.add_ice_candidate(candidate).await {
+                                                                                            error!("❌ Failed to add queued ICE candidate from {}: {}", from_device, e);
+                                                                                        } else {
+                                                                                            info!("✅ Added queued ICE candidate from {}", from_device);
+                                                                                        }
+                                                                                    }
+                                                                                }
+                                                                            }
 
                                                                             // Create answer
                                                                             match pc.create_answer(None).await {
@@ -1494,6 +1610,23 @@ impl Command {
                                                                                     error!("❌ Failed to set remote description (answer) for {}: {}", from_device, e);
                                                                                 } else {
                                                                                     info!("✅ Set remote description (answer) from {}, WebRTC connection should be establishing!", from_device);
+                                                                                    
+                                                                                    // Process any queued ICE candidates for this peer
+                                                                                    let state = app_state_for_remote.lock().await;
+                                                                                    let ice_queue_clone = state.ice_candidate_queue.clone();
+                                                                                    drop(state);
+                                                                                    
+                                                                                    let mut queue = ice_queue_clone.lock().await;
+                                                                                    if let Some(candidates) = queue.remove(&from_device) {
+                                                                                        info!("📦 Processing {} queued ICE candidates for {}", candidates.len(), from_device);
+                                                                                        for candidate in candidates {
+                                                                                            if let Err(e) = pc.add_ice_candidate(candidate).await {
+                                                                                                error!("❌ Failed to add queued ICE candidate from {}: {}", from_device, e);
+                                                                                            } else {
+                                                                                                info!("✅ Added queued ICE candidate from {}", from_device);
+                                                                                            }
+                                                                                        }
+                                                                                    }
                                                                                 }
                                                                             } else {
                                                                                 error!("❌ No peer connection found for {} when receiving answer", from_device);
@@ -1521,6 +1654,7 @@ impl Command {
                                                                             // Get peer connection for this device
                                                                             let state = app_state_for_ice.lock().await;
                                                                             let device_connections_clone = state.device_connections.clone();
+                                                                            let ice_queue_clone = state.ice_candidate_queue.clone();
                                                                             drop(state); // Release the lock early
                                                                             let conns = device_connections_clone.lock().await;
                                                                             if let Some(pc) = conns.get(&from_device) {
@@ -1532,10 +1666,21 @@ impl Command {
                                                                                     username_fragment: None,
                                                                                 };
 
-                                                                                if let Err(e) = pc.add_ice_candidate(ice_candidate_init).await {
-                                                                                    error!("❌ Failed to add ICE candidate from {}: {}", from_device, e);
+                                                                                // Check if remote description is set
+                                                                                if pc.remote_description().await.is_none() {
+                                                                                    // Queue the ICE candidate
+                                                                                    let mut queue = ice_queue_clone.lock().await;
+                                                                                    queue.entry(from_device.clone())
+                                                                                        .or_insert_with(Vec::new)
+                                                                                        .push(ice_candidate_init);
+                                                                                    info!("📦 Queued ICE candidate from {} (remote description not ready)", from_device);
                                                                                 } else {
-                                                                                    info!("✅ Added ICE candidate from {}", from_device);
+                                                                                    // Add the ICE candidate immediately
+                                                                                    if let Err(e) = pc.add_ice_candidate(ice_candidate_init).await {
+                                                                                        error!("❌ Failed to add ICE candidate from {}: {}", from_device, e);
+                                                                                    } else {
+                                                                                        info!("✅ Added ICE candidate from {}", from_device);
+                                                                                    }
                                                                                 }
                                                                             } else {
                                                                                 error!("❌ No peer connection found for {} when adding ICE candidate", from_device);
@@ -1699,12 +1844,13 @@ impl Command {
                 // Store participant count before moving the vector
                 let expected_peer_connections = participants.len() - 1; // Exclude self
 
-                // Call the WebRTC initiation directly
+                // Call the WebRTC initiation directly with UI message sender
                 crate::network::webrtc_simple::simple_initiate_webrtc_with_channel(
                     self_device_id,
                     participants,
                     device_connections_arc,
                     app_state.clone(),
+                    Some(tx.clone()),  // Pass the UI message sender
                 ).await;
 
                 // Also update DKG progress to show we're connecting
@@ -1832,6 +1978,166 @@ impl Command {
                         }
                     }
                 });
+            }
+            
+            Command::VerifyWebRTCMesh => {
+                info!("🔍 Verifying WebRTC mesh connectivity");
+                
+                let (self_device_id, expected_connections) = {
+                    let state = app_state.lock().await;
+                    let expected = if let Some(ref session) = state.session {
+                        session.participants.len() - 1  // Exclude self
+                    } else {
+                        0
+                    };
+                    (state.device_id.clone(), expected)
+                };
+                
+                // Check current connection status
+                let connections_status = {
+                    let state = app_state.lock().await;
+                    let device_connections = state.device_connections.clone();
+                    let connections = device_connections.lock().await;
+                    
+                    let mut status_report = Vec::new();
+                    let mut connected_count = 0;
+                    let mut failed_count = 0;
+                    
+                    for (peer_id, pc) in connections.iter() {
+                        let conn_state = pc.connection_state();
+                        let is_connected = conn_state == webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState::Connected;
+                        
+                        if is_connected {
+                            connected_count += 1;
+                            status_report.push(format!("✅ {} -> {}: Connected", self_device_id, peer_id));
+                        } else {
+                            failed_count += 1;
+                            status_report.push(format!("❌ {} -> {}: {:?}", self_device_id, peer_id, conn_state));
+                        }
+                    }
+                    
+                    (connected_count, failed_count, status_report, connections.len())
+                };
+                
+                let (connected_count, failed_count, status_report, _total_connections) = connections_status;
+                
+                // Send status report
+                let _ = tx.send(Message::Info {
+                    message: format!("📊 Mesh Status: {}/{} connected ({} failed)", 
+                                   connected_count, expected_connections, failed_count)
+                });
+                
+                for status_line in status_report {
+                    info!("{}", status_line);
+                }
+                
+                // If not all connections are established, trigger re-initiation
+                if connected_count < expected_connections {
+                    warn!("⚠️ Incomplete mesh: only {}/{} connections established", connected_count, expected_connections);
+                    
+                    // Get participants and re-initiate for missing connections
+                    let participants = {
+                        let state = app_state.lock().await;
+                        if let Some(ref session) = state.session {
+                            session.participants.clone()
+                        } else {
+                            vec![]
+                        }
+                    };
+                    
+                    if !participants.is_empty() {
+                        let _ = tx.send(Message::Info {
+                            message: "🔄 Re-initiating WebRTC for missing connections...".to_string()
+                        });
+                        
+                        let _ = tx.send(Message::InitiateWebRTCWithParticipants {
+                            participants: participants.into_iter()
+                                .filter(|p| p != &self_device_id)
+                                .collect()
+                        });
+                    }
+                } else {
+                    let _ = tx.send(Message::Success {
+                        message: format!("✅ Full mesh established: {} connections", connected_count)
+                    });
+                }
+            }
+            
+            Command::EnsureFullMesh => {
+                info!("🔗 Ensuring full mesh connectivity");
+                
+                let (self_device_id, participants) = {
+                    let state = app_state.lock().await;
+                    let participants = if let Some(ref session) = state.session {
+                        session.participants.clone()
+                    } else {
+                        vec![]
+                    };
+                    (state.device_id.clone(), participants)
+                };
+                
+                if participants.is_empty() {
+                    let _ = tx.send(Message::Warning {
+                        message: "No active session to verify mesh for".to_string()
+                    });
+                    return Ok(());
+                }
+                
+                // Check each expected connection
+                let mut missing_connections = Vec::new();
+                {
+                    let state = app_state.lock().await;
+                    let device_connections = state.device_connections.clone();
+                    let connections = device_connections.lock().await;
+                    
+                    for participant in &participants {
+                        if participant == &self_device_id {
+                            continue;
+                        }
+                        
+                        match connections.get(participant) {
+                            Some(pc) => {
+                                let conn_state = pc.connection_state();
+                                if conn_state != webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState::Connected {
+                                    info!("⚠️ Connection to {} is in state: {:?}", participant, conn_state);
+                                    missing_connections.push(participant.clone());
+                                }
+                            }
+                            None => {
+                                info!("❌ No connection exists to {}", participant);
+                                missing_connections.push(participant.clone());
+                            }
+                        }
+                    }
+                }
+                
+                if !missing_connections.is_empty() {
+                    let _ = tx.send(Message::Warning {
+                        message: format!("Missing connections to: {:?}", missing_connections)
+                    });
+                    
+                    // Re-initiate WebRTC for all participants to fix missing connections
+                    let _ = tx.send(Message::Info {
+                        message: "🔄 Re-establishing WebRTC connections...".to_string()
+                    });
+                    
+                    let _ = tx.send(Message::InitiateWebRTCWithParticipants {
+                        participants: participants.into_iter()
+                            .filter(|p| p != &self_device_id)
+                            .collect()
+                    });
+                    
+                    // Schedule a verification check after a delay
+                    let tx_check = tx.clone();
+                    tokio::spawn(async move {
+                        tokio::time::sleep(tokio::time::Duration::from_millis(3000)).await;
+                        let _ = tx_check.send(Message::CheckWebRTCConnections);
+                    });
+                } else {
+                    let _ = tx.send(Message::Success {
+                        message: "✅ Full mesh connectivity confirmed".to_string()
+                    });
+                }
             }
             
             Command::DeleteWallet { wallet_id } => {

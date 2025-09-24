@@ -285,7 +285,16 @@ pub fn update(model: &mut Model, msg: Message) -> Option<Command> {
             info!("Updating WebRTC status for {}: WebRTC={}, DataChannel={}",
                  device_id, webrtc_connected, data_channel_open);
 
-            // Force a remount to update the display with new status
+            // Store the WebRTC status in the model's network state
+            model.network_state.participant_webrtc_status
+                .entry(device_id.clone())
+                .and_modify(|status| {
+                    status.0 = webrtc_connected;
+                    status.1 = data_channel_open;
+                })
+                .or_insert((webrtc_connected, data_channel_open));
+
+            // Force a remount to update the display with new WebRTC status
             if matches!(model.current_screen, Screen::DKGProgress { .. }) {
                 Some(Command::SendMessage(Message::ForceRemount))
             } else {
@@ -381,6 +390,16 @@ pub fn update(model: &mut Model, msg: Message) -> Option<Command> {
         Message::InitiateWebRTCWithParticipants { participants } => {
             info!("Initiating WebRTC connections with {} participants", participants.len());
             Some(Command::InitiateWebRTCConnections { participants })
+        }
+        
+        Message::CheckWebRTCConnections => {
+            info!("Checking WebRTC connection status");
+            Some(Command::VerifyWebRTCMesh)
+        }
+        
+        Message::VerifyMeshConnectivity => {
+            info!("Verifying full mesh connectivity");
+            Some(Command::EnsureFullMesh)
         }
         
         Message::WebSocketConnected => {

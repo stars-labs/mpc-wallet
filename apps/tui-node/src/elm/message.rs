@@ -78,6 +78,8 @@ pub enum Message {
     PeerDisconnected { peer_id: String },
     NetworkMessage { from: String, data: Vec<u8> },
     InitiateWebRTCWithParticipants { participants: Vec<String> },
+    CheckWebRTCConnections,
+    VerifyMeshConnectivity,
     ConnectionStatusChanged { connected: bool },
     
     // Keystore events
