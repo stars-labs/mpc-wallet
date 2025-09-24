@@ -11,6 +11,7 @@ use super::state::{DkgState, MeshStatus, SigningState};
 /// Central state container for the MPC wallet application
 pub struct AppState<C: Ciphersuite> {
     pub device_id: String,
+    pub signal_server_url: String,
     pub session: Option<SessionInfo>,
     pub keystore: Option<Arc<crate::keystore::Keystore>>,
     // Legacy fields for compatibility - adding comprehensive set
@@ -64,11 +65,18 @@ pub struct AppState<C: Ciphersuite> {
     // Additional fields for UI compatibility
     pub websocket_connected: bool,
     pub websocket_connecting: bool,
+    pub websocket_reconnecting: bool,
+    pub dkg_in_progress: bool, // Prevents duplicate DKG sessions
     pub selected_wallet: Option<String>,
     pub own_mesh_ready_sent: bool,
     pub dkg_mode: Option<crate::protocal::dkg::DkgMode>,
     pub offline_mode: bool,
     pub session_start_time: Option<std::time::Instant>,
+    pub webrtc_pending_participants: Vec<String>,
+    pub websocket_error: Option<String>,
+    pub websocket_internal_cmd_tx: Option<tokio::sync::mpsc::UnboundedSender<super::state::InternalCommand<C>>>,
+    // Alternative: string-based channel for WebSocket messages (avoids Send issues)
+    pub websocket_msg_tx: Option<tokio::sync::mpsc::UnboundedSender<String>>,
 }
 
 impl<C: Ciphersuite + Send + Sync + 'static> AppState<C> 
@@ -79,6 +87,7 @@ where
     pub fn new() -> Self {
         Self {
             device_id: String::new(),
+            signal_server_url: String::new(),
             session: None,
             keystore: None,
             blockchain_addresses: Vec::new(),
@@ -128,17 +137,28 @@ where
             pending_mesh_ready_signals: std::collections::HashSet::new(),
             websocket_connected: false,
             websocket_connecting: false,
+            websocket_reconnecting: false,
+            dkg_in_progress: false,
             selected_wallet: None,
             own_mesh_ready_sent: false,
             dkg_mode: None,
             offline_mode: false,
             session_start_time: None,
+            webrtc_pending_participants: Vec::new(),
+            websocket_error: None,
+            websocket_internal_cmd_tx: None,
+            websocket_msg_tx: None,
         }
     }
     
     pub fn with_device_id(device_id: String) -> Self {
+        Self::with_device_id_and_server(device_id, String::new())
+    }
+    
+    pub fn with_device_id_and_server(device_id: String, signal_server_url: String) -> Self {
         Self {
             device_id,
+            signal_server_url,
             session: None,
             keystore: None,
             blockchain_addresses: Vec::new(),
@@ -188,11 +208,17 @@ where
             pending_mesh_ready_signals: std::collections::HashSet::new(),
             websocket_connected: false,
             websocket_connecting: false,
+            websocket_reconnecting: false,
+            dkg_in_progress: false,
             selected_wallet: None,
             own_mesh_ready_sent: false,
             dkg_mode: None,
             offline_mode: false,
             session_start_time: None,
+            webrtc_pending_participants: Vec::new(),
+            websocket_error: None,
+            websocket_internal_cmd_tx: None,
+            websocket_msg_tx: None,
         }
     }
     

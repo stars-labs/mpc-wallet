@@ -192,19 +192,35 @@ pub async fn create_and_setup_device_connection<C>(
         // Setup state change handler with DKG trigger logic
         let state_log_on_state = state_log.clone();
         let device_id_on_state = device_id.clone();
+        let cmd_tx_on_state = cmd_tx.clone();
+        // Clone for ICE handler
+        let state_log_on_state_ice = state_log.clone();
+        let device_id_on_state_ice = device_id.clone();
         // Fix the setup_device_connection_callbacks function
         // Clone before moving into closure
         let pc_arc_for_state = pc_arc.clone();
         pc_arc.on_peer_connection_state_change(Box::new(move |s: RTCPeerConnectionState| {
             // Fix: Use pc_arc directly instead of undefined pc_arc_for_state
             let pc_arc = pc_arc_for_state.clone();
-            
+            let device_id = device_id_on_state.clone();
+            let state_log = state_log_on_state.clone();
+            let cmd_tx = cmd_tx_on_state.clone();
+
             // Log both connectionState and iceConnectionState together
             let ice_state = pc_arc.ice_connection_state();
             tracing::debug!(
                 "Device {}: connectionState={:?}, iceConnectionState={:?}",
                 device_id, s, ice_state
             );
+
+            // Send WebRTC status update
+            let webrtc_connected = matches!(s, RTCPeerConnectionState::Connected);
+            let _ = cmd_tx.send(InternalCommand::UpdateParticipantWebRTCStatus {
+                device_id: device_id.clone(),
+                webrtc_connected,
+                data_channel_open: false, // Will be updated when data channel opens
+            });
+
             if let Ok(mut app_state_guard) = state_log.try_lock() {
                 app_state_guard.device_statuses.insert(device_id.clone(), s);
             }
@@ -295,8 +311,8 @@ pub async fn create_and_setup_device_connection<C>(
             }));
 
             // --- Setup ICE connection monitoring callback ---
-            let state_log_ice = state_log_on_state.clone();
-            let device_id_ice = device_id_on_state.clone();
+            let state_log_ice = state_log_on_state_ice.clone();
+            let device_id_ice = device_id_on_state_ice.clone();
             let pc_arc_for_ice = pc_arc.clone();
             pc_arc.on_ice_connection_state_change(Box::new(move |ice_state| {
                 let state_log = state_log_ice.clone();
@@ -316,8 +332,8 @@ pub async fn create_and_setup_device_connection<C>(
             }));
 
             // --- Only set up callbacks for the main data channel (responder side) ---
-            let state_log_on_data = state_log_on_state.clone();
-            let device_id_on_data = device_id_on_state.clone();
+            let state_log_on_data = state_log_on_state_ice.clone();
+            let device_id_on_data = device_id_on_state_ice.clone();
             let cmd_tx_on_data = cmd_tx.clone();
             pc_arc.on_data_channel(Box::new(move |dc: Arc<RTCDataChannel>| {
                 let state_log = state_log_on_data.clone();
@@ -389,7 +405,14 @@ pub async fn setup_data_channel_callbacks<C>(
         Box::pin(async move {
             
             // Send ReportChannelOpen command to trigger mesh ready signaling
-            
+
+            // Also send status update that data channel is open
+            let _ = cmd_tx_open.send(InternalCommand::UpdateParticipantWebRTCStatus {
+                device_id: device_id_open.clone(),
+                webrtc_connected: true,
+                data_channel_open: true,
+            });
+
             if let Err(_e) = cmd_tx_open.send(InternalCommand::ReportChannelOpen {
                 device_id: device_id_open.clone(),
             }) {

@@ -2,7 +2,7 @@
 
 use ethers_core::types::{U256, H160};
 use ethers_core::abi::{Token, encode as abi_encode};
-use rlp::{RlpStream, Encodable};
+use rlp::RlpStream;
 use sha3::{Digest, Keccak256};
 
 /// ERC20 transfer function selector (keccak256("transfer(address,uint256)"))

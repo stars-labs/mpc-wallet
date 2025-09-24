@@ -4,7 +4,6 @@
 
 use crate::elm::components::{Id, UserEvent, MpcWalletComponent};
 use crate::elm::message::Message;
-use crate::elm::model::Screen;
 
 use tuirealm::command::{Cmd, CmdResult, Direction};
 use tuirealm::event::Event;
@@ -28,7 +27,6 @@ struct MenuItem {
     icon: &'static str,
     label: String,
     description: String,
-    screen: Screen,
     enabled: bool,
     badge: Option<String>,
     priority: Priority,
@@ -58,7 +56,6 @@ impl MainMenu {
                 icon: "🆕",
                 label: "Create New Wallet".to_string(),
                 description: "Initialize new MPC wallet with DKG ceremony".to_string(),
-                screen: Screen::CreateWallet(Default::default()),
                 enabled: true,
                 badge: Some("Primary".to_string()),
                 priority: Priority::High,
@@ -67,7 +64,6 @@ impl MainMenu {
                 icon: "🔗",
                 label: "Join Session".to_string(),
                 description: "Participate in existing DKG or signing session".to_string(),
-                screen: Screen::JoinSession,
                 enabled: true,
                 badge: Some("Connect".to_string()),
                 priority: Priority::High,
@@ -81,7 +77,6 @@ impl MainMenu {
                     icon: "💼",
                     label: "Manage Wallets".to_string(),
                     description: format!("View and manage {} wallet{}", wallet_count, if wallet_count == 1 { "" } else { "s" }),
-                    screen: Screen::ManageWallets,
                     enabled: true,
                     badge: Some(format!("{}", wallet_count)),
                     priority: Priority::Medium,
@@ -90,7 +85,6 @@ impl MainMenu {
                     icon: "✍️",
                     label: "Sign Transaction".to_string(),
                     description: "Create threshold signature for transaction".to_string(),
-                    screen: Screen::SignTransaction { wallet_id: "default".to_string() },
                     enabled: true,
                     badge: Some("Ready".to_string()),
                     priority: Priority::High,
@@ -104,7 +98,6 @@ impl MainMenu {
                 icon: "⚙️",
                 label: "Settings".to_string(),
                 description: "Configure network, security, and display options".to_string(),
-                screen: Screen::Settings,
                 enabled: true,
                 badge: None,
                 priority: Priority::Low,
@@ -113,7 +106,6 @@ impl MainMenu {
                 icon: "🚪",
                 label: "Exit".to_string(),
                 description: "Close application securely".to_string(),
-                screen: Screen::MainMenu, // Placeholder
                 enabled: true,
                 badge: None,
                 priority: Priority::Low,

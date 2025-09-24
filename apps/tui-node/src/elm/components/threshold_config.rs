@@ -50,6 +50,17 @@ impl ThresholdConfigComponent {
         }
     }
     
+    pub fn with_values(participants: u16, threshold: u16, selected_field: usize) -> Self {
+        tracing::info!("🆕 Creating ThresholdConfigComponent with selected_field={}", selected_field);
+        Self {
+            props: Props::default(),
+            participants: participants as usize,
+            threshold: threshold as usize,
+            focused: false,
+            selected_field,
+        }
+    }
+    
     fn get_presets(&self) -> Vec<ThresholdPreset> {
         vec![
             ThresholdPreset {
@@ -133,6 +144,7 @@ impl ThresholdConfigComponent {
 
 impl MockComponent for ThresholdConfigComponent {
     fn view(&mut self, frame: &mut Frame, area: Rect) {
+        tracing::info!("🖼️ ThresholdConfigComponent::view() called with selected_field={}", self.selected_field);
         let chunks = Layout::default()
             .direction(LayoutDirection::Vertical)
             .constraints([
@@ -210,7 +222,7 @@ impl MockComponent for ThresholdConfigComponent {
 impl ThresholdConfigComponent {
     fn render_header(&self, frame: &mut Frame, area: Rect) {
         let header_text = vec![
-            "⚙️ THRESHOLD CONFIGURATION",
+            "⚙️ THRESHOLD CONFIGURATION (Step 3 of 3)",
             "",
             "Set the number of participants and signing threshold",
             "Threshold = minimum signers needed to authorize transactions",
@@ -231,6 +243,7 @@ impl ThresholdConfigComponent {
     }
     
     fn render_configuration(&self, frame: &mut Frame, area: Rect) {
+        tracing::debug!("🎨 Rendering ThresholdConfig with selected_field={}", self.selected_field);
         let chunks = Layout::default()
             .direction(LayoutDirection::Horizontal)
             .constraints([
@@ -367,10 +380,13 @@ impl ThresholdConfigComponent {
             .map(|p| {
                 let is_current = p.participants == self.participants && p.threshold == self.threshold;
                 let text = format!(
-                    "{} {} - {}",
+                    "{} {} - {} ({})\n   Pros: {}\n   Cons: {}",
                     if is_current { "▶" } else { " " },
                     p.name,
-                    p.use_case
+                    p.use_case,
+                    p.security_model,
+                    p.pros.join(", "),
+                    p.cons.join(", ")
                 );
                 ListItem::new(text).style(
                     Style::default().fg(if is_current { Color::Yellow } else { Color::Gray })

@@ -43,6 +43,7 @@ pub enum DKGRound {
 #[derive(Debug, Clone)]
 struct DKGStep {
     round: DKGRound,
+    #[allow(dead_code)]
     step_number: usize,
     title: &'static str,
     description: Vec<&'static str>,
@@ -91,7 +92,7 @@ impl OfflineDKGProcessComponent {
                     "2. 📝 Create session with threshold parameters",
                     "3. 🆔 Generate unique session ID and participant IDs",
                     "4. 💾 Export session package to SD card:",
-                    "   • Session ID: DKG-2025-001-OFFLINE",
+                    "   • Session ID: [Generated at runtime]",
                     "   • Participants: 3, Threshold: 2",
                     "   • Curve: Secp256k1",
                     "   • Participant IDs: [P1, P2, P3]",

@@ -83,6 +83,13 @@ pub enum InternalCommand<C: Ciphersuite> {
         device_id: String,
     },
 
+    /// Update participant WebRTC connection status
+    UpdateParticipantWebRTCStatus {
+        device_id: String,
+        webrtc_connected: bool,
+        data_channel_open: bool,
+    },
+
     // MeshReady, // This variant is redundant and has been removed. Use SendOwnMeshReadySignal.
     SendOwnMeshReadySignal,
     /// Process mesh ready notification from a device

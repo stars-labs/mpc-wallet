@@ -23,31 +23,33 @@ pub struct JoinSessionComponent {
 }
 
 #[derive(Debug, Clone)]
-struct SessionInfo {
-    id: String,
-    session_type: SessionType,
-    creator: String,
-    status: SessionStatus,
-    participants: Vec<String>,
-    required: usize,
-    joined: usize,
-    curve: String,
-    mode: String,
-    created_at: String,
-    expires_in: String,
+pub struct SessionInfo {
+    pub id: String,
+    pub session_type: SessionType,
+    pub creator: String,
+    pub status: SessionStatus,
+    pub participants: Vec<String>,
+    pub required: usize,
+    pub joined: usize,
+    pub curve: String,
+    pub mode: String,
+    pub created_at: String,
+    pub expires_in: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-enum SessionType {
+pub enum SessionType {
     DKG,
     Signing,
 }
 
 #[derive(Debug, Clone)]
-enum SessionStatus {
+pub enum SessionStatus {
     Waiting,
+    #[allow(dead_code)]
     InProgress,
     Ready,
+    #[allow(dead_code)]
     Expired,
 }
 
@@ -59,35 +61,8 @@ impl Default for JoinSessionComponent {
 
 impl JoinSessionComponent {
     pub fn new() -> Self {
-        // Mock sessions for demonstration
-        let sessions = vec![
-            SessionInfo {
-                id: "DKG-2025-001".to_string(),
-                session_type: SessionType::DKG,
-                creator: "alice.eth".to_string(),
-                status: SessionStatus::Waiting,
-                participants: vec!["alice.eth".to_string(), "bob.eth".to_string()],
-                required: 3,
-                joined: 2,
-                curve: "Secp256k1".to_string(),
-                mode: "Online".to_string(),
-                created_at: "2 mins ago".to_string(),
-                expires_in: "28 mins".to_string(),
-            },
-            SessionInfo {
-                id: "SIGN-2025-042".to_string(),
-                session_type: SessionType::Signing,
-                creator: "treasury.dao".to_string(),
-                status: SessionStatus::Ready,
-                participants: vec!["alice.eth".to_string(), "bob.eth".to_string(), "charlie.eth".to_string()],
-                required: 2,
-                joined: 3,
-                curve: "Ed25519".to_string(),
-                mode: "Online".to_string(),
-                created_at: "5 mins ago".to_string(),
-                expires_in: "25 mins".to_string(),
-            },
-        ];
+        // Start with empty sessions - will be loaded dynamically
+        let sessions = vec![];
         
         Self {
             props: Props::default(),
@@ -96,6 +71,27 @@ impl JoinSessionComponent {
             focused: false,
             sessions,
         }
+    }
+    
+    pub fn update_sessions(&mut self, sessions: Vec<SessionInfo>) {
+        self.sessions = sessions;
+        // Reset selection if it's out of bounds
+        if self.selected_session >= self.sessions.len() && !self.sessions.is_empty() {
+            self.selected_session = 0;
+        }
+    }
+    
+    pub fn set_selected_index(&mut self, index: usize) {
+        let filtered_count = self.get_filtered_sessions().len();
+        if index < filtered_count {
+            self.selected_session = index;
+        }
+    }
+    
+    pub fn set_selected_tab(&mut self, tab: usize) {
+        self.selected_tab = tab;
+        // Reset session selection when changing tabs
+        self.selected_session = 0;
     }
     
     fn get_filtered_sessions(&self) -> Vec<&SessionInfo> {

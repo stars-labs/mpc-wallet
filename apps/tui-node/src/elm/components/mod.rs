@@ -17,7 +17,8 @@ pub mod curve_selection;
 pub mod threshold_config;
 pub mod join_session;
 
-// Offline DKG components
+// DKG components
+pub mod dkg_progress;
 pub mod offline_dkg_process;
 pub mod sd_card_manager;
 
@@ -35,7 +36,8 @@ pub use curve_selection::CurveSelectionComponent;
 pub use threshold_config::ThresholdConfigComponent;
 pub use join_session::JoinSessionComponent;
 
-// Offline DKG components
+// DKG components
+pub use dkg_progress::DKGProgressComponent;
 pub use offline_dkg_process::{OfflineDKGProcessComponent, ParticipantRole};
 pub use sd_card_manager::SDCardManagerComponent;
 

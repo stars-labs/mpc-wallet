@@ -23,9 +23,34 @@ impl Default for WalletDetail {
     }
 }
 
+impl WalletDetail {
+    pub fn with_wallet_id(wallet_id: String) -> Self {
+        Self {
+            props: Props::default(),
+            wallet_id: Some(wallet_id),
+            focused: false,
+        }
+    }
+}
+
 impl MockComponent for WalletDetail {
-    fn view(&mut self, _frame: &mut Frame, _area: Rect) {
-        // Implementation will be added
+    fn view(&mut self, frame: &mut Frame, area: Rect) {
+        use ratatui::widgets::{Block, Borders, Paragraph};
+        use ratatui::style::{Color, Style};
+        
+        let wallet_info = if let Some(ref id) = self.wallet_id {
+            format!("Wallet Details\nID: {}", id)
+        } else {
+            "No wallet selected".to_string()
+        };
+        
+        let widget = Paragraph::new(wallet_info)
+            .block(Block::default()
+                .title("Wallet Detail")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Gray)));
+        
+        frame.render_widget(widget, area);
     }
     
     fn query(&self, attr: tuirealm::Attribute) -> Option<tuirealm::AttrValue> {

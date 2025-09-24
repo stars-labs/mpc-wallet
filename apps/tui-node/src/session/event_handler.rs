@@ -114,7 +114,7 @@ impl SessionEventHandler {
         if let Some(ws_tx) = &self.ws_tx {
             let update = SessionUpdate {
                 session_id: session_id.clone(),
-                accepted_devices: vec![self.device_id.clone()],
+                participants: vec![self.device_id.clone()],
                 update_type: SessionUpdateType::FullSync,
                 timestamp: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -135,7 +135,7 @@ impl SessionEventHandler {
         // Send join request as SessionUpdate
         let update = SessionUpdate {
             session_id: session_id.clone(),
-            accepted_devices: vec![self.device_id.clone()],
+            participants: vec![self.device_id.clone()],
             update_type: SessionUpdateType::ParticipantJoined,
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -213,7 +213,7 @@ impl SessionEventHandler {
             if let Some(ws_tx) = &self.ws_tx {
                 let update = SessionUpdate {
                     session_id: session_id.clone(),
-                    accepted_devices: vec![self.device_id.clone()],
+                    participants: vec![self.device_id.clone()],
                     update_type: SessionUpdateType::ParticipantJoined,
                     timestamp: std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
@@ -245,7 +245,7 @@ impl SessionEventHandler {
             
             // Check if we have all acceptances
             let state_machine = self.state_machine.read().await;
-            if let Some(accepted) = state_machine.get_accepted_devices() {
+            if let Some(accepted) = state_machine.get_participants() {
                 if let Some(participants) = state_machine.get_participants() {
                     if accepted.len() == participants.len() {
                         tracing::info!("All participants accepted, establishing mesh");
@@ -268,12 +268,12 @@ impl SessionEventHandler {
     ) -> Result<()> {
         tracing::debug!(
             "Session update from {}: {} devices accepted", 
-            from, update.accepted_devices.len()
+            from, update.participants.len()
         );
         
         // Check if mesh can be established
         let state_machine = self.state_machine.read().await;
-        if let Some(accepted) = state_machine.get_accepted_devices() {
+        if let Some(accepted) = state_machine.get_participants() {
             if let Some(_participants) = state_machine.get_participants() {
                 // Check if we have enough acceptances for threshold
                 let threshold = 2; // TODO: Get from session info
@@ -309,7 +309,7 @@ impl SessionEventHandler {
             if let Some(ws_tx) = &self.ws_tx {
                 let update = SessionUpdate {
                     session_id: session_id.clone(),
-                    accepted_devices: vec![],
+                    participants: vec![],
                     update_type: SessionUpdateType::ParticipantLeft,
                     timestamp: std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)

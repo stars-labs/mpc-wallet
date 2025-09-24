@@ -31,7 +31,6 @@ pub enum SessionState {
     Active {
         session: SessionInfo,
         participants: Vec<String>,
-        accepted_devices: Vec<String>,
         mesh_ready: bool,
     },
     
@@ -164,13 +163,11 @@ impl SessionStateMachine {
                         total: *total,
                         threshold: *threshold,
                         participants: vec![self.device_id.clone()],
-                        accepted_devices: vec![self.device_id.clone()],
                         session_type: SessionType::DKG,
                         curve_type: "secp256k1".to_string(),
                         coordination_type: "network".to_string(),
                     },
                     participants: vec![self.device_id.clone()],
-                    accepted_devices: vec![self.device_id.clone()],
                     mesh_ready: false,
                 }
             }
@@ -245,13 +242,11 @@ impl SessionStateMachine {
                         total: proposal.total,
                         threshold: proposal.threshold,
                         participants: proposal.participants.clone(),
-                        accepted_devices: vec![self.device_id.clone()],
                         session_type: proposal.session_type.clone(),
                         curve_type: proposal.curve_type.clone(),
                         coordination_type: proposal.coordination_type.clone(),
                     },
                     participants: proposal.participants.clone(),
-                    accepted_devices: vec![self.device_id.clone()],
                     mesh_ready: false,
                 }
             }
@@ -269,43 +264,40 @@ impl SessionStateMachine {
             }
             
             // From Active
-            (SessionState::Active { session, participants, accepted_devices, .. }, 
+            (SessionState::Active { session, participants, .. }, 
              SessionEvent::ResponseReceived { from, response }) if response.accepted => {
-                let mut new_accepted = accepted_devices.clone();
+                let mut new_accepted = participants.clone();
                 if !new_accepted.contains(from) {
                     new_accepted.push(from.clone());
                 }
                 SessionState::Active {
                     session: session.clone(),
-                    participants: participants.clone(),
-                    accepted_devices: new_accepted,
+                    participants: new_accepted,
                     mesh_ready: false,
                 }
             }
             
-            (SessionState::Active { session, participants, accepted_devices, .. }, 
+            (SessionState::Active { session, participants, .. }, 
              SessionEvent::SessionUpdate { update, .. }) => {
                 // Merge accepted devices from update
-                let mut new_accepted = accepted_devices.clone();
-                for device in &update.accepted_devices {
+                let mut new_accepted = participants.clone();
+                for device in &update.participants {
                     if !new_accepted.contains(device) {
                         new_accepted.push(device.clone());
                     }
                 }
                 SessionState::Active {
                     session: session.clone(),
-                    participants: participants.clone(),
-                    accepted_devices: new_accepted,
+                    participants: new_accepted,
                     mesh_ready: false,
                 }
             }
             
-            (SessionState::Active { session, participants, accepted_devices, .. }, 
+            (SessionState::Active { session, participants, .. }, 
              SessionEvent::MeshReady) => {
                 SessionState::Active {
                     session: session.clone(),
                     participants: participants.clone(),
-                    accepted_devices: accepted_devices.clone(),
                     mesh_ready: true,
                 }
             }
@@ -370,14 +362,6 @@ impl SessionStateMachine {
         match &self.state {
             SessionState::Active { participants, .. } => Some(participants.clone()),
             SessionState::ProposalReceived { proposal, .. } => Some(proposal.participants.clone()),
-            _ => None,
-        }
-    }
-    
-    /// Get accepted devices if in active session
-    pub fn get_accepted_devices(&self) -> Option<Vec<String>> {
-        match &self.state {
-            SessionState::Active { accepted_devices, .. } => Some(accepted_devices.clone()),
             _ => None,
         }
     }
@@ -479,13 +463,13 @@ mod tests {
                 total: 3,
                 threshold: 2,
                 participants: vec!["creator".to_string(), "test-device".to_string()],
-                accepted_devices: vec!["creator".to_string(), "test-device".to_string()],
+                participants: vec!["creator".to_string(), "test-device".to_string()],
                 session_type: crate::protocal::signal::SessionType::DKG,
                 curve_type: "secp256k1".to_string(),
                 coordination_type: "network".to_string(),
             },
             participants: vec!["creator".to_string(), "test-device".to_string()],
-            accepted_devices: vec!["creator".to_string(), "test-device".to_string()],
+            participants: vec!["creator".to_string(), "test-device".to_string()],
             mesh_ready: false,
         };
         

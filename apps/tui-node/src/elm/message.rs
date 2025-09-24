@@ -16,6 +16,7 @@ pub enum Message {
     NavigateHome,
     PushScreen(Screen),
     PopScreen,
+    ForceRemount,
     
     // Wallet management messages
     CreateWallet { config: WalletConfig },
@@ -43,6 +44,19 @@ pub enum Message {
     JoinSession { session_id: String },
     SessionsLoaded { sessions: Vec<SessionInfo> },
     UpdateDKGProgress { round: DKGRound, progress: f32 },
+    UpdateDKGSessionId { real_session_id: String },
+    UpdateParticipants { participants: Vec<String> },
+    // WebRTC connection status updates for DKG
+    UpdateParticipantWebRTCStatus {
+        device_id: String,
+        webrtc_connected: bool,
+        data_channel_open: bool,
+    },
+    UpdateMeshStatus {
+        ready_count: usize,
+        total_count: usize,
+        all_connected: bool,
+    },
     DKGComplete { result: DKGResult },
     DKGFailed { error: String },
     CancelDKG,
@@ -63,6 +77,7 @@ pub enum Message {
     PeerDiscovered { peer_id: String },
     PeerDisconnected { peer_id: String },
     NetworkMessage { from: String, data: Vec<u8> },
+    InitiateWebRTCWithParticipants { participants: Vec<String> },
     ConnectionStatusChanged { connected: bool },
     
     // Keystore events
@@ -77,6 +92,8 @@ pub enum Message {
     InputChanged { value: String },
     ScrollUp,
     ScrollDown,
+    ScrollLeft,
+    ScrollRight,
     ScrollTo { position: u16 },
     SelectItem { index: usize },
     
@@ -138,6 +155,7 @@ pub struct DKGParams {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DKGRound {
     Initialization,
+    WaitingForParticipants,
     Round1,
     Round2,
     Finalization,

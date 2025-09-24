@@ -52,11 +52,11 @@ pub async fn handle_websocket_message<C>(
                             
                             // Check for devices that went offline (were in old_devices but not in new)
                             if let Some(ref mut session) = state_guard.session {
-                                let accepted_devices = session.accepted_devices.clone();
+                                let participants = session.participants.clone();
                                 
                                 // First, check for disconnected devices
                                 for old_device in &old_devices {
-                                    if accepted_devices.contains(old_device) && !devices.contains(old_device) {
+                                    if participants.contains(old_device) && !devices.contains(old_device) {
                                         // Device went offline - cleaning up connection
                                         
                                         // Clean up the connection
@@ -78,7 +78,7 @@ pub async fn handle_websocket_message<C>(
                                 // Then check for reconnected devices (devices that were offline and are now back)
                                 for device in &devices {
                                     // Check if this device is part of our session and was previously offline
-                                    if accepted_devices.contains(device) && !old_devices.contains(device) {
+                                    if participants.contains(device) && !old_devices.contains(device) {
                                         // Device came back online - will attempt reconnection
                                         
                                         // Mark device for reconnection
@@ -169,7 +169,7 @@ pub async fn handle_websocket_message<C>(
                             let state_guard = state.lock().await;
                             if let Some(session) = &state_guard.session {
                                 // Check if we're an accepted participant (not just the creator)
-                                if session.accepted_devices.contains(&state_guard.device_id) {
+                                if session.participants.contains(&state_guard.device_id) {
                                     // We are a participant, send our session announcement
                                     tracing::info!("📢 Responding to SessionListRequest from {} as participant", from);
                                     let announcement = crate::protocal::signal::SessionAnnouncement {
@@ -187,7 +187,7 @@ pub async fn handle_websocket_message<C>(
                                         curve_type: session.curve_type.clone(),
                                         // Use original creator, but any participant can announce
                                         creator_device: session.proposer_id.clone(),
-                                        participants_joined: session.accepted_devices.len() as u16,
+                                        participants_joined: session.participants.len() as u16,
                                         description: None,
                                         timestamp: std::time::SystemTime::now()
                                             .duration_since(std::time::UNIX_EPOCH)
@@ -209,6 +209,59 @@ pub async fn handle_websocket_message<C>(
                         }
                         ServerMsg::Relay { from, data } => {
                             // Relay message received
+                            tracing::info!("📨 Received relay from {}: {:?}", from, data);
+                            
+                            // Check if it's a participant update from the server
+                            if from == "server" {
+                                tracing::info!("📨 Processing server relay message");
+                                if let Some(msg_type) = data.get("type").and_then(|v| v.as_str()) {
+                                    if msg_type == "participant_update" {
+                                        // Handle participant update to trigger WebRTC
+                                        if let (Some(session_id), Some(session_info)) = (
+                                            data.get("session_id").and_then(|v| v.as_str()),
+                                            data.get("session_info")
+                                        ) {
+                                            // Check if this is our session
+                                            let (is_our_session, self_device_id, new_participants) = {
+                                                let state_guard = state.lock().await;
+                                                let is_ours = state_guard.session.as_ref()
+                                                    .map(|s| s.session_id == session_id)
+                                                    .unwrap_or(false);
+                                                
+                                                let device_id = state_guard.device_id.clone();
+                                                
+                                                // Extract participants from session_info
+                                                let participants = if let Some(participants_arr) = session_info
+                                                    .get("participants")
+                                                    .and_then(|v| v.as_array()) {
+                                                    participants_arr.iter()
+                                                        .filter_map(|v| v.as_str())
+                                                        .filter(|&p| p != device_id) // Filter out self
+                                                        .map(String::from)
+                                                        .collect::<Vec<_>>()
+                                                } else {
+                                                    Vec::new()
+                                                };
+                                                
+                                                (is_ours, device_id, participants)
+                                            };
+                                            
+                                            if is_our_session && !new_participants.is_empty() {
+                                                tracing::info!("📡 Received participant update, initiating WebRTC with {} participants", new_participants.len());
+                                                
+                                                // Initiate WebRTC connections with the new participants
+                                                crate::network::webrtc::initiate_webrtc_connections(
+                                                    new_participants,
+                                                    self_device_id,
+                                                    state.clone(),
+                                                    internal_cmd_tx.clone(),
+                                                ).await;
+                                            }
+                                        }
+                                        return; // Don't process further
+                                    }
+                                }
+                            }
                             
                             // Check if it's a SessionAnnouncement (response to RequestActiveSessions)
                             if let Ok(announcement) = serde_json::from_value::<crate::protocal::signal::SessionAnnouncement>(data.clone()) {
@@ -244,7 +297,7 @@ pub async fn handle_websocket_message<C>(
                                         let can_handle_join = state_guard.session.as_ref()
                                             .map(|s| {
                                                 s.session_id == session_id && 
-                                                s.accepted_devices.contains(&state_guard.device_id)
+                                                s.participants.contains(&state_guard.device_id)
                                             })
                                             .unwrap_or(false);
                                         
@@ -280,8 +333,8 @@ pub async fn handle_websocket_message<C>(
                                                     if !session.participants.contains(&device_id.to_string()) {
                                                         session.participants.push(device_id.to_string());
                                                     }
-                                                    // Remove from accepted_devices if present (they'll re-accept)
-                                                    session.accepted_devices.retain(|d| d != device_id);
+                                                    // Remove from participants if present (they'll re-accept)
+                                                    session.participants.retain(|d| d != device_id);
                                                     Some(format!(
                                                         "📊 {} rejoining. Participants ({}/{}): {:?}",
                                                         device_id,
@@ -347,7 +400,7 @@ pub async fn handle_websocket_message<C>(
                                                 // The joiner will send SessionResponse which will trigger proper broadcast
                                                 // Only send if there are already accepted participants
                                                 let accepted = state_guard.session.as_ref()
-                                                    .map(|s| s.accepted_devices.clone())
+                                                    .map(|s| s.participants.clone())
                                                     .unwrap_or_default();
                                                 for existing_device in &accepted {
                                                     if existing_device != &device_id && existing_device != &creator_device_id {
@@ -368,9 +421,9 @@ pub async fn handle_websocket_message<C>(
                                         
                                         // Capture accepted devices BEFORE dropping the lock
                                         let self_device_id = state_guard.device_id.clone();
-                                        let accepted_devices_for_webrtc = if let Some(ref session) = state_guard.session {
+                                        let participants_for_webrtc = if let Some(ref session) = state_guard.session {
                                             // CRITICAL: Filter out self from accepted devices
-                                            session.accepted_devices
+                                            session.participants
                                                 .iter()
                                                 .filter(|dev| **dev != self_device_id)
                                                 .cloned()
@@ -384,9 +437,9 @@ pub async fn handle_websocket_message<C>(
                                         drop(state_guard);
                                         
                                         // Directly initiate WebRTC connections with the captured list
-                                        if !accepted_devices_for_webrtc.is_empty() {
+                                        if !participants_for_webrtc.is_empty() {
                                             crate::network::webrtc::initiate_webrtc_connections(
-                                                accepted_devices_for_webrtc,
+                                                participants_for_webrtc,
                                                 self_device_id,
                                                 state.clone(),
                                                 internal_cmd_tx.clone(),
@@ -449,7 +502,7 @@ pub async fn handle_websocket_message<C>(
                             // Log removed
                                         // Update our session with the new participant list
                                         if let Some(ref mut session) = state_guard.session {
-                                            let old_participants = session.accepted_devices.clone();
+                                            let old_participants = session.participants.clone();
                                             let session_total = session.total; // Extract before validation
                                             
                                             // Validate that new list is a superset of old list
@@ -467,7 +520,7 @@ pub async fn handle_websocket_message<C>(
                                                 return; // Reject invalid update
                                             }
                                             
-                                            session.accepted_devices = proposal.participants.clone();
+                                            session.participants = proposal.participants.clone();
                                             
                                             // Find new participants we need to connect to
                                             let new_participants: Vec<String> = proposal.participants.iter()
@@ -511,7 +564,6 @@ pub async fn handle_websocket_message<C>(
                                                 total: proposal.total,
                                                 threshold: proposal.threshold,
                                                 participants: proposal.participants.clone(),
-                                                accepted_devices: Vec::new(),
                                                 session_type: proposal.session_type.clone(),
                                                 curve_type: proposal.curve_type.clone(),
                                                 coordination_type: proposal.coordination_type.clone(),
@@ -577,10 +629,13 @@ pub async fn handle_websocket_message<C>(
                                             .unwrap_or(false);
                                         
                                         if session_matches {
+                                            let should_initiate_webrtc;
+                                            let participants_for_webrtc;
+                                            
                                             if let Some(ref mut session) = state_guard.session {
-                                                let old_count = session.accepted_devices.len();
-                                                session.accepted_devices = update.accepted_devices.clone();
-                                                let new_count = session.accepted_devices.len();
+                                                let old_count = session.participants.len();
+                                                session.participants = update.participants.clone();
+                                                let new_count = session.participants.len();
                                                 
                                                 if new_count != old_count {
                                                     tracing::info!("Session participants updated: {}/{}", new_count, session.total);
@@ -588,10 +643,36 @@ pub async fn handle_websocket_message<C>(
                                                 
                             // Log removed
                                                 
-                                                // If this is a new participant joining, we might need to connect to them
-                                                if matches!(&update.update_type, crate::protocal::signal::SessionUpdateType::ParticipantJoined | crate::protocal::signal::SessionUpdateType::ParticipantRejoined) {
-                            // Log removed
-                                                }
+                                                // If this is a new participant joining, we need to initiate WebRTC
+                                                should_initiate_webrtc = matches!(&update.update_type, 
+                                                    crate::protocal::signal::SessionUpdateType::ParticipantJoined | 
+                                                    crate::protocal::signal::SessionUpdateType::ParticipantRejoined);
+                                                
+                                                // Get all participants except self for WebRTC connection
+                                                participants_for_webrtc = update.participants.iter()
+                                                    .filter(|&p| p != &self_device_id)
+                                                    .cloned()
+                                                    .collect::<Vec<_>>();
+                                            } else {
+                                                should_initiate_webrtc = false;
+                                                participants_for_webrtc = Vec::new();
+                                            }
+                                            
+                                            // Drop the state lock before initiating WebRTC
+                                            drop(state_guard);
+                                            
+                                            // Now initiate WebRTC connections if needed
+                                            if should_initiate_webrtc && !participants_for_webrtc.is_empty() {
+                                                tracing::info!("🚀 Triggering WebRTC connections after SessionUpdate with {} participants", 
+                                                    participants_for_webrtc.len());
+                                                
+                                                // Initiate WebRTC connections with all participants
+                                                crate::network::webrtc::initiate_webrtc_connections(
+                                                    participants_for_webrtc,
+                                                    self_device_id.clone(),
+                                                    state.clone(),
+                                                    internal_cmd_tx.clone(),
+                                                ).await;
                                             }
                                         } else {
                                             // Log current session for debugging

@@ -91,6 +91,15 @@ where
     fn mount_components(&mut self) -> anyhow::Result<()> {
         debug!("🔧 Mounting components for screen: {:?}", self.model.current_screen);
         
+        // Log state before mounting
+        if matches!(self.model.current_screen, Screen::ThresholdConfig) {
+            let selected = self.model.ui_state.selected_indices
+                .get(&crate::elm::model::ComponentId::ThresholdConfig)
+                .copied()
+                .unwrap_or(0);
+            info!("🔄 PRE-MOUNT: ThresholdConfig selected_field in model = {}", selected);
+        }
+        
         // Clear all components first
         self.app.umount_all();
         
@@ -137,7 +146,13 @@ where
                 self.app.active(&Id::WalletDetail)?;
             }
             Screen::CreateWallet(_) => {
-                let mut create_wallet = crate::elm::components::CreateWalletComponent::new();
+                info!("🔨 Mounting CreateWallet component with state: {:?}", 
+                     self.model.wallet_state.creating_wallet);
+                
+                // Pass the wallet state to the component
+                let mut create_wallet = crate::elm::components::CreateWalletComponent::with_state(
+                    self.model.wallet_state.creating_wallet.clone()
+                );
                 
                 // Set the selected index from the model
                 let selected = self.model.ui_state.selected_indices
@@ -149,6 +164,7 @@ where
                 debug!("   - Model focus: {:?}", self.model.ui_state.focus);
                 debug!("   - Model selected indices: {:?}", self.model.ui_state.selected_indices);
                 debug!("   - Setting component selected index to: {}", selected);
+                debug!("   - Wallet state: {:?}", self.model.wallet_state.creating_wallet);
                 
                 create_wallet.set_selected(selected);
                 
@@ -163,39 +179,177 @@ where
             }
             Screen::ModeSelection => {
                 debug!("🔧 Mounting ModeSelection component");
+                // Get the selected index for ModeSelection
+                let selected = self.model.ui_state.selected_indices
+                    .get(&self.model.ui_state.focus)
+                    .cloned()
+                    .unwrap_or(0);
+                debug!("ModeSelection selected index: {}", selected);
                 self.app.mount(
-                    Id::CreateWallet,
-                    Box::new(crate::elm::components::ModeSelectionComponent::new()),
+                    Id::ModeSelection,
+                    Box::new(crate::elm::components::ModeSelectionComponent::with_selected(selected)),
                     vec![]
                 )?;
-                self.app.active(&Id::CreateWallet)?;
+                self.app.active(&Id::ModeSelection)?;
             }
             Screen::CurveSelection => {
                 debug!("🔧 Mounting CurveSelection component");
+                // Get the selected index for CurveSelection
+                let selected = self.model.ui_state.selected_indices
+                    .get(&self.model.ui_state.focus)
+                    .cloned()
+                    .unwrap_or(0);
+                debug!("CurveSelection selected index: {}", selected);
                 self.app.mount(
-                    Id::CreateWallet,
-                    Box::new(crate::elm::components::CurveSelectionComponent::new()),
+                    Id::CurveSelection,
+                    Box::new(crate::elm::components::CurveSelectionComponent::with_selected(selected)),
                     vec![]
                 )?;
-                self.app.active(&Id::CreateWallet)?;
+                self.app.active(&Id::CurveSelection)?;
             }
             Screen::ThresholdConfig => {
                 debug!("🔧 Mounting ThresholdConfig component");
+                
+                // ALWAYS get the selected field from the correct place
+                let selected_field = self.model.ui_state.selected_indices
+                    .get(&crate::elm::model::ComponentId::ThresholdConfig)
+                    .copied()
+                    .unwrap_or(0);
+                    
+                info!("🎯 ThresholdConfig selected_field from model: {}", selected_field);
+                
+                // Get values from model if available
+                let (participants, threshold) = if let Some(ref creating_wallet) = self.model.wallet_state.creating_wallet {
+                    if let Some(ref config) = creating_wallet.custom_config {
+                        debug!("Using custom_config values");
+                        (config.total_participants, config.threshold)
+                    } else {
+                        debug!("ThresholdConfig mounting with default values (no custom_config)");
+                        (3, 2) // Default values
+                    }
+                } else {
+                    debug!("ThresholdConfig mounting with default values (no creating_wallet)");
+                    (3, 2) // Default values
+                };
+                
+                info!("🎯 FINAL: Mounting ThresholdConfig with participants={}, threshold={}, selected_field={}", 
+                     participants, threshold, selected_field);
+                
+                // First unmount if already mounted to force recreation
+                if self.app.mounted(&Id::ThresholdConfig) {
+                    debug!("Unmounting existing ThresholdConfig component first");
+                    let _ = self.app.umount(&Id::ThresholdConfig);
+                }
+                
                 self.app.mount(
-                    Id::CreateWallet,
-                    Box::new(crate::elm::components::ThresholdConfigComponent::new()),
+                    Id::ThresholdConfig,
+                    Box::new(crate::elm::components::ThresholdConfigComponent::with_values(
+                        participants, threshold, selected_field
+                    )),
                     vec![]
                 )?;
-                self.app.active(&Id::CreateWallet)?;
+                self.app.active(&Id::ThresholdConfig)?;
             }
             Screen::JoinSession => {
                 debug!("🔧 Mounting JoinSession component");
+                
+                // Create component and update it with real sessions from model
+                let mut component = crate::elm::components::JoinSessionComponent::new();
+                
+                // Convert model sessions to UI format
+                let ui_sessions: Vec<crate::elm::components::join_session::SessionInfo> = self.model.session_invites
+                    .iter()
+                    .map(|s| {
+                        use crate::elm::components::join_session::{SessionInfo, SessionStatus, SessionType};
+                        SessionInfo {
+                            id: s.session_id.clone(),
+                            session_type: match s.session_type {
+                                crate::protocal::signal::SessionType::DKG => SessionType::DKG,
+                                crate::protocal::signal::SessionType::Signing { .. } => SessionType::Signing,
+                            },
+                            creator: s.proposer_id.clone(),
+                            status: SessionStatus::Waiting,
+                            participants: s.participants.clone(),
+                            required: s.total as usize,
+                            joined: s.participants.len(),
+                            curve: s.curve_type.clone(),
+                            mode: s.coordination_type.clone(),
+                            created_at: "Just now".to_string(),
+                            expires_in: "30 mins".to_string(),
+                        }
+                    })
+                    .collect();
+                
+                component.update_sessions(ui_sessions);
+                
+                // Set the selected tab from model
+                component.set_selected_tab(self.model.ui_state.join_session_tab);
+                debug!("🎯 JoinSession tab set to: {}", if self.model.ui_state.join_session_tab == 0 { "DKG" } else { "Signing" });
+                
+                // Set the selected index from model
+                if let Some(selected_idx) = self.model.ui_state.selected_indices.get(&crate::elm::model::ComponentId::JoinSession) {
+                    component.set_selected_index(*selected_idx);
+                    debug!("🎯 JoinSession selected index set to: {}", selected_idx);
+                }
+                
                 self.app.mount(
-                    Id::CreateWallet,
-                    Box::new(crate::elm::components::JoinSessionComponent::new()),
+                    Id::JoinSession,
+                    Box::new(component),
                     vec![]
                 )?;
-                self.app.active(&Id::CreateWallet)?;
+                self.app.active(&Id::JoinSession)?;
+            }
+            Screen::DKGProgress { ref session_id } => {
+                info!("🔧 Mounting DKGProgress component for session: {}", session_id);
+                
+                // Get config values from creating_wallet state
+                let (total_participants, threshold) = if let Some(ref creating_wallet) = self.model.wallet_state.creating_wallet {
+                    if let Some(ref config) = creating_wallet.custom_config {
+                        (config.total_participants, config.threshold)
+                    } else {
+                        (3, 2) // Default values
+                    }
+                } else {
+                    (3, 2) // Default values
+                };
+                
+                // Create the DKG progress component with proper state
+                let mut dkg_progress = crate::elm::components::DKGProgressComponent::new(
+                    session_id.clone(),
+                    total_participants,
+                    threshold
+                );
+                
+                // Update WebSocket connection status
+                dkg_progress.set_websocket_connected(self.model.network_state.connected);
+                
+                // Add participants from active session if available
+                if let Some(ref session) = self.model.active_session {
+                    for participant in &session.participants {
+                        dkg_progress.update_participant(
+                            participant.clone(),
+                            crate::elm::components::dkg_progress::ParticipantStatus::DataChannelOpen
+                        );
+                    }
+                } else {
+                    // If no active session, at least add current device
+                    dkg_progress.update_participant(
+                        self.model.device_id.clone(),
+                        crate::elm::components::dkg_progress::ParticipantStatus::DataChannelOpen
+                    );
+                }
+                
+                // Set the selected action from the model
+                if let Some(selected_action) = self.model.ui_state.selected_indices.get(&crate::elm::model::ComponentId::DKGProgress) {
+                    dkg_progress.set_selected_action(*selected_action);
+                }
+                
+                self.app.mount(
+                    Id::DKGProgress,
+                    Box::new(dkg_progress),
+                    vec![]
+                )?;
+                self.app.active(&Id::DKGProgress)?;
             }
             _ => {
                 // Default to main menu for unimplemented screens
@@ -245,7 +399,13 @@ where
         }
         
         // Check if this is a scroll message that needs component update
-        let needs_component_update = matches!(msg, Message::ScrollUp | Message::ScrollDown);
+        let needs_component_update = matches!(msg, Message::ScrollUp | Message::ScrollDown | Message::ScrollLeft | Message::ScrollRight);
+        
+        // Check if this is a force remount message
+        let force_remount = matches!(msg, Message::ForceRemount);
+        if force_remount {
+            info!("🔄 ForceRemount detected in app.rs");
+        }
         
         // Update the model and get command
         if let Some(command) = update(&mut self.model, msg.clone()) {
@@ -267,9 +427,11 @@ where
         debug!("Current screen after: {:?}", self.model.current_screen);
         
         // Check if we need to remount
-        let need_remount = self.should_remount() || needs_component_update;
-        debug!("Need remount: {} (should_remount: {}, needs_update: {})", 
-               need_remount, self.should_remount(), needs_component_update);
+        let need_remount = self.should_remount() || needs_component_update || force_remount;
+        if need_remount {
+            info!("🔁 Need remount: {} (should_remount: {}, needs_update: {}, force: {})", 
+                   need_remount, self.should_remount(), needs_component_update, force_remount);
+        }
         
         // Enhanced debug logging for CreateWallet state sync
         if matches!(self.model.current_screen, Screen::CreateWallet(_)) {
@@ -285,8 +447,32 @@ where
         // Remount components if screen changed or selection updated
         if need_remount {
             debug!("Remounting components for screen: {:?}", self.model.current_screen);
+            
+            // Add specific debug for ThresholdConfig
+            if matches!(self.model.current_screen, Screen::ThresholdConfig) {
+                let selected_field = self.model.ui_state.selected_indices
+                    .get(&crate::elm::model::ComponentId::ThresholdConfig)
+                    .copied()
+                    .unwrap_or(0);
+                info!("🔄 REMOUNTING ThresholdConfig with selected_field={} from selected_indices", selected_field);
+            }
+            
+            // Add specific debug for DKGProgress
+            if matches!(self.model.current_screen, Screen::DKGProgress { .. }) {
+                let selected_action = self.model.ui_state.selected_indices
+                    .get(&crate::elm::model::ComponentId::DKGProgress)
+                    .copied()
+                    .unwrap_or(0);
+                info!("🔄 REMOUNTING DKGProgress with selected_action={} from selected_indices", selected_action);
+            }
+            
             if let Err(e) = self.mount_components() {
                 error!("Failed to mount components: {}", e);
+            }
+            
+            // Force a render after remounting to ensure UI updates
+            if let Err(e) = self.render() {
+                error!("Failed to render after remount: {}", e);
             }
         }
         
@@ -302,6 +488,11 @@ where
             Screen::ManageWallets => !self.app.mounted(&Id::WalletList),
             Screen::WalletDetail { .. } => !self.app.mounted(&Id::WalletDetail),
             Screen::CreateWallet(_) => !self.app.mounted(&Id::CreateWallet),
+            Screen::ModeSelection => !self.app.mounted(&Id::ModeSelection),
+            Screen::CurveSelection => !self.app.mounted(&Id::CurveSelection),
+            Screen::ThresholdConfig => !self.app.mounted(&Id::ThresholdConfig),
+            Screen::JoinSession => !self.app.mounted(&Id::JoinSession),
+            Screen::DKGProgress { .. } => !self.app.mounted(&Id::DKGProgress),
             _ => false,
         }
     }
@@ -365,9 +556,12 @@ where
     async fn handle_terminal_event(&mut self, event: CrosstermEvent) -> anyhow::Result<()> {
         match event {
             CrosstermEvent::Key(key_event) => {
-                debug!("📺 Received key event: {:?}", key_event);
+                info!("📺 Received key event: {:?}", key_event);
                 
-                // Special debug for Esc key at terminal level
+                // Special debug for Enter and Esc keys at terminal level
+                if matches!(key_event.code, crossterm::event::KeyCode::Enter) {
+                    info!("🔥 ENTER KEY RECEIVED AT TERMINAL LEVEL!");
+                }
                 if matches!(key_event.code, crossterm::event::KeyCode::Esc) {
                     debug!("🚨 ESC KEY RECEIVED AT TERMINAL LEVEL!");
                 }
@@ -376,10 +570,9 @@ where
                 if let Some(msg) = msg {
                     debug!("🎯 Key event produced message: {:?}", msg);
                     self.process_message(msg).await;
-                    self.render()?;
-                } else {
-                    debug!("⚠️ Key event produced no message");
                 }
+                // Always render after key events to show component updates
+                self.render()?;
             }
             CrosstermEvent::Resize(_, _) => {
                 debug!("Terminal resized");
@@ -398,6 +591,17 @@ where
         debug!("🔑 Key pressed: {:?}", key.code);
         
         use crossterm::event::KeyCode;
+        
+        // Check if modal is open first - modal keys take priority
+        if self.model.ui_state.modal.is_some() {
+            match key.code {
+                KeyCode::Enter | KeyCode::Esc => {
+                    debug!("🔙 Modal dismissed with Enter/Esc");
+                    return Some(Message::CloseModal);
+                }
+                _ => return None, // Ignore other keys when modal is open
+            }
+        }
         
         // Global keys first - work everywhere
         match key.code {
@@ -420,24 +624,74 @@ where
             _ => {}
         }
         
-        // Screen-specific keys
+        // For ThresholdConfig screen, we need to update the component's state and then remount
+        // Since tuirealm doesn't provide a direct way to send commands to components,
+        // we'll update our model and remount the component
+        if matches!(self.model.current_screen, Screen::ThresholdConfig) {
+            match key.code {
+                KeyCode::Left | KeyCode::Right => {
+                    // These are handled by ScrollLeft/ScrollRight which update the model
+                    // and trigger a remount
+                    if key.code == KeyCode::Left {
+                        info!("⬅️ ThresholdConfig LEFT -> ScrollLeft");
+                        return Some(Message::ScrollLeft);
+                    } else {
+                        info!("➡️ ThresholdConfig RIGHT -> ScrollRight");  
+                        return Some(Message::ScrollRight);
+                    }
+                }
+                KeyCode::Up | KeyCode::Down => {
+                    // For up/down, we need to update the values
+                    // Let the normal ScrollUp/ScrollDown handle it
+                    if key.code == KeyCode::Up {
+                        info!("🔼 ThresholdConfig UP -> ScrollUp");
+                        return Some(Message::ScrollUp);
+                    } else {
+                        info!("🔽 ThresholdConfig DOWN -> ScrollDown");
+                        return Some(Message::ScrollDown);
+                    }
+                }
+                KeyCode::Enter => {
+                    info!("🔥 ThresholdConfig ENTER -> SelectItem");
+                    let selected_index = self.model.ui_state.selected_indices
+                        .get(&crate::elm::model::ComponentId::ThresholdConfig)
+                        .copied()
+                        .unwrap_or(0);
+                    return Some(Message::SelectItem { index: selected_index });
+                }
+                _ => {}
+            }
+        }
+        
+        // Screen-specific keys for other screens
         match key.code {
             KeyCode::Up => {
-                debug!("⬆️ Up -> ScrollUp");
+                info!("🔼 UP ARROW KEY PRESSED! -> ScrollUp");
                 Some(Message::ScrollUp)
             }
             KeyCode::Down => {
-                debug!("⬇️ Down -> ScrollDown");
+                info!("🔽 DOWN ARROW KEY PRESSED! -> ScrollDown");
                 Some(Message::ScrollDown)
             }
+            KeyCode::Left => {
+                info!("⬅️ LEFT ARROW KEY PRESSED! -> ScrollLeft");
+                Some(Message::ScrollLeft)
+            }
+            KeyCode::Right => {
+                info!("➡️ RIGHT ARROW KEY PRESSED! -> ScrollRight");
+                Some(Message::ScrollRight)
+            }
             KeyCode::Enter => {
+                info!("🔥 ENTER KEY PRESSED! Screen: {:?}, Focus: {:?}", 
+                     self.model.current_screen, self.model.ui_state.focus);
+                
                 // Get the current selected index from the model for the focused component
                 let selected_index = self.model.ui_state.selected_indices
                     .get(&self.model.ui_state.focus)
                     .copied()
                     .unwrap_or(0);
                     
-                debug!("✅ Enter -> SelectItem with current selected index: {} (focus: {:?})", 
+                info!("✅ Enter -> SelectItem with current selected index: {} (focus: {:?})", 
                        selected_index, self.model.ui_state.focus);
                 Some(Message::SelectItem { index: selected_index })
             }
@@ -484,9 +738,23 @@ where
                 Screen::WalletDetail { .. } => {
                     self.app.view(&Id::WalletDetail, f, main_area);
                 }
-                Screen::CreateWallet(_) | Screen::ModeSelection | Screen::CurveSelection | 
-                Screen::ThresholdConfig | Screen::JoinSession => {
+                Screen::CreateWallet(_) => {
                     self.app.view(&Id::CreateWallet, f, main_area);
+                }
+                Screen::ModeSelection => {
+                    self.app.view(&Id::ModeSelection, f, main_area);
+                }
+                Screen::CurveSelection => {
+                    self.app.view(&Id::CurveSelection, f, main_area);
+                }
+                Screen::ThresholdConfig => {
+                    self.app.view(&Id::ThresholdConfig, f, main_area);
+                }
+                Screen::JoinSession => {
+                    self.app.view(&Id::JoinSession, f, main_area);
+                }
+                Screen::DKGProgress { .. } => {
+                    self.app.view(&Id::DKGProgress, f, main_area);
                 }
                 _ => {
                     // Fallback to main menu

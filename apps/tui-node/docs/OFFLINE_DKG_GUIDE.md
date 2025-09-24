@@ -183,7 +183,7 @@ mkdir -p /Volumes/DKG_TRANSFER/dkg_ceremony/final
 1. **Create DKG Session**
    ```
    Session Parameters:
-   - Session ID: DKG-2025-001-OFFLINE
+   - Session ID: [Generated UUID at runtime]
    - Threshold: 2-of-3
    - Curve: Secp256k1
    - Participants: 3
@@ -270,7 +270,7 @@ mkdir -p /Volumes/DKG_TRANSFER/dkg_ceremony/final
    ```json
    {
      "round": 1,
-     "session_id": "DKG-2025-001-OFFLINE",
+     "session_id": "dkg_[uuid]",
      "commitments": {
        "P1": {...},
        "P2": {...},
@@ -468,7 +468,7 @@ mkdir -p /Volumes/DKG_TRANSFER/dkg_ceremony/final
 ```json
 {
   "version": "1.0",
-  "session_id": "DKG-2025-001-OFFLINE",
+  "session_id": "dkg_[uuid]",
   "threshold": 2,
   "participants": 3,
   "curve": "secp256k1",
@@ -483,7 +483,7 @@ mkdir -p /Volumes/DKG_TRANSFER/dkg_ceremony/final
 {
   "round": 1,
   "participant_id": "P1",
-  "session_id": "DKG-2025-001-OFFLINE",
+  "session_id": "dkg_[uuid]",
   "commitment": {
     "points": ["0x04abc...", "0x04def..."],
     "proof_of_knowledge": "0x7f3a9b..."
@@ -498,7 +498,7 @@ mkdir -p /Volumes/DKG_TRANSFER/dkg_ceremony/final
   "round": 2,
   "from": "P1",
   "to": "P2",
-  "session_id": "DKG-2025-001-OFFLINE",
+  "session_id": "dkg_[uuid]",
   "encrypted_share": "AES256-GCM:0x8b3f...",
   "share_commitment": "0x04abc...",
   "signature": "0x3045022100..."

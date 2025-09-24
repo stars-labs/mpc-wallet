@@ -103,16 +103,13 @@ async fn run_elm_tui(device_id: String, signal_server: String, offline: bool) ->
 
     info!("🚀 Starting Elm Architecture TUI");
 
-    // Create app state
+    // Create app state with device ID and signal server URL
     let app_state = Arc::new(tokio::sync::Mutex::new(
-        tui_node::utils::appstate_compat::AppState::<Secp256K1Sha256>::new()
+        tui_node::utils::appstate_compat::AppState::<Secp256K1Sha256>::with_device_id_and_server(
+            device_id.clone(),
+            signal_server.clone()
+        )
     ));
-
-    // Update device ID in app state
-    {
-        let mut state = app_state.lock().await;
-        state.device_id = device_id.clone();
-    }
 
     // Create and initialize Elm app
     let mut elm_app = ElmApp::new(device_id.clone(), app_state.clone())?;

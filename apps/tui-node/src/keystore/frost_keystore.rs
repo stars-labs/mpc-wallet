@@ -360,7 +360,7 @@ impl FrostKeystoreManager {
     }
     
     /// Derives Ethereum address from FROST public key
-    fn derive_ethereum_address(&self, public_key_bytes: &[u8]) -> String {
+    pub fn derive_ethereum_address(&self, public_key_bytes: &[u8]) -> String {
         use sha3::{Digest, Keccak256};
         use k256::{PublicKey, elliptic_curve::sec1::ToEncodedPoint};
         

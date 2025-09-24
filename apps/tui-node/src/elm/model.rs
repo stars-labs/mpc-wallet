@@ -138,6 +138,7 @@ pub struct UIState {
     pub success_message: Option<String>,
     pub is_busy: bool,
     pub progress: Option<ProgressInfo>,
+    pub join_session_tab: usize, // 0 = DKG, 1 = Signing
 }
 
 impl Default for UIState {
@@ -153,6 +154,7 @@ impl Default for UIState {
             success_message: None,
             is_busy: false,
             progress: None,
+            join_session_tab: 0, // Default to DKG tab
         }
     }
 }
@@ -254,6 +256,11 @@ pub enum ComponentId {
     Modal,
     Notification,
     CreateWallet,
+    ModeSelection,
+    CurveSelection,
+    ThresholdConfig,
+    JoinSession,
+    DKGProgress,
     Custom(String),
 }
 

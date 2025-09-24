@@ -50,7 +50,15 @@ async fn main() {
             let device_sessions = device_sessions.clone();
 
             tokio::spawn(async move {
-                let ws_stream = accept_async(stream).await.unwrap();
+                // Handle WebSocket handshake errors gracefully
+                let ws_stream = match accept_async(stream).await {
+                    Ok(ws) => ws,
+                    Err(e) => {
+                        // This is likely a connection test or non-WebSocket connection
+                        eprintln!("WebSocket handshake failed (this is normal for connection tests): {:?}", e);
+                        return;
+                    }
+                };
                 let (mut ws_sink, mut ws_stream) = ws_stream.split();
                 let (tx, mut rx) = mpsc::unbounded_channel::<Message>();
                 let mut device_id: Option<String> = None;
@@ -239,8 +247,12 @@ async fn main() {
                                 Ok(ClientMsg::AnnounceSession { session_info }) => {
                                     // Store the session for later discovery
                                     if let Some(ref device) = device_id {
-                                        // Extract session code from the announcement if possible
-                                        let session_key = if let Some(code) = session_info.get("session_code")
+                                        // Extract session ID from the announcement
+                                        // Check for both session_id and session_code for compatibility
+                                        let session_key = if let Some(id) = session_info.get("session_id")
+                                            .and_then(|v| v.as_str()) {
+                                            id.to_string()
+                                        } else if let Some(code) = session_info.get("session_code")
                                             .and_then(|v| v.as_str()) {
                                             code.to_string()
                                         } else {
@@ -315,10 +327,74 @@ async fn main() {
                                     drop(devices_guard);
                                 }
                                 Ok(ClientMsg::SessionStatusUpdate { session_info }) => {
-                                    // This is a response to RequestActiveSessions, relay it to the requester
-                                    // The session_info should contain the requester's device_id
-                                    // For now, we'll just log it - in a real implementation, we'd parse and route properly
                                     println!("Session status update from {}: {:?}", device_id.as_deref().unwrap_or("unknown"), session_info);
+                                    
+                                    // Handle participant joining a session
+                                    if let Some(participant_joined) = session_info.get("participant_joined")
+                                        .and_then(|v| v.as_str()) {
+                                        
+                                        if let Some(session_id) = session_info.get("session_id")
+                                            .and_then(|v| v.as_str()) {
+                                            
+                                            // Update the stored session with new participant
+                                            let mut sessions_guard = sessions.lock().unwrap();
+                                            if let Some(stored_session) = sessions_guard.get_mut(session_id) {
+                                                // Add participant to the participants array in session_info
+                                                if let Some(participants) = stored_session.session_info
+                                                    .get_mut("participants")
+                                                    .and_then(|v| v.as_array_mut()) {
+                                                    
+                                                    // Check if participant isn't already in list
+                                                    let already_joined = participants.iter()
+                                                        .any(|p| p.as_str() == Some(participant_joined));
+                                                    
+                                                    if !already_joined {
+                                                        participants.push(serde_json::Value::String(participant_joined.to_string()));
+                                                        println!("Added {} to session {} participants", participant_joined, session_id);
+                                                        
+                                                        // Also update active_participants
+                                                        if !stored_session.active_participants.contains(&participant_joined.to_string()) {
+                                                            stored_session.active_participants.push(participant_joined.to_string());
+                                                        }
+                                                    }
+                                                }
+                                                
+                                                // Broadcast updated session to all participants
+                                                let updated_session_info = stored_session.session_info.clone();
+                                                let participant_count = updated_session_info.get("participants")
+                                                    .and_then(|v| v.as_array())
+                                                    .map(|arr| arr.len())
+                                                    .unwrap_or(0);
+                                                drop(sessions_guard);
+                                                
+                                                // Broadcast updated session using Relay to trigger WebRTC
+                                                // Send a special relay message that will be recognized as a participant update
+                                                let update_msg = serde_json::json!({
+                                                    "type": "participant_update",
+                                                    "session_id": session_id,
+                                                    "session_info": updated_session_info.clone(),
+                                                });
+                                                
+                                                let devices_guard = devices.lock().unwrap();
+                                                println!("Broadcasting participant update for session {} with {} participants", 
+                                                    session_id, participant_count);
+                                                
+                                                // Relay to all devices to trigger WebRTC connections
+                                                for (id, device_tx) in devices_guard.iter() {
+                                                    let relay = ServerMsg::Relay {
+                                                        from: "server".to_string(),
+                                                        data: update_msg.clone(),
+                                                    };
+                                                    let msg_txt = serde_json::to_string(&relay).unwrap();
+                                                    let _ = device_tx.send(Message::Text(msg_txt.into()));
+                                                    println!("Sent participant update to device: {}", id);
+                                                }
+                                                drop(devices_guard);
+                                            } else {
+                                                println!("Session {} not found for participant update", session_id);
+                                            }
+                                        }
+                                    }
                                 }
                                 Ok(ClientMsg::QueryMyActiveSessions) => {
                                     // Client asks "what sessions am I in?"

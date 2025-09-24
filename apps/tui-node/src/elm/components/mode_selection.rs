@@ -47,6 +47,14 @@ impl ModeSelectionComponent {
         }
     }
     
+    pub fn with_selected(selected: usize) -> Self {
+        Self {
+            props: Props::default(),
+            selected,
+            focused: false,
+        }
+    }
+    
     fn get_modes(&self) -> Vec<OperationMode> {
         vec![
             OperationMode {
@@ -163,11 +171,11 @@ impl MockComponent for ModeSelectionComponent {
     
     fn perform(&mut self, cmd: Cmd) -> CmdResult {
         match cmd {
-            Cmd::Move(Direction::Left) => {
+            Cmd::Move(Direction::Left) | Cmd::Move(Direction::Up) => {
                 self.selected = 0;
                 CmdResult::Changed(self.state())
             }
-            Cmd::Move(Direction::Right) => {
+            Cmd::Move(Direction::Right) | Cmd::Move(Direction::Down) => {
                 self.selected = 1;
                 CmdResult::Changed(self.state())
             }
@@ -180,7 +188,7 @@ impl MockComponent for ModeSelectionComponent {
 impl ModeSelectionComponent {
     fn render_header(&self, frame: &mut Frame, area: Rect) {
         let header_text = vec![
-            "🔐 OPERATION MODE SELECTION",
+            "🔐 OPERATION MODE SELECTION (Step 1 of 3)",
             "",
             "Choose between Online (Hot) and Offline (Cold) wallet modes",
             "This decision affects security, convenience, and operational workflow",
@@ -268,7 +276,7 @@ impl ModeSelectionComponent {
         let footer_text = vec![
             format!("Selected: {} Mode", selected_mode),
             "".to_string(),
-            "← → Switch Between Modes | Enter: Confirm Selection | Esc: Back".to_string(),
+            "← → Switch Between Modes | Enter: Next Step | Esc: Cancel".to_string(),
             "💡 Tip: You can switch modes later, but it requires re-initialization".to_string(),
         ];
         
@@ -306,7 +314,7 @@ impl Component<Message, UserEvent> for ModeSelectionComponent {
 
 impl MpcWalletComponent for ModeSelectionComponent {
     fn id(&self) -> Id {
-        Id::CreateWallet
+        Id::ModeSelection
     }
     
     fn is_visible(&self) -> bool {

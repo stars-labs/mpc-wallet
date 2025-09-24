@@ -59,8 +59,8 @@ pub async fn handle_send_own_mesh_ready_signal<C>(
             self_device_id_local = state_guard.device_id.clone();
 
             if let Some(session) = &state_guard.session {
-                // FIX: Check accepted_devices instead of participants
-                let accepted_count = session.accepted_devices.len();
+                // FIX: Check participants instead of participants
+                let accepted_count = session.participants.len();
                 let total_needed = session.total as usize;
                 
                 if accepted_count < total_needed {
@@ -69,7 +69,7 @@ pub async fn handle_send_own_mesh_ready_signal<C>(
                 
                 session_id_local = session.session_id.clone();
                 participants_local = session.participants.clone();
-                let accepted_devices = session.accepted_devices.clone();
+                let participants = session.participants.clone();
                 let total_needed = session.total as usize;
                 
                 let mut ready_devices = match &state_guard.mesh_status {
@@ -85,7 +85,7 @@ pub async fn handle_send_own_mesh_ready_signal<C>(
                     mesh_became_ready = true;
                     
                     // Create identifier map when mesh is ready
-                    let mut sorted_participants = accepted_devices.clone();
+                    let mut sorted_participants = participants.clone();
                     sorted_participants.sort();
                     
                     let mut identifier_map = std::collections::HashMap::new();
@@ -163,10 +163,10 @@ pub async fn handle_process_mesh_ready<C>(
             if let Some(session) = &state_guard.session {
                 let _current_count = session.participants.len();
                 let total_needed = session.total as usize;
-                let accepted_count = session.accepted_devices.len();
-                let accepted_devices = session.accepted_devices.clone();
+                let accepted_count = session.participants.len();
+                let participants = session.participants.clone();
                 
-                // FIX: Only check accepted_devices count
+                // FIX: Only check participants count
                 if accepted_count < total_needed {
                     state_guard.pending_mesh_ready_signals.insert(device_id.clone());
                     return; // Wait for all acceptances
@@ -190,7 +190,7 @@ pub async fn handle_process_mesh_ready<C>(
                     
                     // Create identifier map if needed
                     if state_guard.identifier_map.is_none() {
-                        let mut sorted_participants = accepted_devices.clone();
+                        let mut sorted_participants = participants.clone();
                         sorted_participants.sort();
                         
                         let mut identifier_map = std::collections::HashMap::new();

@@ -89,7 +89,6 @@ where
         total: session_config.total,
         threshold: session_config.threshold,
         participants: vec![device_id.clone()],
-        accepted_devices: vec![device_id.clone()],
         session_type: SessionType::DKG,
         curve_type: session_config.curve_type.clone(),
         coordination_type: match session_config.mode {
@@ -197,7 +196,6 @@ pub async fn handle_propose_session<C: Ciphersuite + Send + Sync + 'static>(
         total,
         threshold,
         participants: vec![device_id.clone()],
-        accepted_devices: vec![device_id.clone()],
         session_type: SessionType::DKG,
         curve_type: "secp256k1".to_string(),
         coordination_type: "network".to_string(),
@@ -268,9 +266,9 @@ pub async fn handle_accept_session_proposal<C: Ciphersuite + Send + Sync + 'stat
     // Update session state to mark ourselves as accepted
     let (should_send_response, proposer_id) = if let Some(ref mut session) = state.session {
         if session.session_id == session_id {
-            // Add ourselves to both accepted_devices AND participants if not already there
-            let added_to_accepted = if !session.accepted_devices.contains(&device_id) {
-                session.accepted_devices.push(device_id.clone());
+            // Add ourselves to both participants AND participants if not already there
+            let added_to_accepted = if !session.participants.contains(&device_id) {
+                session.participants.push(device_id.clone());
                 true
             } else {
                 false
@@ -286,7 +284,7 @@ pub async fn handle_accept_session_proposal<C: Ciphersuite + Send + Sync + 'stat
             
             let proposer_id = session.proposer_id.clone();
             let _participants_info = session.participants.clone();
-            let _accepted_devices_info = session.accepted_devices.clone();
+            let _participants_info = session.participants.clone();
             
             // Release the mutable borrow - no explicit drop needed for owned values
             
@@ -340,10 +338,19 @@ pub async fn handle_accept_session_proposal<C: Ciphersuite + Send + Sync + 'stat
                 Err(_e) => {
                 },
             }
+            // Get participants list and device connections for WebRTC
+            let participants = state.session.as_ref().map(|s| s.participants.clone()).unwrap_or_default();
+            let self_device_id = state.device_id.clone();
+            let device_connections_arc = state.device_connections.clone();
             drop(state);
-            
-            // Now initiate WebRTC connections with other participants
-            let _ = internal_cmd_tx.send(InternalCommand::InitiateWebRTCConnections);
+
+            // Use the simplified WebRTC initiation with AppState
+            crate::network::webrtc_simple::simple_initiate_webrtc_with_channel(
+                self_device_id,
+                participants,
+                device_connections_arc,
+                app_state.clone(),
+            ).await;
         }
     } else {
         drop(state);
@@ -384,9 +391,9 @@ pub async fn handle_process_session_response<C: Ciphersuite + Send + Sync + 'sta
     
     if let Some(ref mut session) = state.session {
         if session.session_id == response.session_id {
-            // Add the accepting device to accepted_devices if not already there
-            let was_added_to_accepted = if !session.accepted_devices.contains(&from_device_id) {
-                session.accepted_devices.push(from_device_id.clone());
+            // Add the accepting device to participants if not already there
+            let was_added_to_accepted = if !session.participants.contains(&from_device_id) {
+                session.participants.push(from_device_id.clone());
                 true
             } else {
                 false
@@ -402,10 +409,9 @@ pub async fn handle_process_session_response<C: Ciphersuite + Send + Sync + 'sta
             
             // Extract values we need before dropping the mutable reference
             let session_id = session.session_id.clone();
-            let accepted_devices = session.accepted_devices.clone();
             let participants = session.participants.clone();
             let total = session.total;
-            let accepted_count = accepted_devices.len();
+            let accepted_count = participants.len();
             
             // Log the update (extract values first to avoid borrowing conflicts)
             // Release the mutable borrow before logging - no explicit drop needed for owned values
@@ -417,11 +423,11 @@ pub async fn handle_process_session_response<C: Ciphersuite + Send + Sync + 'sta
                 // Update accepted devices list
             }
             
-            // Broadcast the updated accepted_devices list to all participants
+            // Broadcast the updated participants list to all participants
             // Create a proper SessionUpdate struct that matches the protocol
             let update = crate::protocal::signal::SessionUpdate {
                 session_id: session_id.clone(),
-                accepted_devices: accepted_devices.clone(),
+                participants: participants.clone(),
                 update_type: crate::protocal::signal::SessionUpdateType::ParticipantJoined,
                 timestamp: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -459,10 +465,20 @@ pub async fn handle_process_session_response<C: Ciphersuite + Send + Sync + 'sta
                 // Only initiate WebRTC if we haven't already started
                 if state.mesh_status == crate::utils::state::MeshStatus::Incomplete {
                     state.mesh_status = crate::utils::state::MeshStatus::WebRTCInitiated;
-                    drop(state);
                     
-                    // Initiate WebRTC connections with all participants
-                    let _ = internal_cmd_tx.send(InternalCommand::InitiateWebRTCConnections);
+                    // Get participants list and device connections for WebRTC
+                    let participants = state.session.as_ref().map(|s| s.participants.clone()).unwrap_or_default();
+                    let self_device_id = state.device_id.clone();
+                    let device_connections_arc = state.device_connections.clone();
+                    drop(state);
+
+                    // Use the simplified WebRTC initiation with AppState
+                    crate::network::webrtc_simple::simple_initiate_webrtc_with_channel(
+                        self_device_id,
+                        participants,
+                        device_connections_arc,
+                        app_state.clone(),
+                    ).await;
                 } else {
                     let _status = state.mesh_status.clone();
                     drop(state);

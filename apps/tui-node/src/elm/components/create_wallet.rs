@@ -4,6 +4,7 @@
 
 use crate::elm::components::{Id, UserEvent, MpcWalletComponent};
 use crate::elm::message::Message;
+use crate::elm::model::CreateWalletState;
 
 use tuirealm::command::{Cmd, CmdResult, Direction};
 use tuirealm::event::Event;
@@ -18,6 +19,7 @@ pub struct CreateWalletComponent {
     props: Props,
     selected: usize,
     focused: bool,
+    wallet_state: Option<CreateWalletState>,
 }
 
 #[derive(Debug, Clone)]
@@ -43,6 +45,18 @@ impl CreateWalletComponent {
             props,
             selected: 0,
             focused: false,
+            wallet_state: None,
+        }
+    }
+    
+    pub fn with_state(state: Option<CreateWalletState>) -> Self {
+        let props = Props::default();
+        
+        Self {
+            props,
+            selected: 0,
+            focused: false,
+            wallet_state: state,
         }
     }
     
@@ -54,27 +68,39 @@ impl CreateWalletComponent {
     }
     
     fn get_wallet_steps(&self) -> Vec<WalletStep> {
+        let mode_completed = self.wallet_state.as_ref()
+            .and_then(|s| s.mode.as_ref())
+            .is_some();
+        
+        let curve_completed = self.wallet_state.as_ref()
+            .and_then(|s| s.curve.as_ref())
+            .is_some();
+        
+        let template_completed = self.wallet_state.as_ref()
+            .and_then(|s| s.template.as_ref())
+            .is_some();
+        
         vec![
             WalletStep {
                 icon: "🌐",
                 title: "Choose Operation Mode",
                 description: "Select Online (WebRTC mesh) or Offline (air-gapped) mode",
                 enabled: true,
-                completed: false,
+                completed: mode_completed,
             },
             WalletStep {
                 icon: "🔐",
                 title: "Select Cryptographic Curve",
                 description: "Choose Secp256k1 (Ethereum/Bitcoin) or Ed25519 (Solana)",
                 enabled: true,
-                completed: false,
+                completed: curve_completed,
             },
             WalletStep {
                 icon: "⚙️",
                 title: "Configure Threshold Parameters",
                 description: "Set participant threshold (e.g., 2-of-3, 3-of-5) for signatures",
                 enabled: true,
-                completed: false,
+                completed: template_completed,
             },
             WalletStep {
                 icon: "🚀",

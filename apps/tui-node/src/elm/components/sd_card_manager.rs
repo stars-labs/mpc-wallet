@@ -46,16 +46,21 @@ enum FileType {
     SessionParams,
     Commitment,
     EncryptedShare,
+    #[allow(dead_code)]
     PublicData,
+    #[allow(dead_code)]
     SigningRequest,
+    #[allow(dead_code)]
     SignatureShare,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 enum FileStatus {
     Ready,
+    #[allow(dead_code)]
     Processing,
     Verified,
+    #[allow(dead_code)]
     Failed,
     Encrypted,
 }
@@ -63,12 +68,19 @@ enum FileStatus {
 #[derive(Debug, Clone, PartialEq)]
 enum OperationStatus {
     Idle,
+    #[allow(dead_code)]
     Mounting,
+    #[allow(dead_code)]
     Scanning,
+    #[allow(dead_code)]
     Verifying,
+    #[allow(dead_code)]
     Exporting,
+    #[allow(dead_code)]
     Importing,
+    #[allow(dead_code)]
     Success(String),
+    #[allow(dead_code)]
     Error(String),
 }
 
@@ -89,7 +101,7 @@ impl SDCardManagerComponent {
                     size: "2.3 KB".to_string(),
                     timestamp: "2025-01-05 14:30".to_string(),
                     status: FileStatus::Verified,
-                    description: "DKG session parameters (ID: DKG-2025-001)".to_string(),
+                    description: "DKG session parameters".to_string(),
                 },
                 FileEntry {
                     name: "round1_P1_commitment.json".to_string(),

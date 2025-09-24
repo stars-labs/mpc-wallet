@@ -70,7 +70,7 @@ impl SessionAnnouncement {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionUpdate {
     pub session_id: String,
-    pub accepted_devices: Vec<String>,
+    pub participants: Vec<String>,
     pub update_type: SessionUpdateType,
 }
 

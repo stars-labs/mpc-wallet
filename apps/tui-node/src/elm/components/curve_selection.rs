@@ -50,6 +50,14 @@ impl CurveSelectionComponent {
         }
     }
     
+    pub fn with_selected(selected: usize) -> Self {
+        Self {
+            props: Props::default(),
+            selected,
+            focused: false,
+        }
+    }
+    
     fn get_curves(&self) -> Vec<CurveInfo> {
         vec![
             CurveInfo {
@@ -197,7 +205,7 @@ impl MockComponent for CurveSelectionComponent {
 impl CurveSelectionComponent {
     fn render_header(&self, frame: &mut Frame, area: Rect) {
         let header_text = vec![
-            "🔐 CRYPTOGRAPHIC CURVE SELECTION",
+            "🔐 CRYPTOGRAPHIC CURVE SELECTION (Step 2 of 3)",
             "",
             "Choose the elliptic curve for your MPC wallet",
             "This determines which blockchains you can interact with",
@@ -257,8 +265,8 @@ impl CurveSelectionComponent {
         
         // Performance info
         let perf_info = format!(
-            "📊 {} | {} | {}",
-            curve.performance, curve.security_level, curve.signature_size
+            "📊 {} | {} | {} | Key: {}",
+            curve.performance, curve.security_level, curve.signature_size, curve.key_size
         );
         let performance = Paragraph::new(perf_info)
             .style(Style::default().fg(if selected { Color::Magenta } else { Color::DarkGray }))

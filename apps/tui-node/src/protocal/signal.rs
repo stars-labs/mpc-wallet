@@ -18,6 +18,10 @@ pub enum CoordinationType {
     Offline,
 }
 
+fn default_coordination_type() -> String {
+    "Network".to_string()
+}
+
 /// Session type enum - represents different types of signing networks
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", content = "data")]
@@ -42,8 +46,7 @@ pub struct SessionInfo {
     pub proposer_id: String, // Added field
     pub total: u16,
     pub threshold: u16,
-    pub participants: Vec<String>,
-    pub accepted_devices: Vec<String>, // List of device_ids that have accepted
+    pub participants: Vec<String>, // List of device_ids that have joined the session
     pub session_type: SessionType,
     /// Cryptographic curve type from the proposer
     pub curve_type: String,
@@ -109,10 +112,6 @@ pub struct SessionProposal {
     pub coordination_type: String,
 }
 
-fn default_coordination_type() -> String {
-    "network".to_string()
-}
-
 /// Session join request
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionJoinRequest {
@@ -149,7 +148,7 @@ pub struct SessionResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionUpdate {
     pub session_id: String,
-    pub accepted_devices: Vec<String>,
+    pub participants: Vec<String>,
     pub update_type: SessionUpdateType,
     pub timestamp: u64,  // Added for ordering updates
 }
@@ -173,16 +172,16 @@ pub struct WalletStatus {
 
 impl SessionInfo {
     /// Determines the consensus leader using a deterministic algorithm
-    /// based on lexicographic ordering of accepted participants.
+    /// based on lexicographic ordering of participants.
     /// This ensures all nodes agree on the leader without central coordination.
     pub fn get_consensus_leader(&self) -> String {
-        // If we have accepted devices, use the first one lexicographically
-        if !self.accepted_devices.is_empty() {
-            let mut sorted_devices = self.accepted_devices.clone();
+        // If we have participants, use the first one lexicographically
+        if !self.participants.is_empty() {
+            let mut sorted_devices = self.participants.clone();
             sorted_devices.sort();
             sorted_devices[0].clone()
         } else {
-            // Fallback to proposer if no accepted devices yet
+            // Fallback to proposer if no participants yet
             self.proposer_id.clone()
         }
     }

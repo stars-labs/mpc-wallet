@@ -4,6 +4,7 @@ pub mod event_handler;
 pub mod connection_pool;
 pub mod message_batcher;
 pub mod deduplicator;
+pub mod dkg_session_manager;
 
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};

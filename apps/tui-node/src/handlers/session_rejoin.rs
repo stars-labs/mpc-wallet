@@ -13,10 +13,10 @@ pub async fn handle_device_disconnected<C: Ciphersuite>(
 ) {
     let mut state = app_state.lock().await;
     
-    // Remove from accepted_devices and participants
+    // Remove from participants and participants
     if let Some(ref mut session) = state.session {
         // Remove from accepted devices
-        session.accepted_devices.retain(|d| d != &device_id);
+        session.participants.retain(|d| d != &device_id);
         
         // Remove from participants but keep in invite list for potential rejoin
         // Don't remove from participants immediately - mark as disconnected instead
@@ -47,8 +47,8 @@ pub async fn handle_accept_session_with_rejoin<C: Ciphersuite + Send + Sync + 's
     
     // Check if this is a rejoin scenario
     let is_rejoin = if let Some(ref session) = state.session {
-        // If we already have this session but we're not in accepted_devices, it's a rejoin
-        session.session_id == session_id && !session.accepted_devices.contains(&device_id)
+        // If we already have this session but we're not in participants, it's a rejoin
+        session.session_id == session_id && !session.participants.contains(&device_id)
     } else {
         false
     };
@@ -98,15 +98,15 @@ pub async fn handle_accept_session_with_rejoin<C: Ciphersuite + Send + Sync + 's
         }
     }
     
-    // Update session state - ALWAYS add to accepted_devices for rejoin
+    // Update session state - ALWAYS add to participants for rejoin
     let (proposer_id, should_send_update, log_messages) = if let Some(ref mut session) = state.session {
         if session.session_id == session_id {
             let mut logs = Vec::new();
             
-            // Force add to accepted_devices (handles rejoin case)
-            if !session.accepted_devices.contains(&device_id) {
-                session.accepted_devices.push(device_id.clone());
-                logs.push(format!("✅ Added {} to accepted_devices (rejoin)", device_id));
+            // Force add to participants (handles rejoin case)
+            if !session.participants.contains(&device_id) {
+                session.participants.push(device_id.clone());
+                logs.push(format!("✅ Added {} to participants (rejoin)", device_id));
             }
             
             // Also ensure we're in participants list
@@ -182,7 +182,7 @@ async fn broadcast_rejoin_update<C: Ciphersuite>(
         let update = crate::protocal::signal::SessionUpdate {
             session_id: session_id.clone(),
             update_type: crate::protocal::signal::SessionUpdateType::ParticipantRejoined,
-            accepted_devices: session.accepted_devices.clone(),
+            participants: session.participants.clone(),
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
@@ -250,15 +250,15 @@ pub async fn handle_process_session_response_with_rejoin<C: Ciphersuite + Send +
     let log_message = if let Some(ref mut session) = state.session {
         if session.session_id == response.session_id {
             // For rejoins, ensure the device is properly added back
-            if is_rejoin || !session.accepted_devices.contains(&from_device_id) {
+            if is_rejoin || !session.participants.contains(&from_device_id) {
                 // Remove first if rejoin to ensure clean state
                 if is_rejoin {
-                    session.accepted_devices.retain(|d| d != &from_device_id);
+                    session.participants.retain(|d| d != &from_device_id);
                     session.participants.retain(|d| d != &from_device_id);
                 }
                 
                 // Add back to both lists
-                session.accepted_devices.push(from_device_id.clone());
+                session.participants.push(from_device_id.clone());
                 session.participants.push(from_device_id.clone());
                 
                 let log_msg = format!(
@@ -266,7 +266,7 @@ pub async fn handle_process_session_response_with_rejoin<C: Ciphersuite + Send +
                     from_device_id,
                     if is_rejoin { "rejoined" } else { "joined" },
                     response.session_id,
-                    session.accepted_devices.len(),
+                    session.participants.len(),
                     session.total
                 );
                 Some(log_msg)
@@ -295,7 +295,7 @@ pub async fn handle_process_session_response_with_rejoin<C: Ciphersuite + Send +
                     } else {
                         crate::protocal::signal::SessionUpdateType::ParticipantJoined
                     },
-                    accepted_devices: session.accepted_devices.clone(),
+                    participants: session.participants.clone(),
                     timestamp: std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap_or_default()
@@ -310,6 +310,8 @@ pub async fn handle_process_session_response_with_rejoin<C: Ciphersuite + Send +
         None
     };
     
+    // Get device_id before dropping state for WebRTC (not currently used but may be needed)
+    let _self_device_id = state.device_id.clone();
     drop(state);
     
     // Send update to all participants if we have one - MUST wrap in WebSocketMessage
@@ -350,5 +352,18 @@ pub async fn handle_process_session_response_with_rejoin<C: Ciphersuite + Send +
     
     // Trigger WebRTC connections for both join and rejoin
     // CRITICAL: Must always trigger WebRTC connections when session updates
-    let _ = internal_cmd_tx.send(InternalCommand::InitiateWebRTCConnections);
+    // Get fresh participants list from state for WebRTC
+    let state = app_state.lock().await;
+    let participants = state.session.as_ref().map(|s| s.participants.clone()).unwrap_or_default();
+    let device_id = state.device_id.clone();
+    let device_connections_arc = state.device_connections.clone();
+    drop(state);
+
+    // Use the simplified WebRTC initiation with AppState
+    crate::network::webrtc_simple::simple_initiate_webrtc_with_channel(
+        device_id,
+        participants,
+        device_connections_arc,
+        app_state.clone(),
+    ).await;
 }
