@@ -26,6 +26,7 @@ frost-ed25519 = { version = "2.2.0", features = ["serde"] }
 
 # For random number generation
 rand = "0.8.5"
+rand_chacha = "0.3"
 
 [features]
 default = ["console_error_panic_hook"]

@@ -23,7 +23,9 @@ sha3 = "0.10.8"
 k256 = "0.13.4"
 ed25519-dalek = "2.1.1"
 rand = "0.8.5"
+rand_chacha = "0.3"
 getrandom = { version = "0.2", features = ["js"] }
+hkdf = "0.12"
 
 # Encryption for keystore
 aes-gcm = "0.10.3"

@@ -27,6 +27,14 @@ pub struct KeystoreData {
     pub timestamp: Option<String>,
 }
 
+/// Multi-curve keystore holding key packages for both ed25519 and secp256k1,
+/// derived from a single root secret during unified DKG.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MultiCurveKeystoreData {
+    pub ed25519: KeystoreData,
+    pub secp256k1: KeystoreData,
+}
+
 /// High-level keystore abstraction
 pub struct Keystore;
 

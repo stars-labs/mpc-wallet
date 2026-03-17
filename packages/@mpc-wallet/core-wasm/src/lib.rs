@@ -4,6 +4,8 @@ use mpc_wallet_frost_core::{
     ed25519::Ed25519Curve,
     secp256k1::Secp256k1Curve,
     keystore::{Keystore, KeystoreData},
+    root_secret::RootSecret,
+    unified_dkg::{UnifiedDkg, UnifiedRound1Package},
 };
 use rand::rngs::OsRng;
 use std::collections::BTreeMap;
@@ -625,4 +627,138 @@ pub fn main() {
 #[wasm_bindgen(start)]
 pub fn start() {
     main();
+}
+
+// ============================================================================
+// Unified DKG: single root secret → both ed25519 + secp256k1 key packages
+// ============================================================================
+
+#[wasm_bindgen]
+pub struct FrostDkgUnified {
+    dkg: UnifiedDkg,
+}
+
+#[wasm_bindgen]
+impl FrostDkgUnified {
+    /// Create a new unified DKG with a fresh root secret.
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Self {
+        Self {
+            dkg: UnifiedDkg::new(),
+        }
+    }
+
+    /// Create a unified DKG from an existing root secret (hex-encoded 32 bytes).
+    pub fn from_root_secret(root_secret_hex: &str) -> Result<FrostDkgUnified, WasmError> {
+        let bytes = hex::decode(root_secret_hex)
+            .map_err(|e| WasmError::new(&e.to_string()))?;
+        if bytes.len() != 32 {
+            return Err(WasmError::new("Root secret must be exactly 32 bytes"));
+        }
+        let mut arr = [0u8; 32];
+        arr.copy_from_slice(&bytes);
+        Ok(Self {
+            dkg: UnifiedDkg::with_root_secret(RootSecret::from_bytes(arr)),
+        })
+    }
+
+    /// Get the root secret as hex (for backup/storage).
+    pub fn get_root_secret_hex(&self) -> String {
+        hex::encode(self.dkg.root_secret().as_bytes())
+    }
+
+    /// Initialize DKG parameters.
+    pub fn init_dkg(&mut self, participant_index: u16, total: u16, threshold: u16) {
+        self.dkg.init_dkg(participant_index, total, threshold);
+    }
+
+    /// Generate round 1 packages for both curves.
+    /// Returns JSON: { "ed25519": "<hex>", "secp256k1": "<hex>" }
+    pub fn generate_round1(&mut self) -> Result<String, WasmError> {
+        let package = self.dkg.generate_round1()?;
+        serde_json::to_string(&package)
+            .map_err(|e| WasmError::new(&e.to_string()))
+    }
+
+    /// Add a round 1 package from another participant.
+    /// package_json is the JSON output from another participant's generate_round1().
+    pub fn add_round1_package(&mut self, participant_index: u16, package_json: &str) -> Result<(), WasmError> {
+        let package: UnifiedRound1Package = serde_json::from_str(package_json)
+            .map_err(|e| WasmError::new(&e.to_string()))?;
+        self.dkg.add_round1_package(participant_index, &package)?;
+        Ok(())
+    }
+
+    /// Check if round 2 can start.
+    pub fn can_start_round2(&self) -> bool {
+        self.dkg.can_start_round2()
+    }
+
+    /// Generate round 2 packages for both curves.
+    /// Returns JSON: { "ed25519": { <participant_index>: "<hex>", ... }, "secp256k1": { ... } }
+    pub fn generate_round2(&mut self) -> Result<String, WasmError> {
+        let packages = self.dkg.generate_round2()?;
+        serde_json::to_string(&packages)
+            .map_err(|e| WasmError::new(&e.to_string()))
+    }
+
+    /// Add round 2 packages from another participant for both curves.
+    pub fn add_round2_package(&mut self, sender_index: u16, ed_hex: &str, secp_hex: &str) -> Result<(), WasmError> {
+        self.dkg.add_round2_package(sender_index, ed_hex, secp_hex)?;
+        Ok(())
+    }
+
+    /// Check if DKG can be finalized.
+    pub fn can_finalize(&self) -> bool {
+        self.dkg.can_finalize()
+    }
+
+    /// Finalize DKG, producing a multi-curve keystore.
+    /// Returns JSON with both ed25519 and secp256k1 keystore data.
+    pub fn finalize_dkg(&mut self) -> Result<String, WasmError> {
+        let keystore = self.dkg.finalize_dkg()?;
+        serde_json::to_string(&keystore)
+            .map_err(|e| WasmError::new(&e.to_string()))
+    }
+
+    /// Check if DKG is complete for both curves.
+    pub fn is_dkg_complete(&self) -> bool {
+        self.dkg.is_dkg_complete()
+    }
+
+    /// Get Solana address (ed25519 base58).
+    pub fn get_solana_address(&self) -> Result<String, WasmError> {
+        self.dkg.get_solana_address().map_err(|e| e.into())
+    }
+
+    /// Get Ethereum address (secp256k1 keccak256).
+    pub fn get_eth_address(&self) -> Result<String, WasmError> {
+        self.dkg.get_eth_address().map_err(|e| e.into())
+    }
+
+    /// Get ed25519 group public key (hex).
+    pub fn get_ed25519_public_key(&self) -> Result<String, WasmError> {
+        self.dkg.get_ed25519_group_public_key().map_err(|e| e.into())
+    }
+
+    /// Get secp256k1 group public key (hex).
+    pub fn get_secp256k1_public_key(&self) -> Result<String, WasmError> {
+        self.dkg.get_secp256k1_group_public_key().map_err(|e| e.into())
+    }
+
+    /// Export the ed25519 keystore data (for use with FrostDkgEd25519 signing).
+    /// Must be called after finalize_dkg().
+    pub fn export_ed25519_keystore(&mut self) -> Result<String, WasmError> {
+        let keystore = self.dkg.finalize_dkg()?;
+        serde_json::to_string(&keystore.ed25519)
+            .map_err(|e| WasmError::new(&e.to_string()))
+    }
+
+    /// Export the secp256k1 keystore data (for use with FrostDkgSecp256k1 signing).
+    /// Must be called after finalize_dkg().
+    pub fn export_secp256k1_keystore(&mut self) -> Result<String, WasmError> {
+        let keystore = self.dkg.finalize_dkg()?;
+        serde_json::to_string(&keystore.secp256k1)
+            .map_err(|e| WasmError::new(&e.to_string()))
+    }
 }
