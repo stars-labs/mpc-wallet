@@ -1,59 +1,17 @@
-export interface SessionInfo {
-  session_id: string;
-  proposer_id: string;
-  total: number; // u16 in Rust, number in TS
-  threshold: number; // u16 in Rust, number in TS
-  participants: string[];
-  accepted_devices: string[];
-  status?: string; // Add optional status field
-}
+// Re-export domain types so existing imports from '@mpc-wallet/types/appstate' still work.
+// Canonical definitions live in session.ts, dkg.ts, mesh.ts, and webrtc.ts.
+export type { SessionInfo, SessionProposal, SessionResponse } from './session';
+export { DkgState } from './dkg';
+export { MeshStatusType } from './mesh';
+export type { MeshStatus } from './mesh';
+export type { WebRTCAppMessage } from './webrtc';
 
+// AppState and related utilities are unique to this file.
+import type { SessionInfo } from './session';
+import type { MeshStatus } from './mesh';
+import { MeshStatusType } from './mesh';
+import { DkgState } from './dkg';
 
-// --- Enums for State Management ---
-export enum DkgState {
-  Idle,
-  Initializing,
-  Round1InProgress,
-  Round1Complete,
-  Round2InProgress,
-  Round2Complete,
-  Finalizing,
-  Complete,
-  Failed,
-}
-
-export enum MeshStatusType {
-  Incomplete,
-  PartiallyReady,
-  Ready,
-}
-
-export type MeshStatus =
-  | { type: MeshStatusType.Incomplete }
-  | { type: MeshStatusType.PartiallyReady; ready_devices: Set<string>; total_devices: number }
-  | { type: MeshStatusType.Ready };
-
-// --- WebRTC Signaling ---
-export interface SessionProposal {
-  session_id: string;
-  total: number;
-  threshold: number;
-  participants: string[];
-}
-
-export interface SessionResponse {
-  session_id: string;
-  accepted: boolean;
-}
-
-export type WebRTCAppMessage =
-  | { webrtc_msg_type: 'ChannelOpen'; device_id: string }
-  | { webrtc_msg_type: 'MeshReady'; session_id: string; device_id: string }
-  | { webrtc_msg_type: 'SimpleMessage'; text: string }
-  | { webrtc_msg_type: 'DkgRound1Package'; package: any }
-  | { webrtc_msg_type: 'DkgRound2Package'; package: any };
-
-// Define the main application state interface
 export interface AppState {
   deviceId: string;
   connecteddevices: string[];
@@ -63,10 +21,9 @@ export interface AppState {
   meshStatus: MeshStatus;
   dkgState: DkgState;
   webrtcConnections: Record<string, boolean>;
-  blockchain?: "ethereum" | "solana"; // Current blockchain selection for the active session
+  blockchain?: "ethereum" | "solana";
 }
 
-// Initial state for the application
 export const INITIAL_APP_STATE: AppState = {
   deviceId: '',
   connecteddevices: [],
@@ -79,26 +36,22 @@ export const INITIAL_APP_STATE: AppState = {
   blockchain: "ethereum"
 };
 
-// Supported chains type
 export type SupportedChain = 'ethereum' | 'solana';
 
-// Curve compatibility mapping
 export const CURVE_COMPATIBLE_CHAINS: Record<string, SupportedChain[]> = {
   'secp256k1': ['ethereum'],
   'ed25519': ['solana']
 };
 
-// Get compatible chains for a curve type
 export function getCompatibleChains(curveType: string): SupportedChain[] {
   return CURVE_COMPATIBLE_CHAINS[curveType] || [];
 }
 
-// Get required curve for a chain
 export function getRequiredCurve(chain: SupportedChain): string {
   for (const [curve, chains] of Object.entries(CURVE_COMPATIBLE_CHAINS)) {
     if (chains.includes(chain)) {
       return curve;
     }
   }
-  return 'secp256k1'; // Default to secp256k1
+  return 'secp256k1';
 }
