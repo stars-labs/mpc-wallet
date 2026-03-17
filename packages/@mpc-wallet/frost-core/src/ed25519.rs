@@ -31,15 +31,9 @@ impl FrostCurve for Ed25519Curve {
     type SigningPackage = SigningPackage;
 
     fn identifier_from_u16(value: u16) -> Result<Self::Identifier> {
-        let bytes = value.to_be_bytes();
-        let padded_bytes = [0u8; 32];
-        let mut final_bytes = padded_bytes;
-        final_bytes[30] = bytes[0];
-        final_bytes[31] = bytes[1];
-        
-        Identifier::deserialize(&final_bytes).map_err(|_| {
-            FrostError::InvalidIdentifier("Invalid identifier bytes".to_string())
-        })
+        let bytes = crate::traits::identifier_bytes_from_u16(value);
+        Identifier::deserialize(&bytes)
+            .map_err(|_| FrostError::InvalidIdentifier("Invalid identifier bytes".to_string()))
     }
 
     fn dkg_part1(

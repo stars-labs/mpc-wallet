@@ -8,6 +8,7 @@
 
 use crate::ed25519::Ed25519Curve;
 use crate::errors::{FrostError, Result};
+use crate::hd_derivation::{ChainCode, DerivedKeys, derive_child_key};
 use crate::keystore::{Keystore, MultiCurveKeystoreData};
 use crate::root_secret::RootSecret;
 use crate::secp256k1::Secp256k1Curve;
@@ -49,6 +50,10 @@ pub struct UnifiedDkg {
     secp256k1_round1_packages: BTreeMap<frost_secp256k1::Identifier, frost_secp256k1::keys::dkg::round1::Package>,
     secp256k1_round2_packages: BTreeMap<frost_secp256k1::Identifier, frost_secp256k1::keys::dkg::round2::Package>,
 
+    // HD derivation chain codes (set after finalization)
+    ed25519_chain_code: Option<ChainCode>,
+    secp256k1_chain_code: Option<ChainCode>,
+
     // Session metadata
     participant_index: u16,
     total: u16,
@@ -78,6 +83,8 @@ impl UnifiedDkg {
             secp256k1_public_key_package: None,
             secp256k1_round1_packages: BTreeMap::new(),
             secp256k1_round2_packages: BTreeMap::new(),
+            ed25519_chain_code: None,
+            secp256k1_chain_code: None,
             participant_index: 0,
             total: 0,
             threshold: 0,
@@ -277,6 +284,9 @@ impl UnifiedDkg {
             &ed_r1_others,
             &self.ed25519_round2_packages,
         ).map_err(|e| FrostError::DkgError(e.to_string()))?;
+        // Derive chain code from ed25519 group public key
+        let ed_vk_bytes = Ed25519Curve::serialize_verifying_key(&Ed25519Curve::verifying_key(&ed_pub_pkg))?;
+        self.ed25519_chain_code = Some(ChainCode::from_group_key(&ed_vk_bytes));
         self.ed25519_key_package = Some(ed_key_pkg.clone());
         self.ed25519_public_key_package = Some(ed_pub_pkg.clone());
 
@@ -288,6 +298,9 @@ impl UnifiedDkg {
             &secp_r1_others,
             &self.secp256k1_round2_packages,
         ).map_err(|e| FrostError::DkgError(e.to_string()))?;
+        // Derive chain code from secp256k1 group public key
+        let secp_vk_bytes = Secp256k1Curve::serialize_verifying_key(&Secp256k1Curve::verifying_key(&secp_pub_pkg))?;
+        self.secp256k1_chain_code = Some(ChainCode::from_group_key(&secp_vk_bytes));
         self.secp256k1_key_package = Some(secp_key_pkg.clone());
         self.secp256k1_public_key_package = Some(secp_pub_pkg.clone());
 
@@ -358,5 +371,76 @@ impl UnifiedDkg {
             .ok_or_else(|| FrostError::InvalidState("Secp256k1 DKG not complete".into()))?;
         let vk = Secp256k1Curve::verifying_key(pub_pkg);
         Secp256k1Curve::get_eth_address(&vk)
+    }
+
+    /// Get the ed25519 key package (for signing).
+    pub fn ed25519_key_package(&self) -> Option<&frost_ed25519::keys::KeyPackage> {
+        self.ed25519_key_package.as_ref()
+    }
+
+    /// Get the ed25519 public key package (for verification).
+    pub fn ed25519_public_key_package(&self) -> Option<&frost_ed25519::keys::PublicKeyPackage> {
+        self.ed25519_public_key_package.as_ref()
+    }
+
+    /// Get the secp256k1 key package (for signing).
+    pub fn secp256k1_key_package(&self) -> Option<&frost_secp256k1::keys::KeyPackage> {
+        self.secp256k1_key_package.as_ref()
+    }
+
+    /// Get the secp256k1 public key package (for verification).
+    pub fn secp256k1_public_key_package(&self) -> Option<&frost_secp256k1::keys::PublicKeyPackage> {
+        self.secp256k1_public_key_package.as_ref()
+    }
+
+    /// Get the participant index.
+    pub fn participant_index(&self) -> u16 {
+        self.participant_index
+    }
+
+    /// Get the ed25519 chain code (available after finalization).
+    pub fn ed25519_chain_code(&self) -> Option<&ChainCode> {
+        self.ed25519_chain_code.as_ref()
+    }
+
+    /// Get the secp256k1 chain code (available after finalization).
+    pub fn secp256k1_chain_code(&self) -> Option<&ChainCode> {
+        self.secp256k1_chain_code.as_ref()
+    }
+
+    /// Derive child key packages for both curves at the given indices.
+    ///
+    /// Each curve uses its own independent index, allowing different
+    /// BIP-44 paths (e.g., Solana uses coin_type 501, Ethereum uses 60).
+    pub fn derive_child(
+        &self,
+        ed_index: u32,
+        secp_index: u32,
+    ) -> Result<(
+        DerivedKeys<frost_ed25519::Ed25519Sha512>,
+        DerivedKeys<frost_secp256k1::Secp256K1Sha256>,
+    )> {
+        let ed_kp = self.ed25519_key_package.as_ref()
+            .ok_or_else(|| FrostError::InvalidState("Ed25519 DKG not complete".into()))?;
+        let ed_pub = self.ed25519_public_key_package.as_ref()
+            .ok_or_else(|| FrostError::InvalidState("Ed25519 DKG not complete".into()))?;
+        let ed_cc = self.ed25519_chain_code.as_ref()
+            .ok_or_else(|| FrostError::InvalidState("Ed25519 chain code not available".into()))?;
+
+        let secp_kp = self.secp256k1_key_package.as_ref()
+            .ok_or_else(|| FrostError::InvalidState("Secp256k1 DKG not complete".into()))?;
+        let secp_pub = self.secp256k1_public_key_package.as_ref()
+            .ok_or_else(|| FrostError::InvalidState("Secp256k1 DKG not complete".into()))?;
+        let secp_cc = self.secp256k1_chain_code.as_ref()
+            .ok_or_else(|| FrostError::InvalidState("Secp256k1 chain code not available".into()))?;
+
+        let ed_derived = derive_child_key::<frost_ed25519::Ed25519Sha512>(
+            ed_kp, ed_pub, ed_cc, ed_index,
+        )?;
+        let secp_derived = derive_child_key::<frost_secp256k1::Secp256K1Sha256>(
+            secp_kp, secp_pub, secp_cc, secp_index,
+        )?;
+
+        Ok((ed_derived, secp_derived))
     }
 }

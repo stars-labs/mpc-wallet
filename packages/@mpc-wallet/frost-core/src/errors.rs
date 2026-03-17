@@ -22,6 +22,9 @@ pub enum FrostError {
     
     #[error("Encryption error: {0}")]
     EncryptionError(String),
+
+    #[error("Derivation error: {0}")]
+    DerivationError(String),
     
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),
