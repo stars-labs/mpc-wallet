@@ -120,7 +120,7 @@ impl Default for NetworkState {
         Self {
             connected: false,
             peers: Vec::new(),
-            websocket_url: "wss://auto-life.tech".to_string(),
+            websocket_url: "wss://xiongchenyu.dpdns.org".to_string(),
             connection_status: ConnectionStatus::Disconnected,
             last_ping: None,
             reconnect_attempts: 0,
@@ -179,7 +179,6 @@ pub enum Screen {
     // DKG flow
     PathSelection,
     ModeSelection,
-    CurveSelection,
     ThresholdConfig,
     TemplateSelection,
     WalletConfiguration(WalletConfig),
@@ -207,7 +206,6 @@ pub enum Screen {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct CreateWalletState {
     pub mode: Option<WalletMode>,
-    pub curve: Option<CurveType>,
     pub template: Option<WalletTemplate>,
     pub custom_config: Option<WalletConfig>,
 }
@@ -246,7 +244,6 @@ pub struct WalletConfig {
     pub name: String,
     pub total_participants: u16,
     pub threshold: u16,
-    pub curve: CurveType,
     pub mode: WalletMode,
 }
 
@@ -261,7 +258,6 @@ pub enum ComponentId {
     Notification,
     CreateWallet,
     ModeSelection,
-    CurveSelection,
     ThresholdConfig,
     JoinSession,
     DKGProgress,

@@ -89,7 +89,6 @@ pub struct WalletConfig {
 #[derive(Debug, Clone, PartialEq)]
 pub enum CreationStep {
     SelectMode,
-    SelectCurve,
     ConfigureThreshold,
     SetName,
     Review,
@@ -172,7 +171,7 @@ pub struct NetworkConfig {
 impl Default for NetworkConfig {
     fn default() -> Self {
         Self {
-            websocket_url: "wss://auto-life.tech".to_string(),
+            websocket_url: "wss://xiongchenyu.dpdns.org".to_string(),
             enable_webrtc: true,
             stun_servers: vec!["stun:stun.l.google.com:19302".to_string()],
             turn_servers: Vec::new(),
@@ -577,7 +576,6 @@ impl Screen {
             Screen::ExportWallet { .. } => "Export Wallet".to_string(),
             Screen::PathSelection => "Path Selection".to_string(),
             Screen::ModeSelection => "Mode Selection".to_string(),
-            Screen::CurveSelection => "Curve Selection".to_string(),
             Screen::ThresholdConfig => "Threshold Config".to_string(),
             Screen::TemplateSelection => "Template Selection".to_string(),
             Screen::WalletConfiguration(_) => "Wallet Configuration".to_string(),

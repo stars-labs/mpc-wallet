@@ -13,7 +13,6 @@ pub mod notification;
 
 // Professional wallet creation flow components
 pub mod mode_selection;
-pub mod curve_selection;
 pub mod threshold_config;
 pub mod join_session;
 
@@ -32,7 +31,6 @@ pub use notification::NotificationBar;
 
 // Professional wallet creation flow components
 pub use mode_selection::ModeSelectionComponent;
-pub use curve_selection::CurveSelectionComponent;
 pub use threshold_config::ThresholdConfigComponent;
 pub use join_session::JoinSessionComponent;
 
@@ -66,7 +64,6 @@ pub enum Id {
     ModalDialog,
     NotificationBar,
     ModeSelection,
-    CurveSelection,
     ThresholdConfig,
     JoinSession,
     OfflineDKGProcess,

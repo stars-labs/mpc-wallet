@@ -349,13 +349,6 @@ impl TutorialType {
                     hint: "Online mode uses WebRTC for secure peer-to-peer communication".to_string(),
                 },
                 TutorialStep {
-                    title: "Select Curve".to_string(),
-                    instruction: "Choose 'Secp256k1' for Ethereum and Bitcoin compatibility.".to_string(),
-                    highlight_component: ComponentId::Custom("curve_selection".to_string()),
-                    action_required: Some("Select Secp256k1 and press Enter".to_string()),
-                    hint: "Different curves are used by different blockchains".to_string(),
-                },
-                TutorialStep {
                     title: "Set Threshold".to_string(),
                     instruction: "Configure how many participants are needed to sign transactions.".to_string(),
                     highlight_component: ComponentId::Custom("threshold_config".to_string()),

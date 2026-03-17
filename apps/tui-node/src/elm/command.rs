@@ -276,62 +276,16 @@ impl Command {
                 // Execute DKG protocol using the curve specified in the config
                 let tx_dkg = tx.clone();
 
-                info!("🚀 About to call DKG with device_id: {} and curve: {:?}", device_id, config.curve);
+                info!("🚀 About to call unified DKG with device_id: {}", device_id);
 
-                // Create appropriate AppState based on the selected curve
-                match config.curve {
-                    crate::elm::model::CurveType::Secp256k1 => {
-                        // Use the existing Secp256k1 app_state
-                        info!("📈 Using Secp256k1 curve for DKG");
-
-                        // Since C is Secp256k1Sha256, we can use the existing app_state
-                        crate::protocal::dkg::handle_trigger_dkg_round1(
-                            app_state.clone(),
-                            device_id.clone(),
-                            internal_tx.clone()
-                        ).await;
-                    }
-                    crate::elm::model::CurveType::Ed25519 => {
-                        // Create a new Ed25519 AppState
-                        info!("🔑 Using Ed25519 curve for DKG");
-
-                        // Create Ed25519 AppState with same configuration
-                        let state_guard = app_state.lock().await;
-                        let ed25519_state = Arc::new(tokio::sync::Mutex::new(
-                            crate::utils::appstate_compat::AppState::<frost_ed25519::Ed25519Sha512>::with_device_id_and_server(
-                                state_guard.device_id.clone(),
-                                state_guard.signal_server_url.clone()
-                            )
-                        ));
-
-                        // Copy relevant state from secp256k1 state
-                        {
-                            let mut ed_guard = ed25519_state.lock().await;
-                            ed_guard.session = state_guard.session.clone();
-                            ed_guard.data_channels = state_guard.data_channels.clone();
-                            ed_guard.keystore = state_guard.keystore.clone();
-                            // Don't copy websocket_internal_cmd_tx as it's generic over C - we'll create a new one
-                            ed_guard.dkg_in_progress = state_guard.dkg_in_progress;
-                        }
-                        drop(state_guard);
-
-                        // Create internal command transmitter for Ed25519
-                        let internal_tx_ed = {
-                            let guard = ed25519_state.lock().await;
-                            guard.websocket_internal_cmd_tx.clone()
-                        }.unwrap_or_else(|| {
-                            let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-                            tx
-                        });
-
-                        // Call DKG with Ed25519 state
-                        crate::protocal::dkg::handle_trigger_dkg_round1(
-                            ed25519_state.clone(),
-                            device_id.clone(),
-                            internal_tx_ed
-                        ).await;
-                    }
-                }
+                // Unified DKG: use the existing app_state (secp256k1 as primary)
+                // The unified DKG generates keys for ALL curves from a single root secret
+                info!("🌐 Using unified multi-chain DKG");
+                crate::protocal::dkg::handle_trigger_dkg_round1(
+                    app_state.clone(),
+                    device_id.clone(),
+                    internal_tx.clone()
+                ).await;
 
                 info!("✅ Completed DKG protocol initiation");
 
@@ -478,10 +432,7 @@ impl Command {
                                 "session_type": "dkg",
                                 "proposer_id": device_id.clone(),
                                 "participants": [device_id.clone()],
-                                "curve_type": match config_clone.curve {
-                                    crate::elm::model::CurveType::Secp256k1 => "Secp256k1",
-                                    crate::elm::model::CurveType::Ed25519 => "Ed25519",
-                                },
+                                "curve_type": "unified",
                                 "coordination_type": "Network"
                             });
                             
@@ -518,10 +469,7 @@ impl Command {
                                     threshold: config_clone.threshold,
                                     total: config_clone.total_participants,
                                     session_type: crate::protocal::signal::SessionType::DKG,
-                                    curve_type: match config_clone.curve {
-                                        crate::elm::model::CurveType::Secp256k1 => "Secp256k1".to_string(),
-                                        crate::elm::model::CurveType::Ed25519 => "Ed25519".to_string(),
-                                    },
+                                    curve_type: "unified".to_string(),
                                     coordination_type: "Network".to_string(),
                                 });
                             }
@@ -2054,17 +2002,10 @@ impl Command {
                             let wallet_config = {
                                 let state = app_state_mesh.lock().await;
                                 if let Some(ref session) = state.session {
-                                    let curve = match session.curve_type.as_str() {
-                                        "secp256k1" => crate::elm::model::CurveType::Secp256k1,
-                                        "ed25519" => crate::elm::model::CurveType::Ed25519,
-                                        _ => crate::elm::model::CurveType::Secp256k1, // default
-                                    };
-
                                     Some(crate::elm::model::WalletConfig {
                                         name: format!("MPC Wallet {}", &session.session_id[..8]),
                                         total_participants: session.total,
                                         threshold: session.threshold,
-                                        curve,
                                         mode: crate::elm::model::WalletMode::Online,
                                     })
                                 } else {
@@ -2337,12 +2278,11 @@ mod tests {
         let cmd = Command::LoadWallets;
         assert!(matches!(cmd, Command::LoadWallets));
         
-        let cmd = Command::StartDKG { 
+        let cmd = Command::StartDKG {
             config: WalletConfig {
                 name: "Test".to_string(),
                 total_participants: 3,
                 threshold: 2,
-                curve: crate::elm::model::CurveType::Secp256k1,
                 mode: crate::elm::model::WalletMode::Online,
             }
         };

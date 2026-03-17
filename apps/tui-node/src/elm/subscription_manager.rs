@@ -5,7 +5,7 @@ use crate::elm::components::{Id, UserEvent};
 /// Get subscriptions for a specific component ID
 pub fn get_subscriptions_for_component(id: &Id) -> Vec<Sub<Id, UserEvent>> {
     match id {
-        Id::MainMenu | Id::WalletList | Id::CreateWallet | Id::CurveSelection | 
+        Id::MainMenu | Id::WalletList | Id::CreateWallet |
         Id::ThresholdConfig | Id::JoinSession | Id::DKGProgress | Id::SDCardManager |
         Id::OfflineDKGProcess | Id::WalletDetail => {
             // Navigation components

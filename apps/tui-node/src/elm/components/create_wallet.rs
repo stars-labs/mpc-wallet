@@ -63,23 +63,19 @@ impl CreateWalletComponent {
     /// Set the selected index
     pub fn set_selected(&mut self, index: usize) {
         let old_selected = self.selected;
-        self.selected = index.min(3); // 4 items (0-3)
+        self.selected = index.min(2); // 3 items (0-2)
         tracing::debug!("🎯 CreateWalletComponent::set_selected: {} -> {}", old_selected, self.selected);
     }
-    
+
     fn get_wallet_steps(&self) -> Vec<WalletStep> {
         let mode_completed = self.wallet_state.as_ref()
             .and_then(|s| s.mode.as_ref())
             .is_some();
-        
-        let curve_completed = self.wallet_state.as_ref()
-            .and_then(|s| s.curve.as_ref())
-            .is_some();
-        
+
         let template_completed = self.wallet_state.as_ref()
             .and_then(|s| s.template.as_ref())
             .is_some();
-        
+
         vec![
             WalletStep {
                 icon: "🌐",
@@ -87,13 +83,6 @@ impl CreateWalletComponent {
                 description: "Select Online (WebRTC mesh) or Offline (air-gapped) mode",
                 enabled: true,
                 completed: mode_completed,
-            },
-            WalletStep {
-                icon: "🔐",
-                title: "Select Cryptographic Curve",
-                description: "Choose Secp256k1 (Ethereum/Bitcoin) or Ed25519 (Solana)",
-                enabled: true,
-                completed: curve_completed,
             },
             WalletStep {
                 icon: "⚙️",
@@ -104,8 +93,8 @@ impl CreateWalletComponent {
             },
             WalletStep {
                 icon: "🚀",
-                title: "Initialize DKG Process",
-                description: "Start Distributed Key Generation with other participants",
+                title: "Initialize Multi-Chain DKG",
+                description: "Start unified DKG - generates keys for all chains (Ethereum, Solana, etc.)",
                 enabled: true,
                 completed: false,
             },
@@ -157,12 +146,12 @@ impl MockComponent for CreateWalletComponent {
                 if self.selected > 0 {
                     self.selected -= 1;
                 } else {
-                    self.selected = 3; // Wrap to bottom
+                    self.selected = 2; // Wrap to bottom (3 items: 0-2)
                 }
                 CmdResult::Changed(self.state())
             }
             Cmd::Move(Direction::Down) => {
-                if self.selected < 3 {
+                if self.selected < 2 {
                     self.selected += 1;
                 } else {
                     self.selected = 0; // Wrap to top
@@ -305,7 +294,7 @@ impl CreateWalletComponent {
             .split(area);
         
         // Progress indicator
-        let progress = format!("Progress: Step {} of 4", self.selected + 1);
+        let progress = format!("Progress: Step {} of 3", self.selected + 1);
         let progress_widget = Paragraph::new(progress)
             .style(Style::default().fg(Color::Cyan))
             .alignment(Alignment::Center);

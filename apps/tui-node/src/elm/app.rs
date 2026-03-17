@@ -192,21 +192,6 @@ where
                 )?;
                 self.app.active(&Id::ModeSelection)?;
             }
-            Screen::CurveSelection => {
-                debug!("🔧 Mounting CurveSelection component");
-                // Get the selected index for CurveSelection
-                let selected = self.model.ui_state.selected_indices
-                    .get(&self.model.ui_state.focus)
-                    .cloned()
-                    .unwrap_or(0);
-                debug!("CurveSelection selected index: {}", selected);
-                self.app.mount(
-                    Id::CurveSelection,
-                    Box::new(crate::elm::components::CurveSelectionComponent::with_selected(selected)),
-                    vec![]
-                )?;
-                self.app.active(&Id::CurveSelection)?;
-            }
             Screen::ThresholdConfig => {
                 debug!("🔧 Mounting ThresholdConfig component");
                 
@@ -526,7 +511,6 @@ where
             Screen::WalletDetail { .. } => !self.app.mounted(&Id::WalletDetail),
             Screen::CreateWallet(_) => !self.app.mounted(&Id::CreateWallet),
             Screen::ModeSelection => !self.app.mounted(&Id::ModeSelection),
-            Screen::CurveSelection => !self.app.mounted(&Id::CurveSelection),
             Screen::ThresholdConfig => !self.app.mounted(&Id::ThresholdConfig),
             Screen::JoinSession => !self.app.mounted(&Id::JoinSession),
             Screen::DKGProgress { .. } => !self.app.mounted(&Id::DKGProgress),
@@ -784,9 +768,6 @@ where
                 }
                 Screen::ModeSelection => {
                     self.app.view(&Id::ModeSelection, f, main_area);
-                }
-                Screen::CurveSelection => {
-                    self.app.view(&Id::CurveSelection, f, main_area);
                 }
                 Screen::ThresholdConfig => {
                     self.app.view(&Id::ThresholdConfig, f, main_area);

@@ -4,7 +4,7 @@
 //! model and a message, and returns an updated model along with optional commands
 //! to execute side effects.
 
-use crate::elm::model::{Model, Screen, Modal, Notification, NotificationKind, ConnectionStatus, Operation, ProgressInfo, WalletConfig, CurveType, WalletMode, CreateWalletState};
+use crate::elm::model::{Model, Screen, Modal, Notification, NotificationKind, ConnectionStatus, Operation, ProgressInfo, WalletConfig, WalletMode, CreateWalletState};
 use crate::elm::message::{Message, DKGRound};
 use crate::elm::command::Command;
 use crate::protocal::signal::{SessionInfo, SessionType};
@@ -37,11 +37,6 @@ pub fn update(model: &mut Model, msg: Message) -> Option<Command> {
                     model.ui_state.selected_indices.entry(crate::elm::model::ComponentId::ModeSelection).or_insert(0);
                     debug!("🎯 ModeSelection focus set");
                 }
-                Screen::CurveSelection => {
-                    model.ui_state.focus = crate::elm::model::ComponentId::CurveSelection;
-                    model.ui_state.selected_indices.entry(crate::elm::model::ComponentId::CurveSelection).or_insert(0);
-                    debug!("🎯 CurveSelection focus set");
-                }
                 Screen::ManageWallets => {
                     model.ui_state.focus = crate::elm::model::ComponentId::WalletList;
                 }
@@ -53,9 +48,19 @@ pub fn update(model: &mut Model, msg: Message) -> Option<Command> {
                 Screen::MainMenu | Screen::Welcome => {
                     model.ui_state.focus = crate::elm::model::ComponentId::MainMenu;
                 }
+                Screen::DKGProgress { .. } => {
+                    model.ui_state.focus = crate::elm::model::ComponentId::DKGProgress;
+                    model.ui_state.selected_indices.entry(crate::elm::model::ComponentId::DKGProgress).or_insert(0);
+                    debug!("🎯 DKGProgress focus set");
+                }
+                Screen::ThresholdConfig => {
+                    model.ui_state.focus = crate::elm::model::ComponentId::ThresholdConfig;
+                    model.ui_state.selected_indices.entry(crate::elm::model::ComponentId::ThresholdConfig).or_insert(0);
+                    debug!("🎯 ThresholdConfig focus set");
+                }
                 _ => {}
             }
-            
+
             // Load data for the new screen if needed
             match screen {
                 Screen::ManageWallets => Some(Command::LoadWallets),
@@ -95,6 +100,22 @@ pub fn update(model: &mut Model, msg: Message) -> Option<Command> {
                     Screen::CreateWallet(_) => {
                         model.ui_state.focus = crate::elm::model::ComponentId::CreateWallet;
                         debug!("🎯 Focus set to CreateWallet");
+                    }
+                    Screen::ModeSelection => {
+                        model.ui_state.focus = crate::elm::model::ComponentId::ModeSelection;
+                        debug!("🎯 Focus set to ModeSelection");
+                    }
+                    Screen::ThresholdConfig => {
+                        model.ui_state.focus = crate::elm::model::ComponentId::ThresholdConfig;
+                        debug!("🎯 Focus set to ThresholdConfig");
+                    }
+                    Screen::DKGProgress { .. } => {
+                        model.ui_state.focus = crate::elm::model::ComponentId::DKGProgress;
+                        debug!("🎯 Focus set to DKGProgress");
+                    }
+                    Screen::JoinSession => {
+                        model.ui_state.focus = crate::elm::model::ComponentId::JoinSession;
+                        debug!("🎯 Focus set to JoinSession");
                     }
                     _ => {
                         debug!("🎯 No specific focus set for screen: {:?}", model.current_screen);
@@ -147,19 +168,16 @@ pub fn update(model: &mut Model, msg: Message) -> Option<Command> {
                 threshold: config.threshold,
                 participants: participants.clone(),
                 session_type: SessionType::DKG,
-                curve_type: format!("{:?}", config.curve),
+                curve_type: "unified".to_string(),
                 coordination_type: "online".to_string(),
             });
             
             // Navigate to DKG Progress screen with placeholder
             model.push_screen(Screen::DKGProgress { session_id: temp_session_id.clone() });
-            
-            // Show progress modal
-            model.ui_state.modal = Some(Modal::Progress {
-                title: "Creating Wallet".to_string(),
-                message: "Initializing DKG protocol...".to_string(),
-                progress: 0.0,
-            });
+
+            // Set focus for DKGProgress screen
+            model.ui_state.focus = crate::elm::model::ComponentId::DKGProgress;
+            model.ui_state.selected_indices.entry(crate::elm::model::ComponentId::DKGProgress).or_insert(0);
             
             // Add to pending operations
             model.pending_operations.push(Operation::CreateWallet(config.clone()));
@@ -220,17 +238,8 @@ pub fn update(model: &mut Model, msg: Message) -> Option<Command> {
         Message::SelectMode(mode) => {
             if let Screen::CreateWallet(ref mut state) = model.current_screen {
                 state.mode = Some(mode);
-                // Auto-navigate to next step
-                model.push_screen(Screen::CurveSelection);
-            }
-            None
-        }
-        
-        Message::SelectCurve(curve) => {
-            if let Screen::CreateWallet(ref mut state) = model.current_screen {
-                state.curve = Some(curve);
-                // Auto-navigate to next step
-                model.push_screen(Screen::TemplateSelection);
+                // Auto-navigate to next step (skip curve selection - unified DKG handles all curves)
+                model.push_screen(Screen::ThresholdConfig);
             }
             None
         }
@@ -395,27 +404,37 @@ pub fn update(model: &mut Model, msg: Message) -> Option<Command> {
         
         Message::DKGFailed { error } => {
             error!("DKG failed: {}", error);
-            
-            // Show error modal but stay on DKG screen
+
+            // Show error modal - always stay on current screen so user can retry or press Esc to go back
             model.ui_state.modal = Some(Modal::Error {
                 title: "DKG Failed".to_string(),
                 message: error.clone(),
             });
-            
-            // Only navigate back if it's a critical failure (not just waiting for participants)
-            if !error.contains("Need") && !error.contains("participants") {
-                // Critical error - go back to main menu
-                model.wallet_state.creating_wallet = None;
-                model.navigation_stack.clear();
-                model.current_screen = Screen::MainMenu;
-                model.ui_state.focus = crate::elm::model::ComponentId::MainMenu;
-                model.ui_state.selected_indices.entry(crate::elm::model::ComponentId::MainMenu).or_insert(0);
-            }
-            // Otherwise stay on DKG screen to let user wait or manually cancel
-            
+
+            // Reset DKG-in-progress flag so user can retry
+            model.pending_operations.clear();
+
             None
         }
         
+        Message::CancelDKG => {
+            info!("🛑 CancelDKG requested by user");
+
+            // Clear DKG state
+            model.active_session = None;
+            model.pending_operations.clear();
+            model.wallet_state.creating_wallet = None;
+            model.ui_state.modal = None;
+
+            // Navigate back to main menu
+            model.navigation_stack.clear();
+            model.current_screen = Screen::MainMenu;
+            model.ui_state.focus = crate::elm::model::ComponentId::MainMenu;
+            model.ui_state.selected_indices.entry(crate::elm::model::ComponentId::MainMenu).or_insert(0);
+
+            Some(Command::CancelDKG)
+        }
+
         Message::StartDKGProtocol => {
             info!("🚀 Received StartDKGProtocol message - mesh is ready!");
             
@@ -641,11 +660,10 @@ pub fn update(model: &mut Model, msg: Message) -> Option<Command> {
                                 name: "MPC Wallet".to_string(),
                                 total_participants: 3,
                                 threshold: 2,
-                                curve: creating_wallet.curve.clone().unwrap_or(CurveType::Secp256k1),
                                 mode: creating_wallet.mode.clone().unwrap_or_default(),
                             });
                         }
-                        
+
                         if let Some(ref mut config) = creating_wallet.custom_config {
                             if selected_field == 0 {
                                 // Increase participants (max 10)
@@ -744,11 +762,10 @@ pub fn update(model: &mut Model, msg: Message) -> Option<Command> {
                                 name: "MPC Wallet".to_string(),
                                 total_participants: 3,
                                 threshold: 2,
-                                curve: creating_wallet.curve.clone().unwrap_or(CurveType::Secp256k1),
                                 mode: creating_wallet.mode.clone().unwrap_or_default(),
                             });
                         }
-                        
+
                         if let Some(ref mut config) = creating_wallet.custom_config {
                             if selected_field == 0 {
                                 // Decrease participants (min 2)
@@ -796,14 +813,6 @@ pub fn update(model: &mut Model, msg: Message) -> Option<Command> {
                         .or_insert(0);
                     *current_idx = 0;
                     info!("ModeSelection switched to: Online");
-                }
-                Screen::CurveSelection => {
-                    // Switch to Secp256k1 (left side)
-                    let current_idx = model.ui_state.selected_indices
-                        .entry(model.ui_state.focus.clone())
-                        .or_insert(0);
-                    *current_idx = 0;
-                    info!("CurveSelection switched to: Secp256k1");
                 }
                 Screen::ThresholdConfig => {
                     // Switch to participants field (left side) only if we're not already there
@@ -853,14 +862,6 @@ pub fn update(model: &mut Model, msg: Message) -> Option<Command> {
                         .or_insert(0);
                     *current_idx = 1;
                     info!("ModeSelection switched to: Offline");
-                }
-                Screen::CurveSelection => {
-                    // Switch to Ed25519 (right side)
-                    let current_idx = model.ui_state.selected_indices
-                        .entry(model.ui_state.focus.clone())
-                        .or_insert(0);
-                    *current_idx = 1;
-                    info!("CurveSelection switched to: Ed25519");
                 }
                 Screen::ThresholdConfig => {
                     // Switch to threshold field (right side) only if we're not already there
@@ -1004,7 +1005,6 @@ pub fn update(model: &mut Model, msg: Message) -> Option<Command> {
                     match selected_idx {
                         0 => {
                             // Option 1: Choose Mode (Online/Offline)
-                            // Always allow navigation to change mode
                             info!("Selected: Choose Mode - navigating to mode selection");
                             model.push_screen(Screen::ModeSelection);
                             model.ui_state.focus = crate::elm::model::ComponentId::ModeSelection;
@@ -1012,26 +1012,17 @@ pub fn update(model: &mut Model, msg: Message) -> Option<Command> {
                             None
                         }
                         1 => {
-                            // Option 2: Select Curve (Secp256k1/Ed25519)
-                            // Always allow navigation to change curve
-                            info!("Selected: Select Curve - navigating to curve selection");
-                            model.push_screen(Screen::CurveSelection);
-                            model.ui_state.focus = crate::elm::model::ComponentId::CurveSelection;
-                            model.ui_state.selected_indices.entry(crate::elm::model::ComponentId::CurveSelection).or_insert(0);
-                            None
-                        }
-                        2 => {
-                            // Option 3: Configure Threshold
+                            // Option 2: Configure Threshold
                             info!("Selected: Configure Threshold - navigating to threshold configuration");
                             model.push_screen(Screen::ThresholdConfig);
                             model.ui_state.focus = crate::elm::model::ComponentId::ThresholdConfig;
                             model.ui_state.selected_indices.entry(crate::elm::model::ComponentId::ThresholdConfig).or_insert(0);
                             None
                         }
-                        3 => {
-                            // Option 4: Start DKG Process
-                            info!("Selected: Start DKG Process - initiating DKG");
-                            
+                        2 => {
+                            // Option 3: Start DKG Process (unified multi-chain)
+                            info!("Selected: Start DKG Process - initiating unified DKG");
+
                             // Use the wallet state if available, otherwise use defaults
                             let wallet_state = model.wallet_state.creating_wallet.as_ref();
                             let config = WalletConfig {
@@ -1047,9 +1038,6 @@ pub fn update(model: &mut Model, msg: Message) -> Option<Command> {
                                     .and_then(|s| s.template.as_ref())
                                     .map(|t| t.total_participants)
                                     .unwrap_or(3),
-                                curve: wallet_state
-                                    .and_then(|s| s.curve.clone())
-                                    .unwrap_or(CurveType::Secp256k1),
                                 mode: wallet_state
                                     .and_then(|s| s.mode.clone())
                                     .unwrap_or(WalletMode::Online),
@@ -1085,44 +1073,10 @@ pub fn update(model: &mut Model, msg: Message) -> Option<Command> {
                         });
                     }
                     
-                    // Navigate to Curve Selection screen
-                    info!("Mode selected, navigating to Curve Selection");
-                    model.push_screen(Screen::CurveSelection);
-                    model.ui_state.focus = crate::elm::model::ComponentId::CurveSelection;
-                    model.ui_state.selected_indices.entry(crate::elm::model::ComponentId::CurveSelection).or_insert(0);
-                    
-                    None
-                    
-                }
-                Screen::CurveSelection => {
-                    // Get the current selected curve (0 = Secp256k1, 1 = Ed25519)
-                    let selected_curve = model.ui_state.selected_indices
-                        .get(&model.ui_state.focus)
-                        .copied()
-                        .unwrap_or(0);
-                    
-                    info!("CurveSelection confirmed: {}", if selected_curve == 0 { "Secp256k1" } else { "Ed25519" });
-                    
-                    // Initialize creating_wallet if needed
-                    if model.wallet_state.creating_wallet.is_none() {
-                        model.wallet_state.creating_wallet = Some(CreateWalletState::default());
-                    }
-                    
-                    // Update the create wallet state with the selected curve
-                    if let Some(ref mut state) = model.wallet_state.creating_wallet {
-                        state.curve = Some(if selected_curve == 0 {
-                            CurveType::Secp256k1
-                        } else {
-                            CurveType::Ed25519
-                        });
-                    }
-                    
-                    // Navigate to Threshold Configuration screen
-                    info!("Curve selected, navigating to Threshold Configuration");
+                    // Navigate to Threshold Config screen (skip curve - unified DKG handles all)
+                    info!("Mode selected, navigating to Threshold Config");
                     model.push_screen(Screen::ThresholdConfig);
-                    model.ui_state.focus = crate::elm::model::ComponentId::ThresholdConfig;
-                    model.ui_state.selected_indices.entry(crate::elm::model::ComponentId::ThresholdConfig).or_insert(0);
-                    
+
                     None
                 }
                 Screen::ThresholdConfig => {
@@ -1140,7 +1094,6 @@ pub fn update(model: &mut Model, msg: Message) -> Option<Command> {
                                 name: "MPC Wallet".to_string(),
                                 threshold: 2,
                                 total_participants: 3,
-                                curve: creating_wallet.curve.clone().unwrap_or(CurveType::Secp256k1),
                                 mode: creating_wallet.mode.clone().unwrap_or(WalletMode::Online),
                             }
                         }
@@ -1150,7 +1103,6 @@ pub fn update(model: &mut Model, msg: Message) -> Option<Command> {
                             name: "MPC Wallet".to_string(),
                             threshold: 2,
                             total_participants: 3,
-                            curve: CurveType::Secp256k1,
                             mode: WalletMode::Online,
                         }
                     };
@@ -1195,7 +1147,9 @@ pub fn update(model: &mut Model, msg: Message) -> Option<Command> {
                         
                         // Navigate to DKG Progress screen
                         model.push_screen(Screen::DKGProgress { session_id: session_id.clone() });
-                        
+                        model.ui_state.focus = crate::elm::model::ComponentId::DKGProgress;
+                        model.ui_state.selected_indices.entry(crate::elm::model::ComponentId::DKGProgress).or_insert(0);
+
                         // Start joining the DKG session
                         Some(Command::JoinDKG { session_id })
                     } else {
@@ -1203,10 +1157,36 @@ pub fn update(model: &mut Model, msg: Message) -> Option<Command> {
                         None
                     }
                 }
+                Screen::DKGProgress { .. } => {
+                    let selected_action = model.ui_state.selected_indices
+                        .get(&crate::elm::model::ComponentId::DKGProgress)
+                        .copied()
+                        .unwrap_or(0);
+
+                    if selected_action == 0 {
+                        // Cancel DKG
+                        info!("DKGProgress: Cancel DKG selected");
+                        Some(Command::SendMessage(Message::CancelDKG))
+                    } else {
+                        // Copy Session ID
+                        if let Some(ref session) = model.active_session {
+                            info!("DKGProgress: Copy Session ID: {}", session.session_id);
+                            let notification = Notification {
+                                id: Uuid::new_v4().to_string(),
+                                text: format!("Session ID: {}", session.session_id),
+                                kind: NotificationKind::Info,
+                                timestamp: Utc::now(),
+                                dismissible: true,
+                            };
+                            model.ui_state.notifications.push(notification);
+                        }
+                        None
+                    }
+                }
                 _ => None,
             }
         }
-        
+
         // ============= Modal Management =============
         Message::ShowModal(modal) => {
             model.ui_state.modal = Some(modal);

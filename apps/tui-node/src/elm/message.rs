@@ -3,7 +3,7 @@
 //! Messages represent all user actions, system events, and state transitions
 //! that can occur in the application. They are the only way to trigger state changes.
 
-use crate::elm::model::{Screen, WalletConfig, WalletMode, CurveType, WalletTemplate, Modal, NotificationKind, ComponentId};
+use crate::elm::model::{Screen, WalletConfig, WalletMode, WalletTemplate, Modal, NotificationKind, ComponentId};
 use crate::protocal::signal::SessionInfo;
 use crate::utils::state::PendingSigningRequest;
 
@@ -32,7 +32,6 @@ pub enum Message {
     
     // Wallet creation flow
     SelectMode(WalletMode),
-    SelectCurve(CurveType),
     SelectTemplate(WalletTemplate),
     SetWalletName(String),
     SetThreshold(u16),

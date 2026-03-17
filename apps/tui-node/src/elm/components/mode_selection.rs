@@ -64,7 +64,7 @@ impl ModeSelectionComponent {
                 speed: "Real-time Operations",
                 requirements: vec![
                     "• Active internet connection",
-                    "• WebSocket server access (wss://auto-life.tech)",
+                    "• WebSocket server access (wss://xiongchenyu.dpdns.org)",
                     "• WebRTC capability for P2P mesh",
                     "• TLS 1.3 encryption support",
                 ],

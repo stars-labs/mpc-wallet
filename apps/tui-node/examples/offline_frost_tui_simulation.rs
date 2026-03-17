@@ -41,7 +41,6 @@ enum TuiScreen {
     MainMenu,
     CreateWallet,
     ModeSelection,
-    CurveSelection,
     ThresholdConfig,
     OfflineDKGCoordinator,
     OfflineDKGParticipant,
@@ -104,19 +103,9 @@ impl TuiSimulator {
                     KeyEvent::ArrowRight => self.mode = "offline".to_string(),
                     KeyEvent::Enter => {
                         if self.mode == "offline" {
-                            self.current_screen = TuiScreen::CurveSelection;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            TuiScreen::CurveSelection => {
-                match key {
-                    KeyEvent::ArrowDown => self.selected_option = 1, // Ed25519
-                    KeyEvent::ArrowUp => self.selected_option = 0,   // Secp256k1
-                    KeyEvent::Enter => {
-                        self.curve = if self.selected_option == 0 { "secp256k1" } else { "ed25519" }.to_string();
-                        self.current_screen = TuiScreen::ThresholdConfig;
+                            // Skip curve selection - unified DKG handles all curves
+                            self.curve = "unified".to_string();
+                            self.current_screen = TuiScreen::ThresholdConfig;
                     }
                     _ => {}
                 }

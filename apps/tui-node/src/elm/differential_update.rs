@@ -28,7 +28,6 @@ pub enum ComponentId {
     WalletDetail,
     CreateWallet,
     ModeSelection,
-    CurveSelection,
     ThresholdConfig,
     JoinSession,
     DKGProgress,
@@ -93,14 +92,7 @@ impl DifferentialState {
             self.mark_component_for_screen(&new_model.current_screen);
         }
         
-        // Check for wallet config changes (curve selection, threshold, etc.)
-        if old_model.wallet_config.curve != new_model.wallet_config.curve {
-            // Curve changed, update CurveSelection component if on that screen
-            if matches!(new_model.current_screen, Screen::CurveSelection) {
-                self.mark_dirty(ComponentId::CurveSelection);
-            }
-        }
-        
+        // Check for wallet config changes (threshold, etc.)
         if old_model.wallet_config.total_participants != new_model.wallet_config.total_participants
             || old_model.wallet_config.threshold != new_model.wallet_config.threshold {
             // Threshold config changed
@@ -169,7 +161,6 @@ impl DifferentialState {
             Screen::WalletDetail { .. } => ComponentId::WalletDetail,
             Screen::CreateWallet(_) => ComponentId::CreateWallet,
             Screen::ModeSelection => ComponentId::ModeSelection,
-            Screen::CurveSelection => ComponentId::CurveSelection,
             Screen::ThresholdConfig => ComponentId::ThresholdConfig,
             Screen::JoinSession => ComponentId::JoinSession,
             Screen::DKGProgress { .. } => ComponentId::DKGProgress,
@@ -198,7 +189,6 @@ fn screens_equal(a: &Screen, b: &Screen) -> bool {
         (Screen::WalletDetail { wallet_id: id1 }, Screen::WalletDetail { wallet_id: id2 }) => id1 == id2,
         (Screen::CreateWallet(step1), Screen::CreateWallet(step2)) => step1 == step2,
         (Screen::ModeSelection, Screen::ModeSelection) => true,
-        (Screen::CurveSelection, Screen::CurveSelection) => true,
         (Screen::ThresholdConfig, Screen::ThresholdConfig) => true,
         (Screen::JoinSession, Screen::JoinSession) => true,
         (Screen::DKGProgress { .. }, Screen::DKGProgress { .. }) => true,

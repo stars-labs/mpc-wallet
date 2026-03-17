@@ -331,7 +331,7 @@ impl fmt::Display for WebSocketUrl {
 
 impl Default for WebSocketUrl {
     fn default() -> Self {
-        Self("wss://auto-life.tech".to_string())
+        Self("wss://xiongchenyu.dpdns.org".to_string())
     }
 }
 

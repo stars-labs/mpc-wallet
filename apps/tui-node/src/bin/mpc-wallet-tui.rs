@@ -33,7 +33,7 @@ struct Args {
 
     /// Signal server URL
     /// Example: --signal-server ws://localhost:9000
-    #[arg(long, default_value = "wss://auto-life.tech")]
+    #[arg(long, default_value = "wss://xiongchenyu.dpdns.org")]
     signal_server: String,
 }
 
