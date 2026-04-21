@@ -69,6 +69,8 @@ pub enum Id {
     OfflineDKGProcess,
     DKGProgress,
     SDCardManager,
+    /// Mount slot for the pre-DKG password-capture component.
+    PasswordPrompt,
 }
 
 /// User events emitted by components

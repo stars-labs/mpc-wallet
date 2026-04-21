@@ -92,6 +92,13 @@ pub struct WalletState {
     /// by Update handlers at each protocol transition and consumed by
     /// `App::mount_screen_components` when rendering DKGProgress.
     pub dkg_round: crate::elm::message::DKGRound,
+    /// Password for encrypting this device's share before it's written to
+    /// the keystore. Captured on the `PasswordPrompt` screen; consumed by
+    /// the wallet-finalization Command once DKG produces a KeyPackage; then
+    /// cleared so we don't keep the cleartext password sitting in process
+    /// memory any longer than necessary. `None` outside the wallet-creation
+    /// window.
+    pub pending_password: Option<String>,
 }
 
 // Manual Debug implementation for WalletState
@@ -106,6 +113,9 @@ impl std::fmt::Debug for WalletState {
             .field("creating_wallet", &self.creating_wallet)
             .field("dkg_in_progress", &self.dkg_in_progress)
             .field("dkg_round", &self.dkg_round)
+            // Never log the actual password, even at debug level — just
+            // report whether one is currently staged.
+            .field("pending_password", &self.pending_password.as_ref().map(|_| "<redacted>"))
             .finish()
     }
 }
@@ -191,6 +201,14 @@ pub enum Screen {
     ThresholdConfig,
     TemplateSelection,
     WalletConfiguration(WalletConfig),
+    /// Collects a password for encrypting this device's key share before DKG
+    /// starts. Entered from either the creator path (post-ThresholdConfig)
+    /// or the joiner path (post-AcceptSession); on submit the password is
+    /// stashed in `Model.wallet_state.pending_password` and the screen
+    /// advances to `DKGProgress`. Creator-vs-joiner is inferred from
+    /// `Model.active_session` at the transition point — no need to carry
+    /// that distinction in the variant itself.
+    PasswordPrompt,
     DKGProgress { session_id: String },
     WalletComplete { wallet_id: String },
     
@@ -270,6 +288,8 @@ pub enum ComponentId {
     ThresholdConfig,
     JoinSession,
     DKGProgress,
+    /// Focus target for the pre-DKG password-capture screen.
+    PasswordPrompt,
     Custom(String),
 }
 
