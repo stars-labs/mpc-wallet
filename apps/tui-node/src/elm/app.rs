@@ -392,6 +392,18 @@ where
                 )?;
                 self.app.active(&Id::DKGProgress)?;
             }
+            Screen::PasswordPrompt => {
+                // Substep 1.2 placeholder mount. Real input fields arrive in
+                // Substep 1.3 — for now the component is stateless and just
+                // renders "WIP — press Esc to go back" so we can manually
+                // verify the navigation edges work end-to-end.
+                self.app.mount(
+                    Id::PasswordPrompt,
+                    Box::new(crate::elm::components::PasswordPromptComponent::new()),
+                    vec![]
+                )?;
+                self.app.active(&Id::PasswordPrompt)?;
+            }
             _ => {
                 // Default to main menu for unimplemented screens
                 let wallet_count = self.model.wallet_state.wallets.len();
@@ -533,6 +545,7 @@ where
             Screen::ThresholdConfig => !self.app.mounted(&Id::ThresholdConfig),
             Screen::JoinSession => !self.app.mounted(&Id::JoinSession),
             Screen::DKGProgress { .. } => !self.app.mounted(&Id::DKGProgress),
+            Screen::PasswordPrompt => !self.app.mounted(&Id::PasswordPrompt),
             _ => false,
         }
     }
@@ -819,6 +832,9 @@ where
                 }
                 Screen::DKGProgress { .. } => {
                     self.app.view(&Id::DKGProgress, f, main_area);
+                }
+                Screen::PasswordPrompt => {
+                    self.app.view(&Id::PasswordPrompt, f, main_area);
                 }
                 _ => {
                     // Fallback to main menu

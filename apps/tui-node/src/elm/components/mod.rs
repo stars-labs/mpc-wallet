@@ -15,6 +15,7 @@ pub mod notification;
 pub mod mode_selection;
 pub mod threshold_config;
 pub mod join_session;
+pub mod password_prompt;
 
 // DKG components
 pub mod dkg_progress;
@@ -33,6 +34,7 @@ pub use notification::NotificationBar;
 pub use mode_selection::ModeSelectionComponent;
 pub use threshold_config::ThresholdConfigComponent;
 pub use join_session::JoinSessionComponent;
+pub use password_prompt::PasswordPromptComponent;
 
 // DKG components
 pub use dkg_progress::DKGProgressComponent;

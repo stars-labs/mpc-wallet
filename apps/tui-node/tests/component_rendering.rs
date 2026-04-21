@@ -133,3 +133,39 @@ fn renders_finalization_at_95_percent() {
         "Finalization must render 95%, not 100% — 100% is reserved for Complete",
     );
 }
+
+// -----------------------------------------------------------------
+// PasswordPromptComponent (Substep 1.2 placeholder)
+// -----------------------------------------------------------------
+#[test]
+fn password_prompt_placeholder_renders_wip_notice_and_esc_hint() {
+    use tui_node::elm::components::PasswordPromptComponent;
+
+    let backend = TestBackend::new(120, 20);
+    let mut terminal = Terminal::new(backend).expect("TestBackend::Terminal");
+    let mut component = PasswordPromptComponent::new();
+
+    terminal
+        .draw(|frame| {
+            let area = frame.area();
+            component.view(frame, area);
+        })
+        .expect("TestBackend draw must succeed");
+
+    let rendered = buffer_to_string(terminal.backend().buffer());
+    assert_contains(
+        &rendered,
+        "Set Wallet Password",
+        "placeholder should render the block title so users know which screen they're on",
+    );
+    assert_contains(
+        &rendered,
+        "WIP",
+        "placeholder should advertise its WIP status so accidental demos don't look broken",
+    );
+    assert_contains(
+        &rendered,
+        "Esc",
+        "placeholder must show the Esc-to-go-back hint — that's its only interaction today",
+    );
+}

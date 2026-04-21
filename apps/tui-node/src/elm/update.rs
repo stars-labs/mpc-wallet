@@ -164,6 +164,31 @@ pub fn update(model: &mut Model, msg: Message) -> Option<Command> {
         }
         
         // ============= Wallet Management Messages =============
+
+        // Substep 1.2 stub: the PasswordPromptComponent isn't capable of
+        // emitting this yet (placeholder has no input fields), so reaching
+        // this arm at runtime is not possible until Substep 1.3 wires the
+        // real input widget. Still worth implementing now so the message
+        // variant is live and we can cover it in unit tests — makes the
+        // handoff in 1.3/1.4 a compile-time diff rather than a new feature.
+        //
+        // Behaviour today: stash the password and advance to DKGProgress.
+        // The actual keystore encryption (Stage 2) reads from
+        // `pending_password` and clears it.
+        Message::SubmitPassword { value } => {
+            // Do not log the password itself, even at debug level.
+            info!("Password submitted ({} chars) — staging and advancing to DKGProgress", value.len());
+            model.wallet_state.pending_password = Some(value);
+            // Placeholder DKGProgress session id; the real one flows in via
+            // `UpdateDKGSessionId` from the signal server. Matches the
+            // pattern already used by `Message::CreateWallet`.
+            model.push_screen(Screen::DKGProgress {
+                session_id: "pending".to_string(),
+            });
+            model.ui_state.focus = crate::elm::model::ComponentId::DKGProgress;
+            None
+        }
+
         Message::CreateWallet { config } => {
             info!("Creating wallet with config: {:?}", config);
             

@@ -218,3 +218,40 @@ fn dkg_key_generated_off_progress_screen_does_not_force_remount() {
         cmd
     );
 }
+
+// -----------------------------------------------------------------
+// SubmitPassword — Substep 1.2 stub contract
+// -----------------------------------------------------------------
+#[test]
+fn fresh_model_has_no_pending_password() {
+    let model = fresh_model();
+    assert!(
+        model.wallet_state.pending_password.is_none(),
+        "pending_password must default to None — Stage 2 relies on this to \
+         detect 'no password captured' vs 'user typed empty' states"
+    );
+}
+
+#[test]
+fn submit_password_stashes_value_and_advances_to_dkg_progress() {
+    let mut model = fresh_model();
+    model.current_screen = Screen::PasswordPrompt;
+
+    let _ = update(
+        &mut model,
+        Message::SubmitPassword {
+            value: "hunter2-but-longer".to_string(),
+        },
+    );
+
+    assert_eq!(
+        model.wallet_state.pending_password.as_deref(),
+        Some("hunter2-but-longer"),
+        "SubmitPassword must stash the value for the Stage 2 finaliser to consume"
+    );
+    assert!(
+        matches!(model.current_screen, Screen::DKGProgress { .. }),
+        "SubmitPassword should push DKGProgress; got {:?}",
+        model.current_screen
+    );
+}

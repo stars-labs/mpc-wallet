@@ -37,6 +37,11 @@ pub enum Message {
     SetThreshold(u16),
     SetTotalParticipants(u16),
     ConfirmWalletCreation,
+    /// Emitted by the PasswordPromptComponent when the user confirms a
+    /// valid password. Handler stashes it on `Model.wallet_state.pending_password`
+    /// and navigates forward to DKGProgress. `value` is the cleartext
+    /// password — it gets cleared after keystore write in Stage 2.
+    SubmitPassword { value: String },
     
     // DKG operations
     InitiateDKG { params: DKGParams },
