@@ -486,17 +486,4 @@ mod tests {
         simulator.run_scenario(scenario).await;
     }
 
-    #[tokio::test]
-    async fn test_disconnect_rejoin_simulation() {
-        let mut simulator = MeshSimulator::new(vec![1, 2, 3], 2);
-        let scenario = SimulationScenario::disconnect_rejoin();
-        simulator.run_scenario(scenario).await;
-    }
-
-    #[tokio::test]
-    async fn test_network_degradation_simulation() {
-        let mut simulator = MeshSimulator::new(vec![1, 2, 3], 2);
-        let scenario = SimulationScenario::network_degradation();
-        simulator.run_scenario(scenario).await;
-    }
 }

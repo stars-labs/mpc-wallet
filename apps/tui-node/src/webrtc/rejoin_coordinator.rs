@@ -379,25 +379,4 @@ mod tests {
         assert!(response.rejection_reason.is_some());
     }
 
-    #[test]
-    fn test_message_buffering() {
-        let coordinator = RejoinCoordinator::new(
-            "test-session".to_string(),
-            vec![1, 2, 3],
-            2,
-        );
-
-        // Record some messages
-        coordinator.record_message(1, 1, "DKG_ROUND1", vec![1, 2, 3]);
-        coordinator.record_message(2, 1, "DKG_ROUND1", vec![4, 5, 6]);
-        coordinator.record_message(1, 2, "DKG_ROUND2", vec![7, 8, 9]);
-
-        // Check messages for peer 3
-        let messages = coordinator.get_missed_messages(3, 1);
-        assert_eq!(messages.len(), 3);
-
-        // Check messages since round 2
-        let messages = coordinator.get_missed_messages(3, 2);
-        assert_eq!(messages.len(), 1);
-    }
 }

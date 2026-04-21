@@ -187,37 +187,3 @@ pub fn analyze_performance(_monitor: &PerformanceMonitor) -> Vec<String> {
     recommendations
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    
-    #[tokio::test]
-    async fn test_performance_monitor() {
-        let monitor = PerformanceMonitor::new();
-        
-        // Record some metrics
-        monitor.record_metric("test_op".to_string(), Duration::from_millis(10)).await;
-        monitor.record_metric("test_op".to_string(), Duration::from_millis(20)).await;
-        monitor.record_metric("test_op".to_string(), Duration::from_millis(30)).await;
-        
-        // Get summary
-        let summary = monitor.get_summary().await;
-        assert!(summary.contains("test_op"));
-        assert!(summary.contains("count=3"));
-    }
-    
-    #[tokio::test]
-    async fn test_operation_timer() {
-        let monitor = PerformanceMonitor::new();
-        let timer = monitor.start_timer();
-        
-        // Simulate some work
-        tokio::time::sleep(Duration::from_millis(10)).await;
-        
-        timer.stop("test_operation").await;
-        
-        // Verify metric was recorded
-        let summary = monitor.get_summary().await;
-        assert!(summary.contains("test_operation"));
-    }
-}

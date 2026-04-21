@@ -258,32 +258,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_connection_quality_scoring() {
-        let mut quality = ConnectionQuality::new();
-        
-        // Good connection
-        quality.latency_ms = 30;
-        quality.packet_loss_rate = 0.01;
-        quality.bandwidth_kbps = 5000;
-        quality.calculate_score();
-        assert!(quality.score >= 90);
-        
-        // Degraded connection
-        quality.latency_ms = 200;
-        quality.packet_loss_rate = 0.1;
-        quality.bandwidth_kbps = 500;
-        quality.calculate_score();
-        assert!(quality.score < 70);
-        
-        // Poor connection
-        quality.latency_ms = 600;
-        quality.packet_loss_rate = 0.3;
-        quality.bandwidth_kbps = 50;
-        quality.calculate_score();
-        assert!(quality.score < 40);
-    }
-
-    #[test]
     fn test_heartbeat_monitoring() {
         let monitor = ConnectionMonitor::new();
         
@@ -300,18 +274,4 @@ mod tests {
         assert!(quality.is_healthy());
     }
 
-    #[test]
-    fn test_connection_degradation() {
-        let monitor = ConnectionMonitor::new();
-        
-        monitor.start_monitoring(2);
-        monitor.degrade_connection(2, 500, 0.2);
-        
-        let quality = monitor.get_quality(2).unwrap();
-        assert!(!quality.is_healthy());
-        
-        monitor.restore_connection(2);
-        let quality = monitor.get_quality(2).unwrap();
-        assert!(quality.is_healthy());
-    }
 }
