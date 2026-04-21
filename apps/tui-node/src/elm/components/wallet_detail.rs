@@ -2,7 +2,11 @@
 
 use crate::elm::components::{Id, UserEvent, MpcWalletComponent};
 use crate::elm::message::Message;
-use tuirealm::{Component, Event, Frame, MockComponent, Props, State};
+use tuirealm::component::{AppComponent, Component};
+use tuirealm::event::Event;
+use tuirealm::ratatui::Frame;
+use tuirealm::props::Props;
+use tuirealm::state::State;
 use tuirealm::command::{Cmd, CmdResult};
 use ratatui::layout::Rect;
 
@@ -33,7 +37,7 @@ impl WalletDetail {
     }
 }
 
-impl MockComponent for WalletDetail {
+impl Component for WalletDetail {
     fn view(&mut self, frame: &mut Frame, area: Rect) {
         use ratatui::widgets::{Block, Borders, Paragraph};
         use ratatui::style::{Color, Style};
@@ -53,11 +57,11 @@ impl MockComponent for WalletDetail {
         frame.render_widget(widget, area);
     }
     
-    fn query(&self, attr: tuirealm::Attribute) -> Option<tuirealm::AttrValue> {
-        self.props.get(attr)
+    fn query<'a>(&'a self, attr: tuirealm::props::Attribute) -> Option<tuirealm::props::QueryResult<'a>> {
+        self.props.get_for_query(attr)
     }
     
-    fn attr(&mut self, attr: tuirealm::Attribute, value: tuirealm::AttrValue) {
+    fn attr(&mut self, attr: tuirealm::props::Attribute, value: tuirealm::props::AttrValue) {
         self.props.set(attr, value);
     }
     
@@ -66,12 +70,12 @@ impl MockComponent for WalletDetail {
     }
     
     fn perform(&mut self, _cmd: Cmd) -> CmdResult {
-        CmdResult::None
+        CmdResult::NoChange
     }
 }
 
-impl Component<Message, UserEvent> for WalletDetail {
-    fn on(&mut self, _event: Event<UserEvent>) -> Option<Message> {
+impl AppComponent<Message, UserEvent> for WalletDetail {
+    fn on(&mut self, _event: &Event<UserEvent>) -> Option<Message> {
         None
     }
 }

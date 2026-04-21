@@ -33,9 +33,29 @@ impl Default for DkgMode {
     }
 }
 
-// SimpleDkgPackage removed - using real FROST packages now
-
-// Removed SimpleRound1Package, SimpleRound2Package, and SimpleKeyPackage - using real FROST types now
+/// Compute a FROST `Identifier` for `device_id` that is **deterministic across
+/// every node** in the session.
+///
+/// FROST's `part2` verifies a proof-of-knowledge tied to the sender's
+/// identifier. If two nodes disagree on "who is identifier 0x01" because their
+/// local `session.participants` ordering differs, part2 raises
+/// `InvalidProofOfKnowledge`. Sorting the participant list first gives us a
+/// canonical order (alphabetical over `device_id`) every node agrees on without
+/// any extra signalling.
+///
+/// Returns `None` only if `device_id` is not in the list, or if the resulting
+/// index is out of FROST's identifier range (which can't actually happen for
+/// reasonable session sizes).
+fn canonical_identifier<C: Ciphersuite>(
+    participants: &[String],
+    device_id: &str,
+) -> Option<Identifier<C>> {
+    let mut sorted: Vec<&String> = participants.iter().collect();
+    sorted.sort();
+    let idx = sorted.iter().position(|p| p.as_str() == device_id)?;
+    let one_based = u16::try_from(idx).ok()?.checked_add(1)?;
+    Identifier::<C>::try_from(one_based).ok()
+}
 
 // Removed insecure derive_group_key function - now using real FROST DKG output
 
@@ -116,34 +136,85 @@ where
     // Start DKG Round 1
     guard.dkg_state = DkgState::Round1InProgress;
     
-    // Determine our identifier (1-based index in participant list)
-    let my_index = session.participants.iter()
-        .position(|p| p == &self_device_id)
-        .map(|i| i as u16 + 1)  // Convert to 1-based
-        .unwrap_or(1);
-    
-    let my_identifier = Identifier::<C>::try_from(my_index).expect("Invalid identifier");
-    
+    // Compute our FROST identifier from the canonicalised (sorted) participant
+    // list, so every node assigns the same identifier to the same device_id
+    // regardless of local arrival order. A `None` here means `self_device_id`
+    // isn't in `session.participants` — a protocol-level desync that we should
+    // surface via `DkgState::Failed` rather than panic the tokio task.
+    let my_identifier = match canonical_identifier::<C>(&session.participants, &self_device_id) {
+        Some(id) => id,
+        None => {
+            error!(
+                "❌ self_device_id {} not in session.participants={:?}",
+                self_device_id, session.participants
+            );
+            guard.dkg_state = DkgState::Failed(format!(
+                "self_device_id {} not in session.participants",
+                self_device_id
+            ));
+            return;
+        }
+    };
+    info!(
+        "🪪 DKG Round 1 identifier for {} = {:?} (canonical, sorted participants: {:?})",
+        self_device_id,
+        my_identifier,
+        {
+            let mut sorted = session.participants.clone();
+            sorted.sort();
+            sorted
+        }
+    );
+
     // Generate real FROST DKG round 1
     // Use the frost_ed25519 rand_core for compatibility
     use frost_ed25519::rand_core::OsRng;
     let mut rng = OsRng;
-    let (round1_secret_package, round1_public_package) = frost_core::keys::dkg::part1(
+    let (round1_secret_package, round1_public_package) = match frost_core::keys::dkg::part1(
         my_identifier,
         session.total,
         session.threshold,
         &mut rng,
-    ).expect("Failed to generate DKG round 1");
-    
-    // Store the secret package for later use
-    guard.dkg_part1_secret_package = Some(round1_secret_package.serialize().expect("Failed to serialize secret package"));
-    guard.dkg_part1_public_package = Some(round1_public_package.serialize().expect("Failed to serialize public package"));
-    
+    ) {
+        Ok(pair) => pair,
+        Err(e) => {
+            error!("❌ DKG part1 failed: {:?}", e);
+            guard.dkg_state = DkgState::Failed(format!("DKG part1 failed: {:?}", e));
+            return;
+        }
+    };
+
+    // Serialize once; `part1` gives us distinct secret + public packages and
+    // we store both in `guard` for later rounds. Serialization is infallible
+    // for valid FROST output but the API type is `Result`, so propagate.
+    let round1_secret_bytes = match round1_secret_package.serialize() {
+        Ok(b) => b,
+        Err(e) => {
+            error!("Round1 SecretPackage::serialize failed: {:?}", e);
+            guard.dkg_state = DkgState::Failed(format!("Round1 secret serialize: {:?}", e));
+            return;
+        }
+    };
+    let round1_public_bytes = match round1_public_package.serialize() {
+        Ok(b) => b,
+        Err(e) => {
+            error!("Round1 Package::serialize failed: {:?}", e);
+            guard.dkg_state = DkgState::Failed(format!("Round1 public serialize: {:?}", e));
+            return;
+        }
+    };
+
+    guard.dkg_part1_secret_package = Some(round1_secret_bytes);
+    // Store the public-package bytes once — previously we serialized twice
+    // (into `dkg_part1_public_package` and then again for broadcast). Same
+    // bytes every time, same cost avoided.
+    guard.dkg_part1_public_package = Some(round1_public_bytes.clone());
+
     // Store our own round1 package
     guard.dkg_round1_packages.insert(my_identifier, round1_public_package.clone());
-    
-    // Serialize the public package for broadcasting
-    let package_bytes = round1_public_package.serialize().expect("Failed to serialize round1 package");
+
+    // Reuse the already-serialized bytes for the broadcast payload.
+    let package_bytes = round1_public_bytes;
     
     // Create WebRTC message for broadcasting
     let message = WebRTCMessage::SimpleMessage {
@@ -240,13 +311,19 @@ where
         None => return,
     };
     
-    // Determine sender's identifier (1-based index)
-    let sender_index = session.participants.iter()
-        .position(|p| p == &from_device_id)
-        .map(|i| i as u16 + 1)  // Convert to 1-based
-        .unwrap_or(1);
-    
-    let sender_identifier = Identifier::<C>::try_from(sender_index).expect("Invalid identifier");
+    // Determine sender's identifier from the canonicalised participant list —
+    // must match the identifier the sender used in `part1`, otherwise part2
+    // will raise InvalidProofOfKnowledge.
+    let sender_identifier = match canonical_identifier::<C>(&session.participants, &from_device_id) {
+        Some(id) => id,
+        None => {
+            error!(
+                "DKG Round 1 package from unknown device {} — not in session.participants={:?}",
+                from_device_id, session.participants
+            );
+            return;
+        }
+    };
     
     // Deserialize the real FROST round1 package
     let round1_package = match frost_core::keys::dkg::round1::Package::<C>::deserialize(&package_bytes) {
@@ -283,44 +360,79 @@ where
 pub async fn handle_trigger_dkg_round2<C>(
     state: Arc<Mutex<AppState<C>>>,
     self_device_id: String,
-) 
+)
 where
     C: Ciphersuite + Send + Sync + 'static,
 {
+    info!("🔁🔁🔁 handle_trigger_dkg_round2 ENTERED for device={}", self_device_id);
+
     let mut guard = state.lock().await;
-    
+    info!("  round2: state lock acquired, dkg_state = {:?}", guard.dkg_state);
+
     // Check state
     if !matches!(guard.dkg_state, DkgState::Round1Complete) {
+        warn!(
+            "  round2 bailing: dkg_state is {:?}, expected Round1Complete",
+            guard.dkg_state
+        );
         return;
     }
-    
     guard.dkg_state = DkgState::Round2InProgress;
-    
+
     let session = match &guard.session {
         Some(s) => s.clone(),
         None => {
+            error!("  round2 bailing: no session in AppState");
             guard.dkg_state = DkgState::Failed("No session in Round 2".to_string());
             return;
         }
     };
-    
-    // Get our identifier
-    let my_index = session.participants.iter()
-        .position(|p| p == &self_device_id)
-        .map(|i| i as u16 + 1)  // Convert to 1-based
-        .unwrap_or(1);
-    let my_identifier = Identifier::<C>::try_from(my_index).expect("Invalid identifier");
-    
-    // Get our secret package from round 1
-    let secret_package = match &guard.dkg_part1_secret_package {
-        Some(bytes) => frost_core::keys::dkg::round1::SecretPackage::<C>::deserialize(bytes)
-            .expect("Failed to deserialize secret package"),
+
+    // Canonical (sorted-participants) identifier — must match the one used
+    // during Round 1 generation and stored on every peer.
+    let my_identifier = match canonical_identifier::<C>(&session.participants, &self_device_id) {
+        Some(id) => id,
         None => {
+            error!(
+                "  round2 bailing: self_device_id={} not in session.participants={:?}",
+                self_device_id, session.participants
+            );
+            guard.dkg_state = DkgState::Failed(
+                format!("self_device_id {} not in session.participants", self_device_id),
+            );
+            return;
+        }
+    };
+    info!("  round2: my_identifier = {:?} (canonical)", my_identifier);
+
+    // Get our secret package from round 1
+    let secret_package_bytes = match guard.dkg_part1_secret_package.clone() {
+        Some(b) => b,
+        None => {
+            error!("  round2 bailing: dkg_part1_secret_package is None");
             guard.dkg_state = DkgState::Failed("Missing round 1 secret package".to_string());
             return;
         }
     };
-    
+    info!(
+        "  round2: dkg_part1_secret_package has {} bytes, deserializing…",
+        secret_package_bytes.len()
+    );
+    let secret_package =
+        match frost_core::keys::dkg::round1::SecretPackage::<C>::deserialize(&secret_package_bytes) {
+            Ok(sp) => sp,
+            Err(e) => {
+                error!(
+                    "  round2 bailing: SecretPackage::deserialize failed: {:?} (bytes len={})",
+                    e,
+                    secret_package_bytes.len()
+                );
+                guard.dkg_state = DkgState::Failed(format!("Round1 SecretPackage deserialize: {:?}", e));
+                return;
+            }
+        };
+    info!("  round2: secret_package deserialized ✓");
+
     // Collect all round 1 packages EXCLUDING our own (like in dkg.rs example)
     let round1_packages = guard.dkg_round1_packages.clone();
     let round1_packages_from_others: std::collections::BTreeMap<_, _> = round1_packages
@@ -328,54 +440,87 @@ where
         .filter(|(id, _)| **id != my_identifier)
         .map(|(id, pkg)| (*id, pkg.clone()))
         .collect();
-    
+    info!(
+        "  round2: {}/{} peer round1 packages gathered (excluding self)",
+        round1_packages_from_others.len(),
+        round1_packages.len() - 1
+    );
+
     // Generate round 2 packages using FROST part2
+    info!("  round2: calling frost_core::keys::dkg::part2");
     let (round2_secret_package, round2_public_packages) = match frost_core::keys::dkg::part2(
         secret_package,
         &round1_packages_from_others,
     ) {
-        Ok(result) => result,
+        Ok(result) => {
+            info!(
+                "  round2: part2 OK, produced {} per-peer round2 packages",
+                result.1.len()
+            );
+            result
+        }
         Err(e) => {
+            error!("  round2 bailing: part2 failed: {:?}", e);
             guard.dkg_state = DkgState::Failed(format!("DKG part2 failed: {:?}", e));
             return;
         }
     };
-    
+
     // Store the round2 secret package for part3
-    guard.dkg_part2_secret_package = Some(round2_secret_package.serialize().expect("Failed to serialize"));
-    
-    // Don't store our own packages - round2 packages are meant for others
-    // We'll receive round2 packages meant for us via process_dkg_round2
-    
-    drop(guard);
-    
-    // Create identifier to device_id mapping
-    let mut identifier_to_device_id = std::collections::HashMap::new();
-    for (index, device_id) in session.participants.iter().enumerate() {
-        let identifier = frost_core::Identifier::<C>::try_from((index + 1) as u16).expect("Invalid identifier");
-        identifier_to_device_id.insert(identifier, device_id.clone());
-    }
-    
-    // Broadcast round 2 packages to each participant
-    for (receiver_id, package) in round2_public_packages {
-        if let Some(receiver_device_id) = identifier_to_device_id.get(&receiver_id) {
-            if receiver_device_id != &self_device_id {
-                let package_bytes = package.serialize().expect("Failed to serialize round2 package");
-                let message = WebRTCMessage::SimpleMessage {
-                    text: {
-                        use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
-                        format!("DKG_ROUND2:{}", BASE64.encode(&package_bytes))
-                    },
-                };
-                
-                if let Err(_e) = crate::utils::device::send_webrtc_message(receiver_device_id, &message, state.clone()).await {
-                    warn!("Failed to send DKG Round 2 package to {}: {:?}", receiver_device_id, _e);
-                }
-            }
-        } else {
-            warn!("Could not find device_id for identifier {:?}", receiver_id);
+    match round2_secret_package.serialize() {
+        Ok(bytes) => {
+            info!("  round2: stored round2_secret_package ({} bytes)", bytes.len());
+            guard.dkg_part2_secret_package = Some(bytes);
+        }
+        Err(e) => {
+            error!("  round2 bailing: round2_secret_package.serialize failed: {:?}", e);
+            guard.dkg_state = DkgState::Failed(format!("Serialize round2 secret: {:?}", e));
+            return;
         }
     }
+
+    drop(guard);
+
+    // Create identifier→device_id map using the canonical (sorted) ordering
+    // that Round 1 used. Any deviation here would route Round 2 packages to
+    // the wrong peer.
+    let mut identifier_to_device_id = std::collections::HashMap::new();
+    for device_id in session.participants.iter() {
+        if let Some(identifier) =
+            canonical_identifier::<C>(&session.participants, device_id)
+        {
+            identifier_to_device_id.insert(identifier, device_id.clone());
+        }
+    }
+
+    info!("  round2: broadcasting {} packages", round2_public_packages.len());
+    for (receiver_id, package) in round2_public_packages {
+        let Some(receiver_device_id) = identifier_to_device_id.get(&receiver_id) else {
+            warn!("  round2: no device_id for identifier {:?}", receiver_id);
+            continue;
+        };
+        if receiver_device_id == &self_device_id {
+            continue;
+        }
+        let package_bytes = match package.serialize() {
+            Ok(b) => b,
+            Err(e) => {
+                error!("  round2: serialize per-peer package for {}: {:?}", receiver_device_id, e);
+                continue;
+            }
+        };
+        let message = WebRTCMessage::SimpleMessage {
+            text: {
+                use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+                format!("DKG_ROUND2:{}", BASE64.encode(&package_bytes))
+            },
+        };
+        match crate::utils::device::send_webrtc_message(receiver_device_id, &message, state.clone()).await {
+            Ok(()) => info!("  round2: ✅ sent Round2 package to {}", receiver_device_id),
+            Err(e) => warn!("  round2: ❌ send Round2 package to {} failed: {:?}", receiver_device_id, e),
+        }
+    }
+    info!("🔁 handle_trigger_dkg_round2 RETURNING for device={}", self_device_id);
 }
 
 /// Process DKG Round 2 package - Real FROST implementation with part3
@@ -383,9 +528,15 @@ pub async fn process_dkg_round2<C>(
     state: Arc<Mutex<AppState<C>>>,
     from_device_id: String,
     package_bytes: Vec<u8>,
-) 
+)
 where
-    C: Ciphersuite + Send + Sync + 'static,
+    // `CurveIdentifier` is what lets us translate `C` → `"secp256k1"` or
+    // `"ed25519"` at runtime. We need the real curve name (not the session
+    // blob's "unified") to route address derivation in the completion block
+    // below. TUI only instantiates `AppState<Secp256K1Sha256>` today, and
+    // both ciphersuites in use implement this trait — a future third curve
+    // would need to implement it too.
+    C: Ciphersuite + Send + Sync + 'static + crate::utils::curve_traits::CurveIdentifier,
 {
     let mut guard = state.lock().await;
     
@@ -395,19 +546,27 @@ where
         None => return,
     };
     
-    // Get our identifier
-    let my_index = session.participants.iter()
-        .position(|p| p == &guard.device_id)
-        .map(|i| i as u16 + 1)  // Convert to 1-based
-        .unwrap_or(1);
-    let my_identifier = Identifier::<C>::try_from(my_index).expect("Invalid identifier");
-    
-    // Determine sender's identifier
-    let sender_index = session.participants.iter()
-        .position(|p| p == &from_device_id)
-        .map(|i| i as u16 + 1)  // Convert to 1-based
-        .unwrap_or(1);
-    let sender_identifier = Identifier::<C>::try_from(sender_index).expect("Invalid identifier");
+    // Canonical identifiers — see `canonical_identifier` docstring above.
+    let my_identifier = match canonical_identifier::<C>(&session.participants, &guard.device_id) {
+        Some(id) => id,
+        None => {
+            error!(
+                "Round 2 process: self device_id {} not in session.participants={:?}",
+                guard.device_id, session.participants
+            );
+            return;
+        }
+    };
+    let sender_identifier = match canonical_identifier::<C>(&session.participants, &from_device_id) {
+        Some(id) => id,
+        None => {
+            error!(
+                "Round 2 process: sender {} not in session.participants={:?}",
+                from_device_id, session.participants
+            );
+            return;
+        }
+    };
     
     // Deserialize the real FROST round2 package
     let round2_package = match frost_core::keys::dkg::round2::Package::<C>::deserialize(&package_bytes) {
@@ -443,9 +602,28 @@ where
             .map(|(id, pkg)| (*id, pkg.clone()))
             .collect();
         
+        // Round 2 secret package must have been stored by `handle_trigger_dkg_round2`
+        // earlier in this flow. A deserialize failure here means either storage
+        // corruption or a protocol-version mismatch between Round 2 part2 and
+        // part3 — neither is recoverable, but we should surface the failure
+        // through `DkgState::Failed` so the UI can render an error modal
+        // instead of the tokio task going dark from a panic.
         let round2_secret_package = match &guard.dkg_part2_secret_package {
-            Some(bytes) => frost_core::keys::dkg::round2::SecretPackage::<C>::deserialize(bytes)
-                .expect("Failed to deserialize round2 secret package"),
+            Some(bytes) => match frost_core::keys::dkg::round2::SecretPackage::<C>::deserialize(bytes) {
+                Ok(pkg) => pkg,
+                Err(e) => {
+                    error!(
+                        "  round2 process: SecretPackage::<round2>::deserialize failed: {:?} ({} bytes)",
+                        e,
+                        bytes.len()
+                    );
+                    guard.dkg_state = DkgState::Failed(format!(
+                        "Round2 SecretPackage deserialize: {:?}",
+                        e
+                    ));
+                    return;
+                }
+            },
             None => {
                 guard.dkg_state = DkgState::Failed("Missing round 2 secret package".to_string());
                 return;
@@ -493,16 +671,38 @@ where
         info!("Key Package Identifier: {:?}", key_package.identifier());
         info!("Min signers: {:?}", key_package.min_signers());
         
-        // Now we can use the real verifying key to generate addresses
-        // First serialize the verifying key properly
-        let group_public_key_bytes = verifying_key.serialize()
-            .expect("Failed to serialize verifying key");
+        // Now we can use the real verifying key to generate addresses.
+        // VerifyingKey serialization can fail in principle (per the FROST API
+        // it returns `Result`), so handle it rather than panicking — a failure
+        // here would otherwise kill the tokio task silently and leave the UI
+        // pinned on Round2 forever.
+        let group_public_key_bytes = match verifying_key.serialize() {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                error!("VerifyingKey::serialize failed after part3: {:?}", e);
+                guard.dkg_state = DkgState::Failed(format!(
+                    "VerifyingKey serialize: {:?}",
+                    e
+                ));
+                return;
+            }
+        };
         
-        // Generate appropriate blockchain addresses based on curve type
+        // Generate appropriate blockchain addresses based on curve type.
+        // `CurveIdentifier` is brought into scope by the `C:` bound on this
+        // function; we call `C::curve_type()` directly below.
         use crate::blockchain_config::{CurveType, get_compatible_chains, generate_address_for_chain};
-        
-        let curve_type = session.curve_type.clone();
-        
+
+        // NOTE: `session.curve_type` is the string the *session* was
+        // announced with — the TUI currently publishes "unified" regardless
+        // of which curve actually ran. That's fine for signaling but useless
+        // for address derivation because `CurveType::from_string("unified")`
+        // returns `None` and `generate_address_for_chain` refuses to run.
+        // The ciphersuite `C` carries the real curve identity at the type
+        // level; `CurveIdentifier::curve_type()` materialises it as the
+        // "secp256k1" / "ed25519" strings the chain helpers expect.
+        let curve_type = C::curve_type().to_string();
+
         // Get ALL compatible chains for this curve and generate addresses
         let compatible_chains = get_compatible_chains(
             &CurveType::from_string(&curve_type).unwrap_or(CurveType::Secp256k1)

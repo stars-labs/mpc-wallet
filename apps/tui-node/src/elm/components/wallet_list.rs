@@ -8,10 +8,15 @@ use crate::keystore::WalletMetadata;
 
 use tuirealm::command::{Cmd, CmdResult};
 use tuirealm::event::{Event, Key, KeyEvent, KeyModifiers};
-use tuirealm::props::{Alignment, Color, Style, TextModifiers};
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use tuirealm::props::{Color, Style, TextModifiers};
+// tuirealm 4.0 split Alignment into horizontal/vertical. For widget
+// layout we want ratatui's plain Alignment.
+use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::widgets::{Block, BorderType as TuiBorderType, Borders as TuiBorders, List, ListItem, ListState, Paragraph};
-use tuirealm::{Component, Frame, MockComponent, Props, State, StateValue};
+use tuirealm::component::{AppComponent, Component};
+use tuirealm::ratatui::Frame;
+use tuirealm::props::Props;
+use tuirealm::state::{State, StateValue};
 
 /// Wallet list component
 #[derive(Debug, Clone)]
@@ -83,7 +88,7 @@ impl WalletList {
     }
 }
 
-impl MockComponent for WalletList {
+impl Component for WalletList {
     fn view(&mut self, frame: &mut Frame, area: Rect) {
         // Create layout
         let chunks = Layout::default()
@@ -196,16 +201,16 @@ impl MockComponent for WalletList {
         }
     }
     
-    fn query(&self, attr: tuirealm::Attribute) -> Option<tuirealm::AttrValue> {
-        self.props.get(attr)
+    fn query<'a>(&'a self, attr: tuirealm::props::Attribute) -> Option<tuirealm::props::QueryResult<'a>> {
+        self.props.get_for_query(attr)
     }
     
-    fn attr(&mut self, attr: tuirealm::Attribute, value: tuirealm::AttrValue) {
+    fn attr(&mut self, attr: tuirealm::props::Attribute, value: tuirealm::props::AttrValue) {
         self.props.set(attr, value);
     }
     
-    fn state(&self) -> tuirealm::State {
-        State::One(StateValue::Usize(self.selected))
+    fn state(&self) -> tuirealm::state::State {
+        State::Single(StateValue::Usize(self.selected))
     }
     
     fn perform(&mut self, cmd: Cmd) -> CmdResult {
@@ -219,13 +224,13 @@ impl MockComponent for WalletList {
                 CmdResult::Changed(self.state())
             }
             Cmd::Submit => CmdResult::Submit(self.state()),
-            _ => CmdResult::None,
+            _ => CmdResult::NoChange,
         }
     }
 }
 
-impl Component<Message, UserEvent> for WalletList {
-    fn on(&mut self, event: Event<UserEvent>) -> Option<Message> {
+impl AppComponent<Message, UserEvent> for WalletList {
+    fn on(&mut self, event: &Event<UserEvent>) -> Option<Message> {
         match event {
             Event::Keyboard(KeyEvent {
                 code: Key::Up,

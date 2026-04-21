@@ -48,10 +48,10 @@ impl KeyDerivation {
 ///
 /// The output format is: `salt (16 bytes) + nonce (12 bytes) + ciphertext`
 pub fn encrypt_data_with_method(data: &[u8], password: &str, method: KeyDerivation) -> crate::keystore::Result<Vec<u8>> {
-    // Generate a random salt
+    // Generate a random salt (direct system CSPRNG; stable across `rand` version churn).
     let mut salt = [0u8; SALT_LEN];
-    use rand::RngCore;
-    rand::thread_rng().fill_bytes(&mut salt);
+    getrandom::fill(&mut salt)
+        .map_err(|e| KeystoreError::General(format!("getrandom failed for salt: {}", e)))?;
 
     // Derive key using the specified method
     let key = match method {
@@ -83,9 +83,10 @@ pub fn encrypt_data_with_method(data: &[u8], password: &str, method: KeyDerivati
         }
     };
 
-    // Generate a random nonce
+    // Generate a random nonce (fresh for every encryption; critical for AES-GCM safety).
     let mut nonce_bytes = [0u8; NONCE_LEN];
-    rand::thread_rng().fill_bytes(&mut nonce_bytes);
+    getrandom::fill(&mut nonce_bytes)
+        .map_err(|e| KeystoreError::General(format!("getrandom failed for nonce: {}", e)))?;
     let nonce = Nonce::from_slice(&nonce_bytes);
 
     // Encrypt the data

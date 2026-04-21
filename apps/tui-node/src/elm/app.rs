@@ -9,9 +9,11 @@ use crate::elm::update::update;
 use crate::elm::components::{Id, MainMenu, WalletList, WalletDetail, ModalComponent, NotificationBar};
 use crate::utils::appstate_compat::AppState;
 
-use tuirealm::{Application, EventListenerCfg};
-use tuirealm::terminal::TerminalBridge;
-use tuirealm::terminal::CrosstermTerminalAdapter;
+use tuirealm::application::Application;
+use tuirealm::listener::EventListenerCfg;
+// `TerminalBridge` was removed in tuirealm 4.0; use the adapter directly —
+// its `TerminalAdapter` impl exposes raw-mode / alt-screen / draw methods.
+use tuirealm::terminal::{CrosstermTerminalAdapter, TerminalAdapter};
 use ratatui::layout::{Constraint, Direction, Layout};
 use crossterm::event::Event as CrosstermEvent;
 use tokio::sync::mpsc::{UnboundedSender, UnboundedReceiver};
@@ -27,8 +29,8 @@ pub struct ElmApp<C: frost_core::Ciphersuite> {
     /// The tui-realm application
     app: Application<Id, Message, crate::elm::components::UserEvent>,
     
-    /// Terminal bridge for rendering
-    terminal: TerminalBridge<CrosstermTerminalAdapter>,
+    /// Terminal adapter for rendering (tuirealm 4.0 removed TerminalBridge)
+    terminal: CrosstermTerminalAdapter,
     
     /// Channel for sending messages
     message_tx: UnboundedSender<Message>,
@@ -43,10 +45,14 @@ pub struct ElmApp<C: frost_core::Ciphersuite> {
     should_quit: bool,
 }
 
-impl<C: frost_core::Ciphersuite + Send + Sync + 'static> ElmApp<C> 
+impl<C: frost_core::Ciphersuite + Send + Sync + 'static> ElmApp<C>
 where
     <<C as frost_core::Ciphersuite>::Group as frost_core::Group>::Element: Send + Sync,
     <<<C as frost_core::Ciphersuite>::Group as frost_core::Group>::Field as frost_core::Field>::Scalar: Send + Sync,
+    // Required transitively by `Command::execute`, which feeds
+    // `process_dkg_round2` — that's the single call site that needs the
+    // real curve name for address derivation.
+    C: crate::utils::curve_traits::CurveIdentifier,
 {
     /// Create a new Elm application
     pub fn new(
@@ -59,9 +65,10 @@ where
         // Initialize model
         let model = Model::new(device_id);
         
-        // Initialize terminal
-        let terminal_adapter = CrosstermTerminalAdapter::new()?;
-        let terminal = TerminalBridge::new(terminal_adapter);
+        // Initialize terminal (adapter directly, no bridge in tuirealm 4.0)
+        let mut terminal = CrosstermTerminalAdapter::new()?;
+        terminal.enable_raw_mode()?;
+        terminal.enter_alternate_screen()?;
         
         // Initialize tui-realm application
         let app = Application::init(
@@ -185,9 +192,13 @@ where
                     .cloned()
                     .unwrap_or(0);
                 debug!("ModeSelection selected index: {}", selected);
+                let mut mode_selection =
+                    crate::elm::components::ModeSelectionComponent::with_selected(selected);
+                mode_selection.set_websocket_connected(self.model.network_state.connected);
+                mode_selection.set_websocket_url(self.model.network_state.websocket_url.clone());
                 self.app.mount(
                     Id::ModeSelection,
-                    Box::new(crate::elm::components::ModeSelectionComponent::with_selected(selected)),
+                    Box::new(mode_selection),
                     vec![]
                 )?;
                 self.app.active(&Id::ModeSelection)?;
@@ -304,7 +315,15 @@ where
                     total_participants,
                     threshold
                 );
-                
+
+                // Sync the DKG phase label from Model. Update::Message handlers
+                // (StartDKGProtocol → Round1, first ProcessDKGRound2 → Round2,
+                // DKGKeyGenerated → Finalization) own the transitions; we just
+                // copy the current phase onto the freshly-mounted component so
+                // the user sees the real round instead of the Initialization
+                // default during every remount.
+                dkg_progress.set_round(self.model.wallet_state.dkg_round.clone());
+
                 // Update WebSocket connection status
                 dkg_progress.set_websocket_connected(self.model.network_state.connected);
                 
@@ -688,6 +707,29 @@ where
             }
         }
         
+        // For DKGProgress screen, handle Left/Right to switch between action buttons
+        if matches!(self.model.current_screen, Screen::DKGProgress { .. }) {
+            match key.code {
+                KeyCode::Left => {
+                    info!("⬅️ DKGProgress LEFT -> ScrollLeft");
+                    return Some(Message::ScrollLeft);
+                }
+                KeyCode::Right => {
+                    info!("➡️ DKGProgress RIGHT -> ScrollRight");
+                    return Some(Message::ScrollRight);
+                }
+                KeyCode::Enter => {
+                    info!("🔥 DKGProgress ENTER -> SelectItem");
+                    let selected_index = self.model.ui_state.selected_indices
+                        .get(&crate::elm::model::ComponentId::DKGProgress)
+                        .copied()
+                        .unwrap_or(0);
+                    return Some(Message::SelectItem { index: selected_index });
+                }
+                _ => {}
+            }
+        }
+
         // Screen-specific keys for other screens
         match key.code {
             KeyCode::Up => {

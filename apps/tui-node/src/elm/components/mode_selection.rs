@@ -10,7 +10,10 @@ use tuirealm::event::Event;
 use ratatui::layout::{Rect, Constraint, Direction as LayoutDirection, Layout, Alignment};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::{Block, Borders, BorderType, Paragraph, Wrap};
-use tuirealm::{Component, Frame, MockComponent, Props, State, StateValue};
+use tuirealm::component::{AppComponent, Component};
+use tuirealm::ratatui::Frame;
+use tuirealm::props::Props;
+use tuirealm::state::{State, StateValue};
 
 /// Professional mode selection component
 #[derive(Debug, Clone)]
@@ -18,6 +21,8 @@ pub struct ModeSelectionComponent {
     props: Props,
     selected: usize,
     focused: bool,
+    websocket_connected: bool,
+    websocket_url: String,
 }
 
 #[derive(Debug, Clone)]
@@ -44,15 +49,33 @@ impl ModeSelectionComponent {
             props: Props::default(),
             selected: 0,
             focused: false,
+            websocket_connected: false,
+            websocket_url: String::new(),
         }
     }
-    
+
     pub fn with_selected(selected: usize) -> Self {
         Self {
             props: Props::default(),
             selected,
             focused: false,
+            websocket_connected: false,
+            websocket_url: String::new(),
         }
+    }
+
+    pub fn set_websocket_connected(&mut self, connected: bool) {
+        self.websocket_connected = connected;
+    }
+
+    pub fn set_websocket_url(&mut self, url: String) {
+        self.websocket_url = url;
+    }
+
+    /// Whether the currently-selected mode can be confirmed.
+    /// Online mode requires an active signaling WebSocket.
+    pub fn can_submit(&self) -> bool {
+        self.selected != 0 || self.websocket_connected
     }
     
     fn get_modes(&self) -> Vec<OperationMode> {
@@ -123,21 +146,25 @@ impl ModeSelectionComponent {
     }
 }
 
-impl MockComponent for ModeSelectionComponent {
+impl Component for ModeSelectionComponent {
     fn view(&mut self, frame: &mut Frame, area: Rect) {
         let chunks = Layout::default()
             .direction(LayoutDirection::Vertical)
             .constraints([
                 Constraint::Length(5),   // Header
+                Constraint::Length(3),   // WebSocket status banner
                 Constraint::Min(0),      // Content
                 Constraint::Length(4),   // Footer
             ])
             .margin(1)
             .split(area);
-        
+
         // Header
         self.render_header(frame, chunks[0]);
-        
+
+        // WebSocket connection status banner
+        self.render_ws_status(frame, chunks[1]);
+
         // Main content - split horizontally for side-by-side comparison
         let content_chunks = Layout::default()
             .direction(LayoutDirection::Horizontal)
@@ -145,28 +172,28 @@ impl MockComponent for ModeSelectionComponent {
                 Constraint::Percentage(50),
                 Constraint::Percentage(50),
             ])
-            .split(chunks[1]);
-        
+            .split(chunks[2]);
+
         // Render both modes side by side
         let modes = self.get_modes();
         for (i, mode) in modes.iter().enumerate() {
             self.render_mode(frame, content_chunks[i], mode, i == self.selected);
         }
-        
+
         // Footer with controls
-        self.render_footer(frame, chunks[2]);
+        self.render_footer(frame, chunks[3]);
     }
     
-    fn query(&self, attr: tuirealm::Attribute) -> Option<tuirealm::AttrValue> {
-        self.props.get(attr)
+    fn query<'a>(&'a self, attr: tuirealm::props::Attribute) -> Option<tuirealm::props::QueryResult<'a>> {
+        self.props.get_for_query(attr)
     }
     
-    fn attr(&mut self, attr: tuirealm::Attribute, value: tuirealm::AttrValue) {
+    fn attr(&mut self, attr: tuirealm::props::Attribute, value: tuirealm::props::AttrValue) {
         self.props.set(attr, value);
     }
     
-    fn state(&self) -> tuirealm::State {
-        State::One(StateValue::Usize(self.selected))
+    fn state(&self) -> tuirealm::state::State {
+        State::Single(StateValue::Usize(self.selected))
     }
     
     fn perform(&mut self, cmd: Cmd) -> CmdResult {
@@ -180,7 +207,7 @@ impl MockComponent for ModeSelectionComponent {
                 CmdResult::Changed(self.state())
             }
             Cmd::Submit => CmdResult::Submit(self.state()),
-            _ => CmdResult::None,
+            _ => CmdResult::NoChange,
         }
     }
 }
@@ -208,6 +235,43 @@ impl ModeSelectionComponent {
         frame.render_widget(header, area);
     }
     
+    fn render_ws_status(&self, frame: &mut Frame, area: Rect) {
+        let url_display = if self.websocket_url.is_empty() {
+            "<no signaling server configured>".to_string()
+        } else {
+            self.websocket_url.clone()
+        };
+
+        let (text, color) = if self.websocket_connected {
+            (
+                format!("🟢 Connected to signaling server  ({})", url_display),
+                Color::Green,
+            )
+        } else {
+            (
+                format!(
+                    "🔴 Disconnected from signaling server  ({}) — Online mode unavailable until reconnected",
+                    url_display
+                ),
+                Color::Red,
+            )
+        };
+
+        let widget = Paragraph::new(text)
+            .style(Style::default().fg(color).add_modifier(Modifier::BOLD))
+            .alignment(Alignment::Center)
+            .wrap(Wrap { trim: true })
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .border_style(Style::default().fg(color))
+                    .title(" 🔌 WebSocket Status ")
+                    .title_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            );
+        frame.render_widget(widget, area);
+    }
+
     fn render_mode(&self, frame: &mut Frame, area: Rect, mode: &OperationMode, selected: bool) {
         let chunks = Layout::default()
             .direction(LayoutDirection::Vertical)
@@ -221,13 +285,23 @@ impl ModeSelectionComponent {
             .margin(1)
             .split(area);
         
-        // Title
-        let title = Paragraph::new(format!("{} {}", mode.icon, mode.name))
-            .style(
-                Style::default()
-                    .fg(if selected { Color::Yellow } else { Color::White })
-                    .add_modifier(Modifier::BOLD)
-            )
+        // Title (tag Online mode as unavailable when the signaling WebSocket is down)
+        let is_online_mode = mode.name.starts_with("Online");
+        let online_unavailable = is_online_mode && !self.websocket_connected;
+        let title_text = if online_unavailable {
+            format!("{} {}  [UNAVAILABLE — WebSocket down]", mode.icon, mode.name)
+        } else {
+            format!("{} {}", mode.icon, mode.name)
+        };
+        let title_color = if online_unavailable {
+            Color::Red
+        } else if selected {
+            Color::Yellow
+        } else {
+            Color::White
+        };
+        let title = Paragraph::new(title_text)
+            .style(Style::default().fg(title_color).add_modifier(Modifier::BOLD))
             .alignment(Alignment::Center);
         frame.render_widget(title, chunks[0]);
         
@@ -273,31 +347,44 @@ impl ModeSelectionComponent {
     
     fn render_footer(&self, frame: &mut Frame, area: Rect) {
         let selected_mode = if self.selected == 0 { "Online" } else { "Offline" };
+        let blocked = !self.can_submit();
+
+        let status_line = if blocked {
+            "Selected: Online Mode — ⚠️ connect the signaling WebSocket to continue".to_string()
+        } else {
+            format!("Selected: {} Mode", selected_mode)
+        };
+        let controls_line = if blocked {
+            "← → Switch Between Modes | Enter: disabled (WebSocket down) | Esc: Cancel"
+        } else {
+            "← → Switch Between Modes | Enter: Next Step | Esc: Cancel"
+        };
+
         let footer_text = vec![
-            format!("Selected: {} Mode", selected_mode),
+            status_line,
             "".to_string(),
-            "← → Switch Between Modes | Enter: Next Step | Esc: Cancel".to_string(),
+            controls_line.to_string(),
             "💡 Tip: You can switch modes later, but it requires re-initialization".to_string(),
         ];
-        
+
         let footer = Paragraph::new(footer_text.join("\n"))
             .style(
                 Style::default()
-                    .fg(Color::Green)
-                    .add_modifier(Modifier::ITALIC)
+                    .fg(if blocked { Color::Red } else { Color::Green })
+                    .add_modifier(Modifier::ITALIC),
             )
             .alignment(Alignment::Center)
             .block(
                 Block::default()
                     .borders(Borders::TOP)
-                    .border_style(Style::default().fg(Color::DarkGray))
+                    .border_style(Style::default().fg(Color::DarkGray)),
             );
         frame.render_widget(footer, area);
     }
 }
 
-impl Component<Message, UserEvent> for ModeSelectionComponent {
-    fn on(&mut self, event: Event<UserEvent>) -> Option<Message> {
+impl AppComponent<Message, UserEvent> for ModeSelectionComponent {
+    fn on(&mut self, event: &Event<UserEvent>) -> Option<Message> {
         match event {
             Event::User(UserEvent::FocusGained) => {
                 self.focused = true;

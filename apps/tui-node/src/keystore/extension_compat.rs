@@ -451,12 +451,12 @@ pub fn encrypt_for_extension(
     };
     use pbkdf2::pbkdf2_hmac;
     use sha2::Sha256;
-    use rand::Rng;
-    
-    // Generate salt and IV
-    let mut rng = rand::thread_rng();
-    let salt: [u8; 16] = rng.r#gen();
-    let iv: [u8; 12] = rng.r#gen();
+
+    // Generate salt and IV via the OS CSPRNG directly — stable across `rand` API churn.
+    let mut salt = [0u8; 16];
+    let mut iv = [0u8; 12];
+    getrandom::fill(&mut salt).expect("getrandom failed for salt");
+    getrandom::fill(&mut iv).expect("getrandom failed for iv");
     
     // Derive key using PBKDF2 (100k iterations for Chrome extension compatibility)
     let mut key = [0u8; 32];

@@ -10,6 +10,160 @@ use webrtc_signal_server::ClientMsg as SharedClientMsg;
 use crate::utils::appstate_compat::AppState;
 use serde_json;
 
+/// Parse and react to a single frame received on a WebRTC data channel.
+///
+/// Both the initiator side (this file's `initiate_webrtc_with_channel`
+/// creates a DC locally) and the answerer side (`elm/webrtc_signaling.rs`
+/// receives a DC via `on_data_channel`) need to process DKG Round 1 / 2
+/// packages, `mesh_ready` signals, etc. Previously the answerer's handler
+/// was a log-only stub, so one direction of every DKG message was silently
+/// dropped and Round 1 never completed. Extracted here so both sites call
+/// the same body.
+pub async fn dispatch_data_channel_msg<C>(
+    msg_data: Vec<u8>,
+    device_id_recv: String,
+    app_state: Arc<Mutex<AppState<C>>>,
+    ui_msg_tx: Option<tokio::sync::mpsc::UnboundedSender<crate::elm::message::Message>>,
+) where
+    C: frost_core::Ciphersuite + Send + Sync + 'static,
+    <<C as frost_core::Ciphersuite>::Group as frost_core::Group>::Element: Send + Sync,
+    <<<C as frost_core::Ciphersuite>::Group as frost_core::Group>::Field as frost_core::Field>::Scalar: Send + Sync,
+{
+    info!(
+        "📥 Received message from {} via data channel: {} bytes",
+        device_id_recv,
+        msg_data.len()
+    );
+
+    let text = match String::from_utf8(msg_data.clone()) {
+        Ok(t) => t,
+        Err(e) => {
+            warn!(
+                "DC message from {} is not UTF-8 ({}); first 32 bytes: {:?}",
+                device_id_recv,
+                e,
+                &msg_data.iter().take(32).collect::<Vec<_>>()
+            );
+            return;
+        }
+    };
+    // Log a prefix of the raw JSON to catch format drifts (prior attempts
+    // showed "📥 Received message" firing and then no further log, meaning
+    // the match below silently falls through — helps identify if the
+    // payload is UTF-8 but not the shape we expect).
+    info!(
+        "  ↳ [{}] payload preview (first 160 chars): {}",
+        device_id_recv,
+        text.chars().take(160).collect::<String>()
+    );
+    let json_msg = match serde_json::from_str::<serde_json::Value>(&text) {
+        Ok(v) => v,
+        Err(e) => {
+            warn!(
+                "DC message from {} failed JSON parse: {} — raw text: {}",
+                device_id_recv, e, text
+            );
+            return;
+        }
+    };
+    info!(
+        "  ↳ [{}] JSON keys at root: {:?}",
+        device_id_recv,
+        json_msg
+            .as_object()
+            .map(|o| o.keys().cloned().collect::<Vec<_>>())
+            .unwrap_or_default()
+    );
+
+    // `WebRTCMessage<C>` is serialised with `#[serde(tag = "webrtc_msg_type")]`
+    // (internally tagged), so the JSON shape is `{"webrtc_msg_type":"SimpleMessage","text":"..."}`,
+    // NOT `{"SimpleMessage":{"text":"..."}}`. The previous externally-tagged parser
+    // silently dropped every DKG Round 1/2 package.
+    let webrtc_tag = json_msg.get("webrtc_msg_type").and_then(|v| v.as_str());
+    if webrtc_tag == Some("SimpleMessage") {
+        if let Some(msg_text) = json_msg.get("text").and_then(|v| v.as_str()) {
+            use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+            if let Some(package_data) = msg_text.strip_prefix("DKG_ROUND1:") {
+                info!("🔑 Received DKG Round 1 package from {}", device_id_recv);
+                match BASE64.decode(package_data) {
+                    Ok(package_bytes) => {
+                        info!(
+                            "📦 Processing DKG Round 1 package from {} ({} bytes)",
+                            device_id_recv,
+                            package_bytes.len()
+                        );
+                        if let Some(tx) = &ui_msg_tx {
+                            let _ = tx.send(crate::elm::message::Message::ProcessDKGRound1 {
+                                from_device: device_id_recv.clone(),
+                                package_bytes,
+                            });
+                        }
+                    }
+                    Err(e) => error!(
+                        "Failed to base64-decode DKG Round 1 package from {}: {}",
+                        device_id_recv, e
+                    ),
+                }
+                return;
+            }
+            if let Some(package_data) = msg_text.strip_prefix("DKG_ROUND2:") {
+                info!("🔐 Received DKG Round 2 package from {}", device_id_recv);
+                match BASE64.decode(package_data) {
+                    Ok(package_bytes) => {
+                        info!(
+                            "📦 Processing DKG Round 2 package from {} ({} bytes)",
+                            device_id_recv,
+                            package_bytes.len()
+                        );
+                        if let Some(tx) = &ui_msg_tx {
+                            let _ = tx.send(crate::elm::message::Message::ProcessDKGRound2 {
+                                from_device: device_id_recv.clone(),
+                                package_bytes,
+                            });
+                        }
+                    }
+                    Err(e) => error!(
+                        "Failed to base64-decode DKG Round 2 package from {}: {}",
+                        device_id_recv, e
+                    ),
+                }
+                return;
+            }
+            info!("📨 SimpleMessage from {}: {}", device_id_recv, msg_text);
+            return;
+        }
+    }
+
+    // Control frames: `channel_open`, `mesh_ready`.
+    if let Some(msg_type) = json_msg.get("type").and_then(|v| v.as_str()) {
+        match msg_type {
+            "channel_open" => info!("📂 Received channel_open from {}", device_id_recv),
+            "mesh_ready" => {
+                info!("✅ Received mesh_ready from {}", device_id_recv);
+                let mut state = app_state.lock().await;
+                state
+                    .pending_mesh_ready_signals
+                    .insert(device_id_recv.clone());
+
+                let session = state.session.clone();
+                if let Some(session) = session {
+                    let expected_peers = session.participants.len().saturating_sub(1);
+                    let ready_peers = state.pending_mesh_ready_signals.len();
+                    if ready_peers >= expected_peers && !state.own_mesh_ready_sent {
+                        info!("🎉 All {} peers mesh-ready", ready_peers);
+                        state.mesh_status = crate::utils::state::MeshStatus::Ready;
+                        state.own_mesh_ready_sent = true;
+                        if let Some(tx) = &ui_msg_tx {
+                            let _ = tx.send(crate::elm::message::Message::StartDKGProtocol);
+                        }
+                    }
+                }
+            }
+            other => info!("📨 Unknown JSON message type {} from {}", other, device_id_recv),
+        }
+    }
+}
+
 /// WebRTC connection initiation using existing WebSocket channel
 pub async fn initiate_webrtc_with_channel<C>(
     self_device_id: String,
@@ -58,11 +212,24 @@ pub async fn initiate_webrtc_with_channel<C>(
         return;
     }
 
-    // For each participant, ensure a peer connection exists
-    info!("🔧 [{}] Checking/creating peer connections for participants: {:?}", 
-         self_device_id, other_participants);
-    
+    // Pre-create PCs ONLY for peers we're going to initiate to (self_id < peer_id
+    // in perfect-negotiation terms). For the "wait for offer" side we MUST NOT
+    // create the PC here — if we do, the later offer arrives, `ensure_peer_connection`
+    // in `webrtc_signaling.rs` sees an existing PC and returns it without attaching
+    // `on_data_channel` / `on_ice_candidate` / `on_peer_connection_state_change`.
+    // The answerer then establishes ICE but never stashes the incoming data channel
+    // in `state.data_channels`, and the DKG Round 1 broadcast fails with
+    // "Data channel not ready". Letting `ensure_peer_connection` create the PC
+    // for answerers guarantees the handler set is installed exactly once.
+    info!("🔧 [{}] Creating peer connections for peers we initiate to (perfect negotiation)",
+         self_device_id);
+
     for participant in other_participants.iter() {
+        if self_device_id >= *participant {
+            // We're the answerer — wait for the offer, let ensure_peer_connection
+            // create the PC with a full handler set.
+            continue;
+        }
         let needs_creation = {
             let conns = device_connections.lock().await;
             !conns.contains_key(participant)
@@ -325,93 +492,22 @@ pub async fn initiate_webrtc_with_channel<C>(
                     let device_id_msg = device_id.clone();
                     let app_state_for_msg = app_state.clone();
                     let ui_msg_tx_for_msg = ui_msg_tx.clone();
+                    // Delegate to the shared dispatcher so initiator + answerer DCs
+                    // both run the same protocol handling (previously the answerer's
+                    // on_message was a log-only stub — DKG Round 1 packages went into
+                    // the void on one direction of every peer pair).
                     dc.on_message(Box::new(move |msg: webrtc::data_channel::data_channel_message::DataChannelMessage| {
                         let device_id_recv = device_id_msg.clone();
                         let app_state_msg = app_state_for_msg.clone();
                         let ui_msg_tx_msg = ui_msg_tx_for_msg.clone();
                         Box::pin(async move {
-                            info!("📥 Received message from {} via data channel: {} bytes",
-                                device_id_recv, msg.data.len());
-                            
-                            // Try to parse the message
-                            if let Ok(text) = String::from_utf8(msg.data.to_vec()) {
-                                if let Ok(json_msg) = serde_json::from_str::<serde_json::Value>(&text) {
-                                    // Check if it's a WebRTCMessage with SimpleMessage
-                                    if let Some(simple_msg) = json_msg.get("SimpleMessage") {
-                                        if let Some(msg_text) = simple_msg.get("text").and_then(|v| v.as_str()) {
-                                            // Check if it's a DKG message
-                                            if msg_text.starts_with("DKG_ROUND1:") {
-                                                info!("🔑 Received DKG Round 1 package from {}", device_id_recv);
-                                                let package_data = msg_text.strip_prefix("DKG_ROUND1:").unwrap();
-                                                
-                                                // Decode the base64 package
-                                                use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
-                                                if let Ok(package_bytes) = BASE64.decode(package_data) {
-                                                    info!("📦 Processing DKG Round 1 package from {} ({} bytes)", device_id_recv, package_bytes.len());
-                                                    
-                                                    // Store it for processing
-                                                    {
-                                                        let mut state = app_state_msg.lock().await;
-                                                        state.received_dkg_packages.insert(device_id_recv.clone(), package_bytes.clone());
-                                                    }
-                                                    
-                                                    // Actually process the DKG package
-                                                    // Send to UI thread for processing since we can't handle generics here
-                                                    if let Some(tx) = &ui_msg_tx_msg {
-                                                        info!("🔄 Sending DKG Round 1 package to UI for processing");
-                                                        let _ = tx.send(crate::elm::message::Message::ProcessDKGRound1 {
-                                                            from_device: device_id_recv.clone(),
-                                                            package_bytes: package_bytes.clone(),
-                                                        });
-                                                    }
-                                                    
-                                                    info!("✅ Stored DKG Round 1 package from {}", device_id_recv);
-                                                } else {
-                                                    error!("Failed to decode DKG package from {}", device_id_recv);
-                                                }
-                                            } else {
-                                                info!("📨 Received SimpleMessage from {}: {}", device_id_recv, msg_text);
-                                            }
-                                        }
-                                    } else if let Some(msg_type) = json_msg.get("type").and_then(|v| v.as_str()) {
-                                        // Try parsing as JSON for other message types
-                                        match msg_type {
-                                            "channel_open" => {
-                                                info!("📂 Received channel_open from {}", device_id_recv);
-                                            },
-                                            "mesh_ready" => {
-                                                info!("✅ Received mesh_ready from {}", device_id_recv);
-                                                // Mark this peer as mesh ready
-                                                let mut state = app_state_msg.lock().await;
-                                                state.pending_mesh_ready_signals.insert(device_id_recv.clone());
-                                                
-                                                // Check if all peers are ready
-                                                let session = state.session.clone();
-                                                if let Some(session) = session {
-                                                    let expected_peers = session.participants.len() - 1;
-                                                    let ready_peers = state.pending_mesh_ready_signals.len();
-                                                    
-                                                    if ready_peers >= expected_peers && !state.own_mesh_ready_sent {
-                                                        info!("🎉 All {} peers are mesh ready!", ready_peers);
-                                                        state.mesh_status = crate::utils::state::MeshStatus::Ready;
-                                                        state.own_mesh_ready_sent = true;
-                                                        
-                                                        // Trigger DKG protocol start when mesh is ready
-                                                        if let Some(tx) = &ui_msg_tx_msg {
-                                                            info!("🚀 Mesh is ready, triggering DKG protocol start!");
-                                                            let _ = tx.send(crate::elm::message::Message::StartDKGProtocol);
-                                                        }
-                                                    }
-                                                }
-                                            },
-                                            _ => {
-                                                // Forward to DKG protocol handler
-                                                info!("📨 Unknown JSON message type {} from {}", msg_type, device_id_recv);
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+                            crate::network::webrtc::dispatch_data_channel_msg::<C>(
+                                msg.data.to_vec(),
+                                device_id_recv,
+                                app_state_msg,
+                                ui_msg_tx_msg,
+                            )
+                            .await;
                         })
                     }));
 

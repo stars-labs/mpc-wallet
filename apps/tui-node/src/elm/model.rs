@@ -86,6 +86,12 @@ pub struct WalletState {
     pub selected_wallet: Option<String>,
     pub creating_wallet: Option<CreateWalletState>,
     pub dkg_in_progress: bool,
+    /// Current phase of the FROST DKG protocol. The DKGProgress component
+    /// is rebuilt from Model on every remount, so we keep the round here
+    /// rather than inside the component so it survives remounts. Updated
+    /// by Update handlers at each protocol transition and consumed by
+    /// `App::mount_screen_components` when rendering DKGProgress.
+    pub dkg_round: crate::elm::message::DKGRound,
 }
 
 // Manual Debug implementation for WalletState
@@ -99,6 +105,7 @@ impl std::fmt::Debug for WalletState {
             .field("selected_wallet", &self.selected_wallet)
             .field("creating_wallet", &self.creating_wallet)
             .field("dkg_in_progress", &self.dkg_in_progress)
+            .field("dkg_round", &self.dkg_round)
             .finish()
     }
 }
@@ -112,6 +119,7 @@ pub struct NetworkState {
     pub connection_status: ConnectionStatus,
     pub last_ping: Option<DateTime<Utc>>,
     pub reconnect_attempts: u32,
+    pub max_reconnect_attempts: u32,
     pub participant_webrtc_status: std::collections::HashMap<String, (bool, bool)>, // (webrtc_connected, data_channel_open)
 }
 
@@ -124,6 +132,7 @@ impl Default for NetworkState {
             connection_status: ConnectionStatus::Disconnected,
             last_ping: None,
             reconnect_attempts: 0,
+            max_reconnect_attempts: 5,
             participant_webrtc_status: std::collections::HashMap::new(),
         }
     }

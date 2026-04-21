@@ -38,7 +38,6 @@ pub struct AppState<C: Ciphersuite> {
     pub webrtc_initiation_started_at: Option<std::time::Instant>,
     pub signing_state: SigningState<C>,
     pub pending_signing_requests: Vec<super::state::PendingSigningRequest>,
-    pub wallet_creation_progress: Option<crate::handlers::session_handler::WalletCreationProgress>,
     // Additional DKG and other fields
     pub reconnection_tracker: std::collections::HashMap<String, std::time::Instant>,
     pub dkg_part1_public_package: Option<Vec<u8>>,
@@ -57,10 +56,7 @@ pub struct AppState<C: Ciphersuite> {
     pub offline_sessions: std::collections::HashMap<String, crate::offline::OfflineSession>,
     pub offline_config: Option<crate::offline::OfflineConfig>,
     pub log_scroll: usize,
-    pub wallet_creation_config: Option<crate::handlers::session_handler::WalletSessionConfig>,
     pub round2_secret_package: Option<frost_core::keys::dkg::round2::SecretPackage<C>>,
-    pub wallet_creation_mode: Option<crate::handlers::session_handler::WalletCreationMode>,
-    pub wallet_creation_curve: Option<String>,
     pub pending_mesh_ready_signals: std::collections::HashSet<String>,
     // Additional fields for UI compatibility
     pub websocket_connected: bool,
@@ -76,8 +72,19 @@ pub struct AppState<C: Ciphersuite> {
     pub webrtc_pending_participants: Vec<String>,
     pub websocket_error: Option<String>,
     pub websocket_internal_cmd_tx: Option<tokio::sync::mpsc::UnboundedSender<super::state::InternalCommand<C>>>,
-    // Alternative: string-based channel for WebSocket messages (avoids Send issues)
+    // Primary outbound WebSocket channel — every subsystem that needs to send
+    // over the signal WebSocket (`AnnounceSession`, `RequestActiveSessions`,
+    // relay frames, …) enqueues a serialized JSON string here. A single sender
+    // task drains it into the socket. There is only one of these per process.
     pub websocket_msg_tx: Option<tokio::sync::mpsc::UnboundedSender<String>>,
+    // Primary inbound fan-out — the single WebSocket reader parses each server
+    // frame once and broadcasts an `Arc<ServerMsg>` on this channel. Any task
+    // that needs to react (Elm-side bridge, DKG WebRTC signaling handler,
+    // future subscribers) calls `subscribe()` to get its own receiver.
+    // `broadcast` chosen over `mpsc` so late subscribers can be added without
+    // knowing about each other.
+    pub server_msg_broadcast_tx:
+        Option<tokio::sync::broadcast::Sender<Arc<webrtc_signal_server::ServerMsg>>>,
     // ICE candidate queue for handling race conditions
     pub ice_candidate_queue: Arc<tokio::sync::Mutex<std::collections::HashMap<String, Vec<webrtc::ice_transport::ice_candidate::RTCIceCandidateInit>>>>,
 }
@@ -116,7 +123,6 @@ where
             webrtc_initiation_started_at: None,
             signing_state: SigningState::Idle,
             pending_signing_requests: Vec::new(),
-            wallet_creation_progress: None,
             reconnection_tracker: std::collections::HashMap::new(),
             dkg_part1_public_package: None,
             dkg_part1_secret_package: None,
@@ -133,10 +139,7 @@ where
             offline_sessions: std::collections::HashMap::new(),
             offline_config: None,
             log_scroll: 0,
-            wallet_creation_config: None,
             round2_secret_package: None,
-            wallet_creation_mode: None,
-            wallet_creation_curve: None,
             pending_mesh_ready_signals: std::collections::HashSet::new(),
             websocket_connected: false,
             websocket_connecting: false,
@@ -152,6 +155,7 @@ where
             websocket_error: None,
             websocket_internal_cmd_tx: None,
             websocket_msg_tx: None,
+            server_msg_broadcast_tx: None,
             ice_candidate_queue: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
         }
     }
@@ -189,7 +193,6 @@ where
             webrtc_initiation_started_at: None,
             signing_state: SigningState::Idle,
             pending_signing_requests: Vec::new(),
-            wallet_creation_progress: None,
             reconnection_tracker: std::collections::HashMap::new(),
             dkg_part1_public_package: None,
             dkg_part1_secret_package: None,
@@ -206,10 +209,7 @@ where
             offline_sessions: std::collections::HashMap::new(),
             offline_config: None,
             log_scroll: 0,
-            wallet_creation_config: None,
             round2_secret_package: None,
-            wallet_creation_mode: None,
-            wallet_creation_curve: None,
             pending_mesh_ready_signals: std::collections::HashSet::new(),
             websocket_connected: false,
             websocket_connecting: false,
@@ -225,6 +225,7 @@ where
             websocket_error: None,
             websocket_internal_cmd_tx: None,
             websocket_msg_tx: None,
+            server_msg_broadcast_tx: None,
             ice_candidate_queue: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
         }
     }

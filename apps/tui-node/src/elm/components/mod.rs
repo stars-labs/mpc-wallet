@@ -39,10 +39,10 @@ pub use dkg_progress::DKGProgressComponent;
 pub use offline_dkg_process::{OfflineDKGProcessComponent, ParticipantRole};
 pub use sd_card_manager::SDCardManagerComponent;
 
-use tuirealm::Component;
+use tuirealm::component::AppComponent;
 
 /// Trait for MPC wallet components
-pub trait MpcWalletComponent: Component<crate::elm::message::Message, UserEvent> {
+pub trait MpcWalletComponent: AppComponent<crate::elm::message::Message, UserEvent> {
     /// Get the component's ID
     fn id(&self) -> Id;
     

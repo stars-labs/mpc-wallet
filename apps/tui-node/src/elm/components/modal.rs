@@ -3,7 +3,11 @@
 use crate::elm::components::{Id, UserEvent, MpcWalletComponent};
 use crate::elm::message::Message;
 use crate::elm::model::Modal;
-use tuirealm::{Component, Event, Frame, MockComponent, Props, State};
+use tuirealm::component::{AppComponent, Component};
+use tuirealm::event::Event;
+use tuirealm::ratatui::Frame;
+use tuirealm::props::Props;
+use tuirealm::state::State;
 use tuirealm::command::{Cmd, CmdResult};
 use ratatui::layout::Rect;
 
@@ -30,16 +34,16 @@ impl ModalComponent {
     }
 }
 
-impl MockComponent for ModalComponent {
+impl Component for ModalComponent {
     fn view(&mut self, _frame: &mut Frame, _area: Rect) {
         // Modal rendering will be implemented
     }
     
-    fn query(&self, attr: tuirealm::Attribute) -> Option<tuirealm::AttrValue> {
-        self.props.get(attr)
+    fn query<'a>(&'a self, attr: tuirealm::props::Attribute) -> Option<tuirealm::props::QueryResult<'a>> {
+        self.props.get_for_query(attr)
     }
     
-    fn attr(&mut self, attr: tuirealm::Attribute, value: tuirealm::AttrValue) {
+    fn attr(&mut self, attr: tuirealm::props::Attribute, value: tuirealm::props::AttrValue) {
         self.props.set(attr, value);
     }
     
@@ -48,12 +52,12 @@ impl MockComponent for ModalComponent {
     }
     
     fn perform(&mut self, _cmd: Cmd) -> CmdResult {
-        CmdResult::None
+        CmdResult::NoChange
     }
 }
 
-impl Component<Message, UserEvent> for ModalComponent {
-    fn on(&mut self, _event: Event<UserEvent>) -> Option<Message> {
+impl AppComponent<Message, UserEvent> for ModalComponent {
+    fn on(&mut self, _event: &Event<UserEvent>) -> Option<Message> {
         None
     }
 }

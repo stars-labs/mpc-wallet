@@ -10,7 +10,7 @@ use frost_secp256k1::{
     round2::SignatureShare,
     SigningPackage,
 };
-use rand::rngs::OsRng;
+use rand_core::OsRng;
 use std::collections::BTreeMap;
 use sha3::{Digest, Keccak256};
 use k256::ecdsa::VerifyingKey as K256VerifyingKey;

@@ -1,7 +1,7 @@
 use crate::errors::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use rand::rngs::OsRng;
+use rand_core::OsRng;
 
 /// Serialize a u16 participant index into a 32-byte big-endian identifier.
 ///

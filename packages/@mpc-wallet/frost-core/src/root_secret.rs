@@ -7,10 +7,9 @@
 
 use crate::errors::{FrostError, Result};
 use hkdf::Hkdf;
-use rand::rngs::OsRng;
-use rand::RngCore;
 use rand_chacha::ChaCha20Rng;
-use rand::SeedableRng;
+// rand_core 0.6 is the version FROST accepts; `rand` crate isn't used here.
+use rand_core::{OsRng, RngCore, SeedableRng};
 use sha2::Sha256;
 
 const ROOT_SECRET_LEN: usize = 32;

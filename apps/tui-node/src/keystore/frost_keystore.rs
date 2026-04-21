@@ -260,13 +260,14 @@ impl FrostKeystoreManager {
     
     /// Encrypts data using AES-256-GCM with PBKDF2 key derivation
     fn encrypt_data(&self, data: &[u8], password: &str) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>)> {
-        use rand::RngCore;
-        // Generate random salt and IV
-        let mut rng = rand::thread_rng();
+        // Generate random salt and IV via the OS CSPRNG directly — stable API
+        // and avoids the higher-level `rand` crate's trait-version churn.
         let mut salt = vec![0u8; 32];
         let mut iv = vec![0u8; 12];
-        rng.fill_bytes(&mut salt);
-        rng.fill_bytes(&mut iv);
+        getrandom::fill(&mut salt)
+            .map_err(|e| FrostKeystoreError::Encryption(format!("getrandom salt: {}", e)))?;
+        getrandom::fill(&mut iv)
+            .map_err(|e| FrostKeystoreError::Encryption(format!("getrandom iv: {}", e)))?;
         
         // Derive key using PBKDF2
         let mut key = vec![0u8; 32];

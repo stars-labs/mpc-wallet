@@ -140,7 +140,9 @@ impl DifferentialState {
             Message::WalletsLoaded { .. } => {
                 self.mark_dirty(ComponentId::WalletList);
             }
-            Message::SessionsLoaded { .. } => {
+            Message::SessionsLoaded { .. }
+            | Message::SessionDiscovered { .. }
+            | Message::RemoveSession { .. } => {
                 // Sessions updated, mark JoinSession component as dirty
                 if matches!(new_model.current_screen, Screen::JoinSession) {
                     self.mark_dirty(ComponentId::JoinSession);

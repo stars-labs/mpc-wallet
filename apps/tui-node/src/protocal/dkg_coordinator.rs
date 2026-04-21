@@ -85,8 +85,11 @@ impl<C: Ciphersuite> DKGParticipant<C> {
     pub fn start_round1(&mut self) -> Result<String> {
         info!("Starting DKG Round 1 for participant {:?}", self.id);
         
-        // Generate Round 1 commitment
-        let mut rng = rand::thread_rng();
+        // Generate Round 1 commitment. FROST 2.2's `part1` takes an RNG that
+        // implements `rand_core 0.6`'s `RngCore + CryptoRng`. `frost_core`
+        // doesn't re-export rand_core, but `frost-ed25519` does (same rand_core
+        // version since they share it transitively).
+        let mut rng = frost_ed25519::rand_core::OsRng;
         let (secret, package) = part1(self.id, self.max_signers, self.min_signers, &mut rng)
             .map_err(|e| anyhow!("Failed to generate Round 1 package: {:?}", e))?;
         

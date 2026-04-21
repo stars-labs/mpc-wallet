@@ -1,4 +1,4 @@
-use tuirealm::{Sub, SubClause, SubEventClause};
+use tuirealm::subscription::{Sub, SubClause, SubEventClause};
 use tuirealm::event::{Key, KeyEvent, KeyModifiers};
 use crate::elm::components::{Id, UserEvent};
 

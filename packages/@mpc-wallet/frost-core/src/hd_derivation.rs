@@ -13,7 +13,9 @@
 
 use crate::errors::{FrostError, Result};
 use frost_core::Ciphersuite;
-use hmac::{Hmac, Mac};
+// In `hmac 0.13`, `new_from_slice` moved out of `Mac` and into `KeyInit`;
+// `update` / `finalize` still live on `Mac`. Both traits need to be in scope.
+use hmac::{Hmac, KeyInit, Mac};
 use sha2::{Digest, Sha256, Sha512};
 use std::collections::BTreeMap;
 use std::fmt;
@@ -561,7 +563,7 @@ mod tests {
         for &idx in &signer_indices {
             let kp = &child_keys[idx].key_package;
             let (n, c) =
-                frost_ed25519::round1::commit(kp.signing_share(), &mut rand::rngs::OsRng);
+                frost_ed25519::round1::commit(kp.signing_share(), &mut rand_core::OsRng);
             let id = *kp.identifier();
             nonces.insert(id, n);
             commitments.insert(id, c);
@@ -616,7 +618,7 @@ mod tests {
         for &idx in &signer_indices {
             let kp = &child_keys[idx].key_package;
             let (n, c) =
-                frost_secp256k1::round1::commit(kp.signing_share(), &mut rand::rngs::OsRng);
+                frost_secp256k1::round1::commit(kp.signing_share(), &mut rand_core::OsRng);
             let id = *kp.identifier();
             nonces.insert(id, n);
             commitments.insert(id, c);

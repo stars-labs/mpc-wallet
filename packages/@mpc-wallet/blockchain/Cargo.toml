@@ -24,9 +24,9 @@ k256 = "0.13.4"
 hex = "0.4.3"
 
 # Solana dependencies
-solana-sdk = "3.0.0"
+solana-sdk = "4.0.1"
 solana-client = "3.0.1"
-spl-token = "6.0.0"
+spl-token = "9.0.0"
 bs58 = "0.5.1"
 
 # Common dependencies
@@ -37,9 +37,9 @@ async-trait = "0.1.83"
 thiserror = "2.0.9"
 anyhow = "1.0.99"
 tracing = "0.1.41"
-sha2 = "0.10.8"
-sha3 = "0.10.8"
-rand = "0.8.5"
+sha2 = "0.11.0"
+sha3 = "0.11.0"
+rand = "0.10.1"
 
 [lib]
 name = "mpc_wallet_blockchain"
@@ -49,4 +49,5 @@ path = "src/mod.rs"
 # Dependencies for examples
 tempfile = "3.8"
 clap = { version = "4.5.21", features = ["derive"] }
-bincode = { version = "2.0.0-rc.3", features = ["serde"] }
+# (bincode removed — no example references it and upstream 3.0 has a
+# `compile_error!`. Re-add with a 2.0.x pin if a future example needs it.)

@@ -10,7 +10,10 @@ use tuirealm::event::Event;
 use ratatui::layout::{Rect, Constraint, Direction as LayoutDirection, Layout, Alignment};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::{Block, Borders, BorderType, Paragraph, List, ListItem, Wrap};
-use tuirealm::{Component, Frame, MockComponent, Props, State, StateValue};
+use tuirealm::component::{AppComponent, Component};
+use tuirealm::ratatui::Frame;
+use tuirealm::props::Props;
+use tuirealm::state::{State, StateValue};
 
 /// SD Card manager for offline operations
 #[derive(Debug, Clone)]
@@ -192,7 +195,7 @@ impl SDCardManagerComponent {
     }
 }
 
-impl MockComponent for SDCardManagerComponent {
+impl Component for SDCardManagerComponent {
     fn view(&mut self, frame: &mut Frame, area: Rect) {
         let chunks = Layout::default()
             .direction(LayoutDirection::Vertical)
@@ -222,16 +225,16 @@ impl MockComponent for SDCardManagerComponent {
         self.render_footer(frame, chunks[4]);
     }
     
-    fn query(&self, attr: tuirealm::Attribute) -> Option<tuirealm::AttrValue> {
-        self.props.get(attr)
+    fn query<'a>(&'a self, attr: tuirealm::props::Attribute) -> Option<tuirealm::props::QueryResult<'a>> {
+        self.props.get_for_query(attr)
     }
     
-    fn attr(&mut self, attr: tuirealm::Attribute, value: tuirealm::AttrValue) {
+    fn attr(&mut self, attr: tuirealm::props::Attribute, value: tuirealm::props::AttrValue) {
         self.props.set(attr, value);
     }
     
-    fn state(&self) -> tuirealm::State {
-        State::One(StateValue::Usize(self.selected_file))
+    fn state(&self) -> tuirealm::state::State {
+        State::Single(StateValue::Usize(self.selected_file))
     }
     
     fn perform(&mut self, cmd: Cmd) -> CmdResult {
@@ -253,7 +256,7 @@ impl MockComponent for SDCardManagerComponent {
                 CmdResult::Changed(self.state())
             }
             Cmd::Submit => CmdResult::Submit(self.state()),
-            _ => CmdResult::None,
+            _ => CmdResult::NoChange,
         }
     }
 }
@@ -478,8 +481,8 @@ impl SDCardManagerComponent {
     }
 }
 
-impl Component<Message, UserEvent> for SDCardManagerComponent {
-    fn on(&mut self, event: Event<UserEvent>) -> Option<Message> {
+impl AppComponent<Message, UserEvent> for SDCardManagerComponent {
+    fn on(&mut self, event: &Event<UserEvent>) -> Option<Message> {
         match event {
             Event::User(UserEvent::FocusGained) => {
                 self.focused = true;

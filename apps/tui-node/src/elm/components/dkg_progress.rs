@@ -12,7 +12,10 @@ use ratatui::layout::{Rect, Constraint, Direction, Layout, Alignment};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, BorderType, Paragraph, Gauge, List, ListItem};
-use tuirealm::{Component, Frame, MockComponent, Props, State, StateValue};
+use tuirealm::component::{AppComponent, Component};
+use tuirealm::ratatui::Frame;
+use tuirealm::props::Props;
+use tuirealm::state::{State, StateValue};
 
 /// Participant status in the DKG process
 #[derive(Debug, Clone)]
@@ -208,9 +211,12 @@ impl DKGProgressComponent {
             DKGRound::Finalization => {
                 self.progress_percentage = 95.0;
             }
+            DKGRound::Complete => {
+                self.progress_percentage = 100.0;
+            }
         }
     }
-    
+
     fn get_round_color(&self) -> Color {
         match self.current_round {
             DKGRound::Initialization => Color::Yellow,
@@ -218,6 +224,7 @@ impl DKGProgressComponent {
             DKGRound::Round1 => Color::Cyan,
             DKGRound::Round2 => Color::Blue,
             DKGRound::Finalization => Color::Green,
+            DKGRound::Complete => Color::LightGreen,
         }
     }
     
@@ -248,7 +255,7 @@ impl DKGProgressComponent {
     }
 }
 
-impl MockComponent for DKGProgressComponent {
+impl Component for DKGProgressComponent {
     fn view(&mut self, frame: &mut Frame, area: Rect) {
         // Check if area is too small
         if area.width < 20 || area.height < 15 {
@@ -307,16 +314,16 @@ impl MockComponent for DKGProgressComponent {
         }
     }
     
-    fn query(&self, attr: tuirealm::Attribute) -> Option<tuirealm::AttrValue> {
-        self.props.get(attr)
+    fn query<'a>(&'a self, attr: tuirealm::props::Attribute) -> Option<tuirealm::props::QueryResult<'a>> {
+        self.props.get_for_query(attr)
     }
     
-    fn attr(&mut self, attr: tuirealm::Attribute, value: tuirealm::AttrValue) {
+    fn attr(&mut self, attr: tuirealm::props::Attribute, value: tuirealm::props::AttrValue) {
         self.props.set(attr, value);
     }
     
-    fn state(&self) -> tuirealm::State {
-        State::One(StateValue::String(self.session_id.clone()))
+    fn state(&self) -> tuirealm::state::State {
+        State::Single(StateValue::String(self.session_id.clone()))
     }
     
     fn perform(&mut self, cmd: Cmd) -> CmdResult {
@@ -326,7 +333,7 @@ impl MockComponent for DKGProgressComponent {
                     self.selected_action -= 1;
                     CmdResult::Changed(self.state())
                 } else {
-                    CmdResult::None
+                    CmdResult::NoChange
                 }
             }
             Cmd::Move(tuirealm::command::Direction::Right) => {
@@ -334,19 +341,19 @@ impl MockComponent for DKGProgressComponent {
                     self.selected_action += 1;
                     CmdResult::Changed(self.state())
                 } else {
-                    CmdResult::None
+                    CmdResult::NoChange
                 }
             }
             Cmd::Submit => {
                 if self.selected_action == 0 {
                     // Cancel DKG
-                    CmdResult::Submit(State::One(StateValue::String("cancel".to_string())))
+                    CmdResult::Submit(State::Single(StateValue::String("cancel".to_string())))
                 } else {
                     // Copy Session ID
-                    CmdResult::Submit(State::One(StateValue::String("copy".to_string())))
+                    CmdResult::Submit(State::Single(StateValue::String("copy".to_string())))
                 }
             }
-            _ => CmdResult::None,
+            _ => CmdResult::NoChange,
         }
     }
 }
@@ -450,6 +457,7 @@ impl DKGProgressComponent {
                 DKGRound::Round1 => "Generating commitments...",
                 DKGRound::Round2 => "Exchanging shares...",
                 DKGRound::Finalization => "Finalizing DKG...",
+                DKGRound::Complete => "DKG complete!",
             }
         );
         
@@ -581,6 +589,7 @@ impl DKGProgressComponent {
                     DKGRound::Round1 => "🔄 Round 1: Generating and broadcasting commitments...".to_string(),
                     DKGRound::Round2 => "🔄 Round 2: Generating and distributing shares...".to_string(),
                     DKGRound::Finalization => "🔄 Finalizing key generation...".to_string(),
+                    DKGRound::Complete => "🎉 DKG complete! Wallet created — press Esc to return.".to_string(),
                 }
             };
 
@@ -638,39 +647,21 @@ impl DKGProgressComponent {
     }
 }
 
-impl Component<Message, UserEvent> for DKGProgressComponent {
-    fn on(&mut self, event: Event<UserEvent>) -> Option<Message> {
+impl AppComponent<Message, UserEvent> for DKGProgressComponent {
+    fn on(&mut self, event: &Event<UserEvent>) -> Option<Message> {
         tracing::debug!("🎮 DKGProgress received event: {:?}", event);
         
         match event {
-            Event::Keyboard(KeyEvent {
-                code: Key::Left,
-                ..
-            }) => {
-                tracing::debug!("🎮 Left arrow key pressed in DKGProgress");
-                if self.selected_action > 0 {
-                    self.selected_action -= 1;
-                    tracing::debug!("🎮 Changed selected_action to {}", self.selected_action);
-                    // Return a dummy message to trigger render
-                    Some(Message::None)
-                } else {
-                    None
-                }
-            }
-            Event::Keyboard(KeyEvent {
-                code: Key::Right,
-                ..
-            }) => {
-                tracing::debug!("🎮 Right arrow key pressed in DKGProgress");
-                if self.selected_action < 1 {
-                    self.selected_action += 1;
-                    tracing::debug!("🎮 Changed selected_action to {}", self.selected_action);
-                    // Return a dummy message to trigger render
-                    Some(Message::None)
-                } else {
-                    None
-                }
-            }
+            // Intentionally do NOT consume Left/Right here — return `None` so
+            // the key bubbles up to the global keymap, which dispatches
+            // `Message::ScrollLeft` / `Message::ScrollRight`. Those handlers
+            // update `model.ui_state.selected_indices[DKGProgress]`, which the
+            // next remount reads via `set_selected_action`. If we consume here
+            // and mutate only our local `self.selected_action`, the very next
+            // `ForceRemount` resets it to whatever's in the model (0), which
+            // is exactly the "right arrow doesn't work" bug.
+            Event::Keyboard(KeyEvent { code: Key::Left, .. })
+            | Event::Keyboard(KeyEvent { code: Key::Right, .. }) => None,
             Event::Keyboard(KeyEvent {
                 code: Key::Enter,
                 ..

@@ -60,7 +60,6 @@ pub struct Devices {
     state: Rc<State>,
 }
 
-#[durable_object]
 impl DurableObject for Devices {
     fn new(state: State, _env: Env) -> Self {
         Self {
@@ -165,7 +164,7 @@ impl DurableObject for Devices {
                                                 ) {
                                                     // Update session's active participants
                                                     let session_key = format!("session:{}", session_code);
-                                                    if let Ok(mut session_data) = state.storage().get::<serde_json::Value>(&session_key).await {
+                                                    if let Ok(Some(mut session_data)) = state.storage().get::<serde_json::Value>(&session_key).await {
                                                         // Update active participants based on who's connected
                                                         let mut active_participants = Vec::new();
                                                         for p in participants {
@@ -217,13 +216,19 @@ impl DurableObject for Devices {
                                         }
                                     }
                                     Ok(ClientMsg::AnnounceSession { session_info }) => {
-                                        // Store session bound to creator device
+                                        // Store session bound to creator device.
+                                        //
+                                        // Clients may carry either `session_id` (current TUI) or
+                                        // `session_code` (older paths). Prefer `session_id`, fall back
+                                        // to `session_code`, and only use `"unknown"` if both are missing —
+                                        // otherwise every session collides on `session:unknown`.
                                         if let Some(ref device) = device_id {
-                                            let session_key = session_info.get("session_code")
+                                            let session_key = session_info.get("session_id")
                                                 .and_then(|v| v.as_str())
+                                                .or_else(|| session_info.get("session_code").and_then(|v| v.as_str()))
                                                 .unwrap_or("unknown")
                                                 .to_string();
-                                            
+
                                             // Store session with active participants
                                             let session_data = serde_json::json!({
                                                 "session_info": session_info,
@@ -254,8 +259,61 @@ impl DurableObject for Devices {
                                         }
                                     }
                                     Ok(ClientMsg::RequestActiveSessions) => {
-                                        // Broadcast the request to all devices
-                                        // They will respond with their active sessions
+                                        // Reply directly with every session currently stored in the
+                                        // Durable Object. Previously this only forwarded a request to
+                                        // peers (and silently did nothing if the caller wasn't
+                                        // registered), which meant joiners never saw sessions that were
+                                        // announced before they connected.
+                                        let list_result = state.storage().list().await;
+                                        if let Ok(keys) = list_result {
+                                            for key_result in keys.keys() {
+                                                if let Ok(key_value) = key_result {
+                                                    if let Some(key_str) = key_value.as_string() {
+                                                        if !key_str.starts_with("session:") {
+                                                            continue;
+                                                        }
+                                                        // Skip the pre-fix "session:unknown" bucket — it's a
+                                                        // single slot that all legacy AnnounceSessions
+                                                        // collided on, and the contents may be stale.
+                                                        if key_str == "session:unknown" {
+                                                            let _ = state.storage().delete(&key_str).await;
+                                                            continue;
+                                                        }
+                                                        if let Ok(Some(session_data)) = state
+                                                            .storage()
+                                                            .get::<serde_json::Value>(&key_str)
+                                                            .await
+                                                        {
+                                                            if let Some(session_info) =
+                                                                session_data.get("session_info").cloned()
+                                                            {
+                                                                // Drop entries whose stored key doesn't match
+                                                                // their declared session_id — these are leftovers
+                                                                // from the old collision-keyed writes.
+                                                                if let Some(declared) = session_info
+                                                                    .get("session_id")
+                                                                    .and_then(|v| v.as_str())
+                                                                {
+                                                                    if format!("session:{}", declared) != key_str {
+                                                                        continue;
+                                                                    }
+                                                                }
+                                                                let reply = ServerMsg::SessionAvailable {
+                                                                    session_info,
+                                                                };
+                                                                let _ = server.send_with_str(
+                                                                    &serde_json::to_string(&reply)
+                                                                        .unwrap(),
+                                                                );
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        // Best-effort: also poke currently connected peers, so any
+                                        // client that tracks its own live sessions can re-broadcast.
                                         if let Some(from_id) = &device_id {
                                             let msg = ServerMsg::SessionListRequest {
                                                 from: from_id.clone(),
@@ -281,7 +339,7 @@ impl DurableObject for Devices {
                                                     if let Ok(key_value) = key_result {
                                                         if let Some(key_str) = key_value.as_string() {
                                                             if key_str.starts_with("session:") {
-                                                                if let Ok(mut session_data) = state.storage().get::<serde_json::Value>(&key_str).await {
+                                                                if let Ok(Some(mut session_data)) = state.storage().get::<serde_json::Value>(&key_str).await {
                                                                     if let Some(info) = session_data.get("session_info").cloned() {
                                                                         // Check if device is in participants
                                                                         if let Some(participants) = info.get("participants").and_then(|v| v.as_array()) {
@@ -320,12 +378,136 @@ impl DurableObject for Devices {
                                         }
                                     }
                                     Ok(ClientMsg::SessionStatusUpdate { session_info }) => {
-                                        // Legacy - kept for compatibility
-                                        let session_key = session_info.get("session_code")
+                                        // Joiner announces "I joined your session". Until now this
+                                        // was a storage-only stub — the creator never got notified,
+                                        // so it would kick off WebRTC based on raw device presence
+                                        // (which fires when a joiner just WS-registers on welcome
+                                        // screen) and spray offers at peers who weren't subscribed
+                                        // to the broadcast yet. Result: permanent "0/2 WebRTC" mesh.
+                                        //
+                                        // Now: load the stored session, append the joiner to its
+                                        // participants, save back, and fan out a "participant_update"
+                                        // Relay to every current participant. `webrtc_signaling.rs`
+                                        // on the client side expects that exact shape and uses it as
+                                        // the authoritative "all joiners have joined" trigger.
+                                        let session_id = session_info
+                                            .get("session_id")
                                             .and_then(|v| v.as_str())
-                                            .unwrap_or("unknown")
+                                            .unwrap_or("")
                                             .to_string();
-                                        let _ = state.storage().put(&format!("session:{}", session_key), &session_info).await;
+                                        let joiner = session_info
+                                            .get("participant_joined")
+                                            .and_then(|v| v.as_str())
+                                            .map(|s| s.to_string());
+                                        if session_id.is_empty() {
+                                            let err = ServerMsg::Error {
+                                                error: "SessionStatusUpdate missing session_id".to_string(),
+                                            };
+                                            let _ = server
+                                                .send_with_str(&serde_json::to_string(&err).unwrap());
+                                            continue;
+                                        }
+
+                                        let session_key = format!("session:{}", session_id);
+                                        let mut session_data = match state
+                                            .storage()
+                                            .get::<serde_json::Value>(&session_key)
+                                            .await
+                                        {
+                                            Ok(Some(data)) => data,
+                                            _ => {
+                                                let err = ServerMsg::Error {
+                                                    error: format!(
+                                                        "unknown session: {}",
+                                                        session_id
+                                                    ),
+                                                };
+                                                let _ = server.send_with_str(
+                                                    &serde_json::to_string(&err).unwrap(),
+                                                );
+                                                continue;
+                                            }
+                                        };
+
+                                        // Update session_info.participants
+                                        if let Some(joiner) = joiner {
+                                            if let Some(info) = session_data.get_mut("session_info") {
+                                                if let Some(participants) = info
+                                                    .get_mut("participants")
+                                                    .and_then(|v| v.as_array_mut())
+                                                {
+                                                    let joiner_val =
+                                                        serde_json::Value::String(joiner.clone());
+                                                    if !participants.contains(&joiner_val) {
+                                                        participants.push(joiner_val);
+                                                    }
+                                                }
+                                            }
+                                            // Track for cleanup on disconnect
+                                            if let Some(active) = session_data
+                                                .get_mut("active_participants")
+                                                .and_then(|v| v.as_array_mut())
+                                            {
+                                                let joiner_val =
+                                                    serde_json::Value::String(joiner.clone());
+                                                if !active.contains(&joiner_val) {
+                                                    active.push(joiner_val);
+                                                }
+                                            }
+                                            // Remember that this device is in this session so that
+                                                // `WebsocketEvent::Close` can clean up correctly.
+                                            let device_sessions_key =
+                                                format!("device_sessions:{}", joiner);
+                                            let mut device_sessions: Vec<String> = state
+                                                .storage()
+                                                .get(&device_sessions_key)
+                                                .await
+                                                .unwrap_or_else(|_| Some(vec![]))
+                                                .unwrap_or(vec![]);
+                                            if !device_sessions.contains(&session_id) {
+                                                device_sessions.push(session_id.clone());
+                                                let _ = state
+                                                    .storage()
+                                                    .put(&device_sessions_key, &device_sessions)
+                                                    .await;
+                                            }
+                                        }
+                                        let _ = state
+                                            .storage()
+                                            .put(&session_key, &session_data)
+                                            .await;
+
+                                        // Broadcast `participant_update` as a server-originated
+                                        // Relay to every participant of this session. The client's
+                                        // `handle_server_frame` matches exactly this envelope.
+                                        if let Some(updated_info) =
+                                            session_data.get("session_info").cloned()
+                                        {
+                                            let update = ServerMsg::Relay {
+                                                from: "server".to_string(),
+                                                data: serde_json::json!({
+                                                    "type": "participant_update",
+                                                    "session_id": session_id,
+                                                    "session_info": updated_info.clone(),
+                                                }),
+                                            };
+                                            let update_str =
+                                                serde_json::to_string(&update).unwrap();
+                                            if let Some(participants) = updated_info
+                                                .get("participants")
+                                                .and_then(|v| v.as_array())
+                                            {
+                                                let registered = devices.borrow();
+                                                for p in participants {
+                                                    if let Some(pid) = p.as_str() {
+                                                        if let Some(ws) = registered.get(pid) {
+                                                            let _ =
+                                                                ws.send_with_str(&update_str);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
                                     }
                                     Err(_) => {
                                         let err = ServerMsg::Error {
@@ -342,12 +524,12 @@ impl DurableObject for Devices {
                             if let Some(my_id) = device_id.clone() {
                                 // Remove device from active participants in sessions
                                 let device_sessions_key = format!("device_sessions:{}", my_id);
-                                if let Ok(session_ids) = state.storage().get::<Vec<String>>(&device_sessions_key).await {
+                                if let Ok(Some(session_ids)) = state.storage().get::<Vec<String>>(&device_sessions_key).await {
                                     let mut sessions_to_remove = Vec::new();
-                                    
+
                                     for session_id in &session_ids {
                                         let session_key = format!("session:{}", session_id);
-                                        if let Ok(mut session_data) = state.storage().get::<serde_json::Value>(&session_key).await {
+                                        if let Ok(Some(mut session_data)) = state.storage().get::<serde_json::Value>(&session_key).await {
                                             // Remove from active participants
                                             if let Some(active) = session_data.get_mut("active_participants").and_then(|v| v.as_array_mut()) {
                                                 active.retain(|p| p.as_str() != Some(&my_id));

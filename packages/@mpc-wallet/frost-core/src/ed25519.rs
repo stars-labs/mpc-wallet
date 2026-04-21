@@ -10,7 +10,7 @@ use frost_ed25519::{
     round2::SignatureShare,
     SigningPackage,
 };
-use rand::rngs::OsRng;
+use rand_core::OsRng;
 use std::collections::BTreeMap;
 
 pub struct Ed25519Curve;

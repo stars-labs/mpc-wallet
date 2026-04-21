@@ -13,7 +13,7 @@ serde = { version = "1.0.217", features = ["derive"] }
 serde_json = "1.0.143"
 console_error_panic_hook = { version = "0.1.7", optional = true }
 web-sys = { version = "0.3.76", features = ["console"] }
-getrandom = { version = "0.2.15", features = ["js"] }
+getrandom = { version = "0.4.2", features = [] }
 hex = "0.4.3"
 base64 = "0.22.1"
 
@@ -25,8 +25,8 @@ frost-secp256k1 = { version = "2.2.0", features = ["serde"] }
 frost-ed25519 = { version = "2.2.0", features = ["serde"] }
 
 # For random number generation
-rand = "0.8.5"
-rand_chacha = "0.3"
+rand = "0.10.1"
+rand_chacha = "0.10"
 
 [features]
 default = ["console_error_panic_hook"]

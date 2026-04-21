@@ -10,7 +10,10 @@ use tuirealm::event::Event;
 use ratatui::layout::{Rect, Constraint, Direction as LayoutDirection, Layout, Alignment};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::{Block, Borders, BorderType, Paragraph, List, ListItem, Wrap, Gauge};
-use tuirealm::{Component, Frame, MockComponent, Props, State, StateValue};
+use tuirealm::component::{AppComponent, Component};
+use tuirealm::ratatui::Frame;
+use tuirealm::props::Props;
+use tuirealm::state::{State, StateValue};
 
 /// Offline DKG process component with detailed steps
 #[derive(Debug, Clone)]
@@ -331,7 +334,7 @@ impl OfflineDKGProcessComponent {
     }
 }
 
-impl MockComponent for OfflineDKGProcessComponent {
+impl Component for OfflineDKGProcessComponent {
     fn view(&mut self, frame: &mut Frame, area: Rect) {
         let chunks = Layout::default()
             .direction(LayoutDirection::Vertical)
@@ -362,16 +365,16 @@ impl MockComponent for OfflineDKGProcessComponent {
         self.render_footer(frame, chunks[2]);
     }
     
-    fn query(&self, attr: tuirealm::Attribute) -> Option<tuirealm::AttrValue> {
-        self.props.get(attr)
+    fn query<'a>(&'a self, attr: tuirealm::props::Attribute) -> Option<tuirealm::props::QueryResult<'a>> {
+        self.props.get_for_query(attr)
     }
     
-    fn attr(&mut self, attr: tuirealm::Attribute, value: tuirealm::AttrValue) {
+    fn attr(&mut self, attr: tuirealm::props::Attribute, value: tuirealm::props::AttrValue) {
         self.props.set(attr, value);
     }
     
-    fn state(&self) -> tuirealm::State {
-        State::One(StateValue::Usize(self.current_step))
+    fn state(&self) -> tuirealm::state::State {
+        State::Single(StateValue::Usize(self.current_step))
     }
     
     fn perform(&mut self, cmd: Cmd) -> CmdResult {
@@ -392,7 +395,7 @@ impl MockComponent for OfflineDKGProcessComponent {
                 CmdResult::Changed(self.state())
             }
             Cmd::Submit => CmdResult::Submit(self.state()),
-            _ => CmdResult::None,
+            _ => CmdResult::NoChange,
         }
     }
 }
@@ -628,8 +631,8 @@ impl OfflineDKGProcessComponent {
     }
 }
 
-impl Component<Message, UserEvent> for OfflineDKGProcessComponent {
-    fn on(&mut self, event: Event<UserEvent>) -> Option<Message> {
+impl AppComponent<Message, UserEvent> for OfflineDKGProcessComponent {
+    fn on(&mut self, event: &Event<UserEvent>) -> Option<Message> {
         match event {
             Event::User(UserEvent::FocusGained) => {
                 self.focused = true;

@@ -146,11 +146,18 @@ async fn run_elm_tui(device_id: String, signal_server: String, offline: bool) ->
         original_hook(panic_info);
     }));
 
-    // If not offline, connect to signal server
+    // If not offline, kick off the initial WebSocket connection via the Elm
+    // command system. `TriggerReconnect` reads `signal_server_url` from
+    // `AppState` (populated above) and dispatches `Command::ReconnectWebSocket`,
+    // which is the code path that actually runs `connect_async`.
     if !offline {
         info!("Connecting to signal server: {}", signal_server);
-        // TODO: Initialize WebSocket connection
-        // This would be done through the Elm command system
+        if let Err(e) = elm_app
+            .get_message_sender()
+            .send(tui_node::elm::message::Message::TriggerReconnect)
+        {
+            tracing::error!("Failed to queue initial WebSocket connect: {}", e);
+        }
     } else {
         info!("Running in offline mode - no network connections");
     }

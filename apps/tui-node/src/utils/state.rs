@@ -231,24 +231,13 @@ pub enum InternalCommand<C: Ciphersuite> {
     ListOfflineSessions,
     /// Set the current session (used by TUI to sync state)
     SetSession(SessionInfo),
-    
-    // --- Wallet Creation Commands ---
-    /// Create a new wallet session with enhanced configuration
-    CreateWalletSession {
-        config: crate::handlers::session_handler::WalletSessionConfig,
-    },
-    
+
     /// Start participant discovery for a session
     StartParticipantDiscovery {
         session_id: String,
         required_participants: u16,
     },
-    
-    /// Update wallet creation progress
-    UpdateProgress {
-        progress: crate::handlers::session_handler::WalletCreationProgress,
-    },
-    
+
     /// Set DKG execution mode
     SetDkgMode(crate::protocal::dkg::DkgMode),
     

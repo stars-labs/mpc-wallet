@@ -20,6 +20,7 @@ type DeviceMap = Arc<Mutex<HashMap<String, DeviceSender>>>;
 struct StoredSession {
     session_info: serde_json::Value,  // The full announcement as-is
     active_participants: Vec<String>,  // Currently online participants
+    last_active: std::time::Instant,  // Updated when participants leave; used for grace period
 }
 
 type SessionMap = Arc<Mutex<HashMap<String, StoredSession>>>;
@@ -34,7 +35,24 @@ async fn main() {
     let listener = TcpListener::bind("0.0.0.0:9000").await.unwrap();
     println!("Signal server listening on 0.0.0.0:9000");
     
-    // No time-based cleanup needed - sessions are bound to device lifetime
+    // Periodic cleanup: expire sessions that have had no active participants for >5 minutes
+    let sessions_cleanup = sessions.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+        loop {
+            interval.tick().await;
+            let mut guard = sessions_cleanup.lock().unwrap();
+            guard.retain(|id, session| {
+                let age = session.last_active.elapsed();
+                let keep = !session.active_participants.is_empty()
+                    || age < std::time::Duration::from_secs(300);
+                if !keep {
+                    println!("🗑️ Expiring session '{}' (no active participants for {:?})", id, age);
+                }
+                keep
+            });
+        }
+    });
 
     let shutdown_signal = async {
         signal::ctrl_c()
@@ -76,6 +94,10 @@ async fn main() {
                     tokio::select! {
                         Some(msg) = ws_stream.next() => {
                             let msg = match msg {
+                                Ok(m) if m.is_ping() => {
+                                    let _ = tx.send(Message::Pong(m.into_data()));
+                                    continue;
+                                }
                                 Ok(m) if m.is_text() => m.into_text().unwrap(),
                                 Ok(m) if m.is_close() => break,
                                 _ => continue,
@@ -267,6 +289,7 @@ async fn main() {
                                         let stored_session = StoredSession {
                                             session_info: session_info.clone(),
                                             active_participants: vec![device.clone()], // Creator is first participant
+                                            last_active: std::time::Instant::now(),
                                         };
                                         
                                         let mut sessions_guard = sessions.lock().unwrap();
@@ -455,46 +478,26 @@ async fn main() {
                     let device_sessions_guard = device_sessions.lock().unwrap();
                     if let Some(session_ids) = device_sessions_guard.get(&my_id) {
                         let mut sessions_guard = sessions.lock().unwrap();
-                        let mut sessions_to_remove = Vec::new();
-                        
+
                         for session_id in session_ids {
                             if let Some(session) = sessions_guard.get_mut(session_id) {
                                 // Remove from active participants
                                 session.active_participants.retain(|p| p != &my_id);
                                 println!("Removed '{}' from active participants in session '{}'", my_id, session_id);
-                                
-                                // Only remove session if NO active participants remain
+
+                                // Keep session even when all participants disconnect — periodic
+                                // cleanup will expire it after a grace period so rejoining works.
                                 if session.active_participants.is_empty() {
-                                    sessions_to_remove.push(session_id.clone());
-                                    println!("🗑️ Session '{}' will be removed - no active participants", session_id);
+                                    session.last_active = std::time::Instant::now();
+                                    println!("Session '{}' has no active participants, keeping for grace period", session_id);
                                 } else {
-                                    println!("Session '{}' continues with {} active participants", 
+                                    println!("Session '{}' continues with {} active participants",
                                         session_id, session.active_participants.len());
                                 }
                             }
                         }
-                        
-                        // Remove sessions with no active participants
-                        for session_id in &sessions_to_remove {
-                            sessions_guard.remove(session_id);
-                        }
+
                         drop(sessions_guard);
-                        
-                        // Notify about removed sessions
-                        if !sessions_to_remove.is_empty() {
-                            let devices_guard = devices.lock().unwrap();
-                            for removed_session_id in sessions_to_remove {
-                                let msg = ServerMsg::SessionRemoved {
-                                    session_id: removed_session_id.clone(),
-                                    reason: "All participants disconnected".to_string(),
-                                };
-                                let msg_txt = serde_json::to_string(&msg).unwrap();
-                                for (_id, device_tx) in devices_guard.iter() {
-                                    let _ = device_tx.send(Message::Text(msg_txt.clone().into()));
-                                }
-                            }
-                            drop(devices_guard);
-                        }
                     }
                     drop(device_sessions_guard);
                     

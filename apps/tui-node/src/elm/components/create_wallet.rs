@@ -11,7 +11,10 @@ use tuirealm::event::Event;
 use ratatui::layout::{Rect, Constraint, Direction as LayoutDirection, Layout, Alignment};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::{Borders, BorderType, Block, Paragraph, ListItem, List, ListState};
-use tuirealm::{Component, Frame, MockComponent, Props, State, StateValue};
+use tuirealm::component::{AppComponent, Component};
+use tuirealm::ratatui::Frame;
+use tuirealm::props::Props;
+use tuirealm::state::{State, StateValue};
 
 /// Enhanced Create Wallet component using stdlib styling
 #[derive(Debug, Clone)]
@@ -102,7 +105,7 @@ impl CreateWalletComponent {
     }
 }
 
-impl MockComponent for CreateWalletComponent {
+impl Component for CreateWalletComponent {
     fn view(&mut self, frame: &mut Frame, area: Rect) {
         tracing::debug!("🎨 CreateWalletComponent::view - rendering with selected: {}, focused: {}", 
                        self.selected, self.focused);
@@ -128,16 +131,16 @@ impl MockComponent for CreateWalletComponent {
         self.render_footer(frame, chunks[2]);
     }
     
-    fn query(&self, attr: tuirealm::Attribute) -> Option<tuirealm::AttrValue> {
-        self.props.get(attr)
+    fn query<'a>(&'a self, attr: tuirealm::props::Attribute) -> Option<tuirealm::props::QueryResult<'a>> {
+        self.props.get_for_query(attr)
     }
     
-    fn attr(&mut self, attr: tuirealm::Attribute, value: tuirealm::AttrValue) {
+    fn attr(&mut self, attr: tuirealm::props::Attribute, value: tuirealm::props::AttrValue) {
         self.props.set(attr, value);
     }
     
-    fn state(&self) -> tuirealm::State {
-        State::One(StateValue::Usize(self.selected))
+    fn state(&self) -> tuirealm::state::State {
+        State::Single(StateValue::Usize(self.selected))
     }
     
     fn perform(&mut self, cmd: Cmd) -> CmdResult {
@@ -161,7 +164,7 @@ impl MockComponent for CreateWalletComponent {
             Cmd::Submit => {
                 CmdResult::Submit(self.state())
             }
-            _ => CmdResult::None,
+            _ => CmdResult::NoChange,
         }
     }
 }
@@ -332,8 +335,8 @@ impl CreateWalletComponent {
     }
 }
 
-impl Component<Message, UserEvent> for CreateWalletComponent {
-    fn on(&mut self, event: Event<UserEvent>) -> Option<Message> {
+impl AppComponent<Message, UserEvent> for CreateWalletComponent {
+    fn on(&mut self, event: &Event<UserEvent>) -> Option<Message> {
         match event {
             Event::User(UserEvent::FocusGained) => {
                 self.focused = true;

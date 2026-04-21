@@ -13,6 +13,22 @@ use crossterm::event::{KeyCode, KeyModifiers};
 use tracing::{info, debug, warn, error};
 use uuid::Uuid;
 
+/// Mark the local DKG state as "Round 1 in progress" so the DKGProgress
+/// component renders the cyan "Round 1" label and a ~25% progress bar the
+/// next time it's remounted. Also flips `dkg_in_progress` so idempotency
+/// guards in callers work.
+fn enter_round1(model: &mut Model) {
+    model.wallet_state.dkg_in_progress = true;
+    // Don't clobber Round2/Finalization if a concurrent path already advanced
+    // us — this function runs on the Round 1 trigger edge only.
+    if matches!(
+        model.wallet_state.dkg_round,
+        DKGRound::Initialization | DKGRound::WaitingForParticipants
+    ) {
+        model.wallet_state.dkg_round = DKGRound::Round1;
+    }
+}
+
 /// The main update function that handles all state transitions
 pub fn update(model: &mut Model, msg: Message) -> Option<Command> {
     debug!("Processing message: {:?}", msg);
@@ -362,20 +378,29 @@ pub fn update(model: &mut Model, msg: Message) -> Option<Command> {
         }
 
         Message::UpdateDKGProgress { round, progress } => {
+            // Previously this opened a Modal::Progress popup that was
+            // never dismissed. The Modal stays in `ui_state.modal = Some(..)`
+            // for the rest of the session, and the key dispatcher at the
+            // top of `handle_key_event` bails on any non-{Enter,Esc} key
+            // while a modal is open → Left/Right arrows on the DKG Progress
+            // screen silently return None. The DKG Progress screen already
+            // has its own inline progress bar; we just log the transition
+            // here and leave the UI to the dedicated component.
             let message = match round {
                 DKGRound::Initialization => "Initializing DKG protocol...",
                 DKGRound::WaitingForParticipants => "Waiting for participants to join...",
                 DKGRound::Round1 => "Round 1: Generating commitments...",
                 DKGRound::Round2 => "Round 2: Distributing shares...",
                 DKGRound::Finalization => "Finalizing wallet creation...",
+                DKGRound::Complete => "DKG complete!",
             };
-            
-            model.ui_state.modal = Some(Modal::Progress {
-                title: "DKG in Progress".to_string(),
-                message: message.to_string(),
-                progress,
-            });
-            
+            info!(
+                "DKG progress: {} ({:.0}%): {}",
+                format!("{:?}", round),
+                progress * 100.0,
+                message
+            );
+            let _ = progress;
             None
         }
         
@@ -436,28 +461,106 @@ pub fn update(model: &mut Model, msg: Message) -> Option<Command> {
         }
 
         Message::StartDKGProtocol => {
-            info!("🚀 Received StartDKGProtocol message - mesh is ready!");
-            
-            // Don't set dkg_in_progress here - let the command handler do it
-            // This avoids the duplicate flag issue
-            info!("📊 Starting DKG Round 1");
-            
-            // Return command to actually start the DKG protocol
-            None // None // Some(Command::StartDKGProtocol)
+            // Fired by the WebRTC layer in two places:
+            //   1. `mesh_ready` control-frame handler (network/webrtc.rs) once
+            //      every peer has acked mesh readiness.
+            //   2. The data-channel open-count check once the local node has
+            //      established every expected peer connection.
+            // Either way, this is the authoritative "all channels ready" edge
+            // for the joiner path. The creator has its own polling loop inside
+            // Command::InitiateWebRTCConnections that produces Message::InitiateDKG.
+            // Both converge on Command::StartFrostProtocol, which is idempotent
+            // via the DkgState::Idle → Round1InProgress guard.
+            info!("🚀 StartDKGProtocol — mesh ready, dispatching FROST Round 1 trigger");
+            enter_round1(model);
+            Some(Command::Batch(vec![
+                Command::StartFrostProtocol,
+                Command::SendMessage(Message::ForceRemount),
+            ]))
         }
 
         Message::InitiateDKG { params } => {
-            info!("Initiating DKG with params: {:?}", params);
-
-            // This message is triggered when WebRTC mesh is ready and we want to start the actual DKG
-            // Simply forward to the StartDKG command which has the full implementation
-            Some(Command::StartDKG { config: params.wallet_config })
+            // Fired when the WebRTC mesh becomes ready. This runs on EVERY
+            // participant — creator and joiners alike — so it must not touch
+            // session-announcement concerns. Previously this dispatched
+            // `Command::StartDKG`, which had session announcement baked in;
+            // when joiners hit that path they'd re-announce the session
+            // under their own proposer_id and clobber the creator's record
+            // server-side. We only want the FROST trigger here.
+            info!("Mesh is ready — dispatching FROST Round 1 trigger. params={:?}", params);
+            enter_round1(model);
+            Some(Command::Batch(vec![
+                Command::StartFrostProtocol,
+                Command::SendMessage(Message::ForceRemount),
+            ]))
         }
         
-        Message::ProcessDKGRound1 { from_device, package_bytes: _ } => {
-            info!("Processing DKG Round 1 package from {}", from_device);
-            // Create command to process the DKG package
-            None // None // Some(Command::ProcessDKGRound1 { from_device, package_bytes })
+        Message::ProcessDKGRound1 { from_device, package_bytes } => {
+            info!(
+                "Queueing DKG Round 1 package from {} ({} bytes) for FROST part1 processing",
+                from_device,
+                package_bytes.len()
+            );
+            Some(Command::ProcessDKGRound1 {
+                from_device,
+                package_bytes,
+            })
+        }
+
+        Message::ProcessDKGRound2 { from_device, package_bytes } => {
+            // First peer Round 2 package → we've clearly advanced past Round 1.
+            // Update the UI label. Idempotent: we only transition on the first
+            // one and stay at Round2 until DKGKeyGenerated bumps us to Finalization.
+            let round2_edge = matches!(
+                model.wallet_state.dkg_round,
+                DKGRound::Initialization | DKGRound::WaitingForParticipants | DKGRound::Round1
+            );
+            if round2_edge {
+                model.wallet_state.dkg_round = DKGRound::Round2;
+            }
+            info!(
+                "Queueing DKG Round 2 package from {} ({} bytes) for FROST part3 processing",
+                from_device,
+                package_bytes.len()
+            );
+            let process_cmd = Command::ProcessDKGRound2 {
+                from_device,
+                package_bytes,
+            };
+            if round2_edge && matches!(model.current_screen, Screen::DKGProgress { .. }) {
+                Some(Command::Batch(vec![
+                    process_cmd,
+                    Command::SendMessage(Message::ForceRemount),
+                ]))
+            } else {
+                Some(process_cmd)
+            }
+        }
+
+        Message::DKGKeyGenerated { group_pubkey_hex } => {
+            info!("🎉 DKG finalised. Group verifying key: {}", group_pubkey_hex);
+            // Terminal UI state: 100% and a "done" label. Previously we set
+            // `Finalization` here, which has a hardcoded 95% progress bar and
+            // a "Finalizing DKG..." label — making a successful DKG look as if
+            // it were still in progress. `DKGRound::Complete` is the 100%
+            // terminal variant added specifically for this transition.
+            // `part3` has already populated `public_key_package` at the
+            // protocol layer, so setting `dkg_in_progress = false` is safe —
+            // a subsequent wallet-creation flow won't collide.
+            model.wallet_state.dkg_round = DKGRound::Complete;
+            model.wallet_state.dkg_in_progress = false;
+            model.ui_state.notifications.push(Notification {
+                id: Uuid::new_v4().to_string(),
+                text: format!("🎉 DKG complete — group key {}…", &group_pubkey_hex[..16]),
+                kind: NotificationKind::Success,
+                timestamp: Utc::now(),
+                dismissible: true,
+            });
+            if matches!(model.current_screen, Screen::DKGProgress { .. }) {
+                Some(Command::SendMessage(Message::ForceRemount))
+            } else {
+                None
+            }
         }
 
         // ============= Network Events =============
@@ -500,9 +603,14 @@ pub fn update(model: &mut Model, msg: Message) -> Option<Command> {
                     Some(Command::InitiateWebRTCConnections { participants: other_participants })
                 } else {
                     info!("✅ Mesh complete! All participants connected");
-                    // Trigger DKG start if not already in progress
+                    // Trigger DKG start if not already in progress. StartFrostProtocol
+                    // is idempotent — if FROST is already running it's a no-op.
                     if !model.wallet_state.dkg_in_progress {
-                        None // None // Some(Command::StartDKGProtocol)
+                        enter_round1(model);
+                        Some(Command::Batch(vec![
+                            Command::StartFrostProtocol,
+                            Command::SendMessage(Message::ForceRemount),
+                        ]))
                     } else {
                         None
                     }
@@ -528,19 +636,33 @@ pub fn update(model: &mut Model, msg: Message) -> Option<Command> {
             };
             model.ui_state.notifications.push(notification);
             
-            // Force remount if we're on DKGProgress screen to update WebSocket status
-            if matches!(model.current_screen, Screen::DKGProgress { .. }) {
-                Some(Command::SendMessage(Message::ForceRemount))
-            } else {
-                None
+            // Chain follow-up work: redraw the WS-status-aware screens, and if
+            // the user is already on Join Session, re-run discovery over the
+            // freshly-open primary channel (LoadSessions previously would have
+            // no-op'd if the socket wasn't up yet).
+            let mut follow_ups: Vec<Command> = Vec::new();
+            if matches!(
+                model.current_screen,
+                Screen::DKGProgress { .. } | Screen::ModeSelection
+            ) {
+                follow_ups.push(Command::SendMessage(Message::ForceRemount));
+            }
+            if matches!(model.current_screen, Screen::JoinSession) {
+                follow_ups.push(Command::LoadSessions);
+            }
+            match follow_ups.len() {
+                0 => None,
+                1 => Some(follow_ups.pop().unwrap()),
+                _ => Some(Command::Batch(follow_ups)),
             }
         }
-        
+
         Message::WebSocketDisconnected => {
             warn!("WebSocket disconnected");
             model.network_state.connected = false;
             model.network_state.connection_status = ConnectionStatus::Disconnected;
-            
+            model.network_state.reconnect_attempts += 1;
+
             // Show warning notification
             let notification = Notification {
                 id: Uuid::new_v4().to_string(),
@@ -550,8 +672,50 @@ pub fn update(model: &mut Model, msg: Message) -> Option<Command> {
                 dismissible: true,
             };
             model.ui_state.notifications.push(notification);
-            
-            // Attempt reconnection
+
+            // Remount UI immediately if we're on a screen that displays WebSocket status,
+            // since the mounted component captured the old (connected) state at mount time.
+            let remount_cmd = if matches!(
+                model.current_screen,
+                Screen::DKGProgress { .. } | Screen::ModeSelection
+            ) {
+                Some(Command::SendMessage(Message::ForceRemount))
+            } else {
+                None
+            };
+
+            // Attempt reconnection with exponential backoff
+            let reconnect_cmd = if model.network_state.reconnect_attempts
+                <= model.network_state.max_reconnect_attempts
+            {
+                let delay = 2000 * model.network_state.reconnect_attempts as u64;
+                warn!(
+                    "Scheduling reconnect attempt {} in {}ms",
+                    model.network_state.reconnect_attempts, delay
+                );
+                Some(Command::ScheduleMessage {
+                    delay_ms: delay,
+                    message: Box::new(Message::TriggerReconnect),
+                })
+            } else {
+                warn!(
+                    "Max reconnect attempts ({}) reached, giving up",
+                    model.network_state.max_reconnect_attempts
+                );
+                model.network_state.connection_status =
+                    ConnectionStatus::Failed("Max reconnect attempts reached".to_string());
+                None
+            };
+
+            match (remount_cmd, reconnect_cmd) {
+                (Some(a), Some(b)) => Some(Command::Batch(vec![a, b])),
+                (Some(a), None) | (None, Some(a)) => Some(a),
+                (None, None) => None,
+            }
+        }
+
+        Message::TriggerReconnect => {
+            model.network_state.connection_status = ConnectionStatus::Reconnecting;
             Some(Command::ReconnectWebSocket)
         }
         
@@ -1056,14 +1220,31 @@ pub fn update(model: &mut Model, msg: Message) -> Option<Command> {
                         .get(&model.ui_state.focus)
                         .copied()
                         .unwrap_or(0);
-                    
+
+                    // Block progression if Online mode is chosen without an active
+                    // signaling WebSocket — DKG/signing would fail immediately.
+                    if selected_mode == 0 && !model.network_state.connected {
+                        warn!(
+                            "ModeSelection: Online selected but WebSocket is {:?} — blocking submit",
+                            model.network_state.connection_status
+                        );
+                        model.ui_state.notifications.push(Notification {
+                            id: Uuid::new_v4().to_string(),
+                            text: "Online mode requires an active WebSocket connection. Wait for reconnection or switch to Offline mode.".to_string(),
+                            kind: NotificationKind::Warning,
+                            timestamp: Utc::now(),
+                            dismissible: true,
+                        });
+                        return None;
+                    }
+
                     info!("ModeSelection confirmed: {}", if selected_mode == 0 { "Online" } else { "Offline" });
-                    
+
                     // Initialize creating_wallet if needed
                     if model.wallet_state.creating_wallet.is_none() {
                         model.wallet_state.creating_wallet = Some(CreateWalletState::default());
                     }
-                    
+
                     // Update the create wallet state with the selected mode
                     if let Some(ref mut state) = model.wallet_state.creating_wallet {
                         state.mode = Some(if selected_mode == 0 {
@@ -1072,7 +1253,7 @@ pub fn update(model: &mut Model, msg: Message) -> Option<Command> {
                             WalletMode::Offline
                         });
                     }
-                    
+
                     // Navigate to Threshold Config screen (skip curve - unified DKG handles all)
                     info!("Mode selected, navigating to Threshold Config");
                     model.push_screen(Screen::ThresholdConfig);
@@ -1168,17 +1349,40 @@ pub fn update(model: &mut Model, msg: Message) -> Option<Command> {
                         info!("DKGProgress: Cancel DKG selected");
                         Some(Command::SendMessage(Message::CancelDKG))
                     } else {
-                        // Copy Session ID
+                        // Copy Session ID — actually place the string on the
+                        // system clipboard (not just a toast), so the user can
+                        // paste it into another TUI / chat client to invite
+                        // the other participants. Previously this was a
+                        // notification-only stub and the user saw nothing
+                        // happen in their clipboard.
                         if let Some(ref session) = model.active_session {
-                            info!("DKGProgress: Copy Session ID: {}", session.session_id);
-                            let notification = Notification {
+                            let session_id = session.session_id.clone();
+                            info!("DKGProgress: Copy Session ID: {}", session_id);
+                            let (kind, text) = match arboard::Clipboard::new()
+                                .and_then(|mut c| c.set_text(session_id.clone()))
+                            {
+                                Ok(()) => (
+                                    NotificationKind::Success,
+                                    format!("📋 Copied Session ID to clipboard: {}", session_id),
+                                ),
+                                Err(e) => {
+                                    warn!("Clipboard copy failed: {}", e);
+                                    (
+                                        NotificationKind::Warning,
+                                        format!(
+                                            "Couldn't access clipboard ({}). Session ID: {}",
+                                            e, session_id
+                                        ),
+                                    )
+                                }
+                            };
+                            model.ui_state.notifications.push(Notification {
                                 id: Uuid::new_v4().to_string(),
-                                text: format!("Session ID: {}", session.session_id),
-                                kind: NotificationKind::Info,
+                                text,
+                                kind,
                                 timestamp: Utc::now(),
                                 dismissible: true,
-                            };
-                            model.ui_state.notifications.push(notification);
+                            });
                         }
                         None
                     }
@@ -1351,12 +1555,12 @@ pub fn update(model: &mut Model, msg: Message) -> Option<Command> {
             info!("Loaded {} sessions from discovery", sessions.len());
             // Store the discovered sessions
             model.session_invites = sessions.clone();
-            
+
             // Log session details for debugging
             for session in &sessions {
                 info!("Session discovered: {} ({}/{})", session.session_id, session.threshold, session.total);
             }
-            
+
             // Force UI update if we're on the JoinSession screen
             if matches!(model.current_screen, Screen::JoinSession) {
                 info!("On JoinSession screen, forcing remount to update session list");
@@ -1364,6 +1568,43 @@ pub fn update(model: &mut Model, msg: Message) -> Option<Command> {
             } else {
                 None
             }
+        }
+
+        Message::SessionDiscovered { session } => {
+            // Merge-update: replace the existing entry for this session_id if present,
+            // otherwise append. This lets us pick up live `SessionAvailable` broadcasts
+            // while `LoadSessions` is also running its bulk refresh.
+            info!(
+                "Session discovered via push: {} ({}/{})",
+                session.session_id, session.threshold, session.total
+            );
+            if let Some(slot) = model
+                .session_invites
+                .iter_mut()
+                .find(|s| s.session_id == session.session_id)
+            {
+                *slot = session;
+            } else {
+                model.session_invites.push(session);
+            }
+
+            if matches!(model.current_screen, Screen::JoinSession) {
+                Some(Command::SendMessage(Message::ForceRemount))
+            } else {
+                None
+            }
+        }
+
+        Message::RemoveSession { session_id } => {
+            let before = model.session_invites.len();
+            model.session_invites.retain(|s| s.session_id != session_id);
+            if model.session_invites.len() != before {
+                info!("Session removed: {}", session_id);
+                if matches!(model.current_screen, Screen::JoinSession) {
+                    return Some(Command::SendMessage(Message::ForceRemount));
+                }
+            }
+            None
         }
         
         // ============= Default =============

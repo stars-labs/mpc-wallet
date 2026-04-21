@@ -10,7 +10,10 @@ use tuirealm::event::Event;
 use ratatui::layout::{Rect, Constraint, Direction as LayoutDirection, Layout, Alignment};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::{Block, Borders, BorderType, Paragraph, List, ListItem, ListState, Wrap, Tabs};
-use tuirealm::{Component, Frame, MockComponent, Props, State, StateValue};
+use tuirealm::component::{AppComponent, Component};
+use tuirealm::ratatui::Frame;
+use tuirealm::props::Props;
+use tuirealm::state::{State, StateValue};
 
 /// Professional join session component
 #[derive(Debug, Clone)]
@@ -126,7 +129,7 @@ impl JoinSessionComponent {
     }
 }
 
-impl MockComponent for JoinSessionComponent {
+impl Component for JoinSessionComponent {
     fn view(&mut self, frame: &mut Frame, area: Rect) {
         let chunks = Layout::default()
             .direction(LayoutDirection::Vertical)
@@ -161,16 +164,16 @@ impl MockComponent for JoinSessionComponent {
         self.render_footer(frame, chunks[3]);
     }
     
-    fn query(&self, attr: tuirealm::Attribute) -> Option<tuirealm::AttrValue> {
-        self.props.get(attr)
+    fn query<'a>(&'a self, attr: tuirealm::props::Attribute) -> Option<tuirealm::props::QueryResult<'a>> {
+        self.props.get_for_query(attr)
     }
     
-    fn attr(&mut self, attr: tuirealm::Attribute, value: tuirealm::AttrValue) {
+    fn attr(&mut self, attr: tuirealm::props::Attribute, value: tuirealm::props::AttrValue) {
         self.props.set(attr, value);
     }
     
-    fn state(&self) -> tuirealm::State {
-        State::One(StateValue::Usize(self.selected_session))
+    fn state(&self) -> tuirealm::state::State {
+        State::Single(StateValue::Usize(self.selected_session))
     }
     
     fn perform(&mut self, cmd: Cmd) -> CmdResult {
@@ -199,7 +202,7 @@ impl MockComponent for JoinSessionComponent {
                 CmdResult::Changed(self.state())
             }
             Cmd::Submit => CmdResult::Submit(self.state()),
-            _ => CmdResult::None,
+            _ => CmdResult::NoChange,
         }
     }
 }
@@ -404,8 +407,8 @@ impl JoinSessionComponent {
     }
 }
 
-impl Component<Message, UserEvent> for JoinSessionComponent {
-    fn on(&mut self, event: Event<UserEvent>) -> Option<Message> {
+impl AppComponent<Message, UserEvent> for JoinSessionComponent {
+    fn on(&mut self, event: &Event<UserEvent>) -> Option<Message> {
         match event {
             Event::User(UserEvent::FocusGained) => {
                 self.focused = true;

@@ -368,9 +368,9 @@ impl MeshSimulator {
         let delivered = match (&from_condition, &to_condition) {
             (NetworkCondition::Failed, _) | (_, NetworkCondition::Failed) => false,
             (NetworkCondition::Degraded { packet_loss, .. }, _) => {
-                use rand::Rng;
-                let mut rng = rand::thread_rng();
-                rng.gen_range(0.0..1.0) > *packet_loss
+                // Simulation-only random (not security-sensitive). rand 0.10's
+                // convenience API: `random_range` on the thread-local CSPRNG.
+                rand::random_range(0.0..1.0f32) > *packet_loss
             }
             _ => true,
         };

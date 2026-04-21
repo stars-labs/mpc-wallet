@@ -10,7 +10,10 @@ use tuirealm::event::Event;
 use ratatui::layout::{Rect, Constraint, Direction as LayoutDirection, Layout, Alignment};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::{Block, Borders, BorderType, Paragraph, List, ListItem, Wrap, Gauge};
-use tuirealm::{Component, Frame, MockComponent, Props, State, StateValue};
+use tuirealm::component::{AppComponent, Component};
+use tuirealm::ratatui::Frame;
+use tuirealm::props::Props;
+use tuirealm::state::{State, StateValue};
 
 /// Professional threshold configuration component
 #[derive(Debug, Clone)]
@@ -142,7 +145,7 @@ impl ThresholdConfigComponent {
     }
 }
 
-impl MockComponent for ThresholdConfigComponent {
+impl Component for ThresholdConfigComponent {
     fn view(&mut self, frame: &mut Frame, area: Rect) {
         tracing::info!("🖼️ ThresholdConfigComponent::view() called with selected_field={}", self.selected_field);
         let chunks = Layout::default()
@@ -173,16 +176,16 @@ impl MockComponent for ThresholdConfigComponent {
         self.render_footer(frame, chunks[4]);
     }
     
-    fn query(&self, attr: tuirealm::Attribute) -> Option<tuirealm::AttrValue> {
-        self.props.get(attr)
+    fn query<'a>(&'a self, attr: tuirealm::props::Attribute) -> Option<tuirealm::props::QueryResult<'a>> {
+        self.props.get_for_query(attr)
     }
     
-    fn attr(&mut self, attr: tuirealm::Attribute, value: tuirealm::AttrValue) {
+    fn attr(&mut self, attr: tuirealm::props::Attribute, value: tuirealm::props::AttrValue) {
         self.props.set(attr, value);
     }
     
-    fn state(&self) -> tuirealm::State {
-        State::One(StateValue::Usize(self.threshold))
+    fn state(&self) -> tuirealm::state::State {
+        State::Single(StateValue::Usize(self.threshold))
     }
     
     fn perform(&mut self, cmd: Cmd) -> CmdResult {
@@ -214,7 +217,7 @@ impl MockComponent for ThresholdConfigComponent {
                 CmdResult::Changed(self.state())
             }
             Cmd::Submit => CmdResult::Submit(self.state()),
-            _ => CmdResult::None,
+            _ => CmdResult::NoChange,
         }
     }
 }
@@ -429,8 +432,8 @@ impl ThresholdConfigComponent {
     }
 }
 
-impl Component<Message, UserEvent> for ThresholdConfigComponent {
-    fn on(&mut self, event: Event<UserEvent>) -> Option<Message> {
+impl AppComponent<Message, UserEvent> for ThresholdConfigComponent {
+    fn on(&mut self, event: &Event<UserEvent>) -> Option<Message> {
         match event {
             Event::User(UserEvent::FocusGained) => {
                 self.focused = true;

@@ -41,7 +41,16 @@ pub enum Message {
     // DKG operations
     InitiateDKG { params: DKGParams },
     JoinSession { session_id: String },
+    /// Bulk refresh: replace `session_invites` with the caller's snapshot.
+    /// Emitted by explicit discovery queries (e.g. `Command::LoadSessions`).
     SessionsLoaded { sessions: Vec<SessionInfo> },
+    /// Incremental add/update: merge a single session into `session_invites`
+    /// (dedupe by `session_id`). Emitted by the primary WebSocket reader when
+    /// the server pushes a `SessionAvailable` broadcast.
+    SessionDiscovered { session: SessionInfo },
+    /// Incremental drop: remove a session from `session_invites`. Emitted by
+    /// the primary WebSocket reader when the server pushes a `SessionRemoved`.
+    RemoveSession { session_id: String },
     UpdateDKGProgress { round: DKGRound, progress: f32 },
     UpdateDKGSessionId { real_session_id: String },
     UpdateParticipants { participants: Vec<String> },
@@ -61,6 +70,8 @@ pub enum Message {
     CancelDKG,
     StartDKGProtocol,  // Trigger the actual DKG protocol when mesh is ready
     ProcessDKGRound1 { from_device: String, package_bytes: Vec<u8> },  // Process received DKG Round 1 package
+    ProcessDKGRound2 { from_device: String, package_bytes: Vec<u8> },  // Process received DKG Round 2 package
+    DKGKeyGenerated { group_pubkey_hex: String },                      // Final FROST key ready
     
     // Signing operations
     InitiateSigning { request: SigningRequest },
@@ -74,6 +85,7 @@ pub enum Message {
     // Network events
     WebSocketConnected,
     WebSocketDisconnected,
+    TriggerReconnect,
     WebSocketError { error: String },
     PeerDiscovered { peer_id: String },
     PeerDisconnected { peer_id: String },
@@ -155,13 +167,18 @@ pub struct DKGParams {
 }
 
 /// DKG round information
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum DKGRound {
+    #[default]
     Initialization,
     WaitingForParticipants,
     Round1,
     Round2,
     Finalization,
+    /// Terminal state: `part3` returned a valid `KeyPackage` and
+    /// `PublicKeyPackage`. The progress bar should read 100% and the
+    /// status line should read "done" rather than "in progress".
+    Complete,
 }
 
 /// DKG result

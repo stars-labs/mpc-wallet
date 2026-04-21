@@ -11,6 +11,8 @@ pub mod command;
 pub mod app;
 pub mod components;
 pub mod provider;
+pub mod webrtc_signaling;
+pub mod ws_runtime;
 
 pub use model::{Model, Screen, UIState, WalletState, NetworkState};
 pub use message::Message;
